@@ -20,6 +20,11 @@ import {
 import { demoteBackgroundProcessNotices } from '@/lib/messageState'
 import { normalizeSelectedReadAloudText } from '@/lib/readAloudText'
 import { serializeAssistantTurn } from '@/lib/chatCopy'
+import {
+  buildConversationUiControlLock,
+  getConversationUiActionLockedTitle,
+  type ConversationUiControlLock,
+} from '@/lib/conversationUiControls'
 import type { PinnedQuote } from '@/lib/composeQuotedMessage'
 import type { ChatContentLayout } from '@/lib/rightDockLayout'
 import { formatElapsedClock } from '@/lib/turnStatus'
@@ -30,6 +35,7 @@ import type {
   LiveActivitySnapshot,
   MessageContent,
   PendingCompaction,
+  PendingToolApproval,
   QueuedUserMessage,
 } from '@/types'
 
@@ -68,6 +74,8 @@ interface ChatCanvasProps {
   forceAutoScroll?: boolean
   liveActivity?: LiveActivitySnapshot | null
   pendingCompaction?: PendingCompaction | null
+  pendingToolApproval?: PendingToolApproval | null
+  controlLock?: ConversationUiControlLock
   topPaddingClass?: string
   contentLayout?: ChatContentLayout
   streamingStatusPlacement?: 'inline' | 'bottom' | 'external'
@@ -77,6 +85,26 @@ interface SelectedTextBubble {
   text: string
   left: number
   top: number
+}
+
+function disableReadAloudActionWhileBusy(
+  action: ReadAloudButtonState | null | undefined,
+  lock: ConversationUiControlLock,
+): ReadAloudButtonState | undefined {
+  if (!action) {
+    return undefined
+  }
+
+  if (!lock.locked) {
+    return action
+  }
+
+  return {
+    ...action,
+    disabled: true,
+    title: getConversationUiActionLockedTitle(lock, 'read_aloud'),
+    ariaLabel: 'Read aloud is unavailable while the session run is active',
+  }
 }
 
 function isNodeWithin(
@@ -169,7 +197,9 @@ export function ChatCanvas({
   onToggleSentence,
   forceAutoScroll = false,
   liveActivity = null,
-  pendingCompaction: _pendingCompaction = null,
+  pendingCompaction = null,
+  pendingToolApproval = null,
+  controlLock,
   topPaddingClass = 'pt-14',
   contentLayout = 'centered',
   streamingStatusPlacement = 'inline',
@@ -194,6 +224,25 @@ export function ChatCanvas({
   const visibleDebugSession = debugEnabled ? debugSession : null
   const latestMessage = messages.at(-1) ?? null
   const latestQueuedMessageId = queuedMessages.at(-1)?.id ?? null
+  const fallbackControlLock = useMemo(
+    () => buildConversationUiControlLock({
+      isGenerating,
+      isCompacting,
+      pendingCompaction,
+      pendingToolApproval,
+      liveActivity,
+      streamingContent,
+    }),
+    [
+      isCompacting,
+      isGenerating,
+      liveActivity,
+      pendingCompaction,
+      pendingToolApproval,
+      streamingContent,
+    ],
+  )
+  const assistantActionLock = controlLock ?? fallbackControlLock
   const showBottomStreamingStatus =
     streamingStatusPlacement === 'bottom'
     && Boolean(streamingContent || isGenerating || isCompacting)
@@ -462,7 +511,10 @@ export function ChatCanvas({
 
   const selectedTextReadAloudAction =
     selectedTextBubble && getSelectedTextReadAloudButtonState
-      ? getSelectedTextReadAloudButtonState(selectedTextBubble.text)
+      ? disableReadAloudActionWhileBusy(
+          getSelectedTextReadAloudButtonState(selectedTextBubble.text),
+          assistantActionLock,
+        )
       : null
 
   const bottomStatusStartedAt = useMemo(() => {
@@ -518,7 +570,10 @@ export function ChatCanvas({
       }
       readAloudAction={
         message.role === 'assistant'
-          ? getReadAloudButtonState?.(message)
+          ? disableReadAloudActionWhileBusy(
+              getReadAloudButtonState?.(message),
+              assistantActionLock,
+            )
           : undefined
       }
       selectionMode={
@@ -538,6 +593,7 @@ export function ChatCanvas({
       onToggleSentence={
         message.role === 'assistant' ? onToggleSentence : undefined
       }
+      assistantActionLock={assistantActionLock}
     />
   )
 
@@ -604,16 +660,20 @@ export function ChatCanvas({
                     showCopyAction
                     showSelectionAction={Boolean(onToggleSelectionMode)}
                     readAloudAction={
-                      getReadAloudButtonState?.(
-                        {
-                          id: 'streaming',
-                          role: 'assistant',
-                          content: streamingContent ?? [],
-                          timestamp: turn.user.timestamp,
-                        },
-                        { isStreaming: true },
+                      disableReadAloudActionWhileBusy(
+                        getReadAloudButtonState?.(
+                          {
+                            id: 'streaming',
+                            role: 'assistant',
+                            content: streamingContent ?? [],
+                            timestamp: turn.user.timestamp,
+                          },
+                          { isStreaming: true },
+                        ),
+                        assistantActionLock,
                       )
                     }
+                    assistantActionLock={assistantActionLock}
                   />
                 )}
 
@@ -643,16 +703,20 @@ export function ChatCanvas({
               showCopyAction
               showSelectionAction={Boolean(onToggleSelectionMode)}
               readAloudAction={
-                getReadAloudButtonState?.(
-                  {
-                    id: 'streaming',
-                    role: 'assistant',
-                    content: streamingContent ?? [],
-                    timestamp: Date.now(),
-                  },
-                  { isStreaming: true },
+                disableReadAloudActionWhileBusy(
+                  getReadAloudButtonState?.(
+                    {
+                      id: 'streaming',
+                      role: 'assistant',
+                      content: streamingContent ?? [],
+                      timestamp: Date.now(),
+                    },
+                    { isStreaming: true },
+                  ),
+                  assistantActionLock,
                 )
               }
+              assistantActionLock={assistantActionLock}
             />
           )}
 

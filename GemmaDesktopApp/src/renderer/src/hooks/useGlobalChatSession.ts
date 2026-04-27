@@ -280,14 +280,31 @@ export function useGlobalChatSession() {
     }
 
     try {
+      setState((current) => ({
+        ...current,
+        isGenerating: true,
+        isCompacting: false,
+      }))
       await window.gemmaDesktopBridge.sessions.sendMessage(state.sessionId, { text })
     } catch (error) {
+      setState((current) => ({
+        ...current,
+        isGenerating: false,
+      }))
       if (error instanceof Error && isConversationExecutionBlockedError(error.message)) {
         throw new Error(stripConversationExecutionBlockedErrorCode(error.message))
       }
       throw error
     }
   }, [state.sessionId])
+
+  const setOptimisticGenerating = useCallback((isGenerating: boolean) => {
+    setState((current) => ({
+      ...current,
+      isGenerating,
+      isCompacting: isGenerating ? false : current.isCompacting,
+    }))
+  }, [])
 
   const compactSession = useCallback(async () => {
     if (!state.sessionId) {
@@ -406,6 +423,7 @@ export function useGlobalChatSession() {
     clearSession,
     retry,
     resolveToolApproval,
+    setOptimisticGenerating,
   }), [
     cancelGeneration,
     clearSession,
@@ -414,6 +432,7 @@ export function useGlobalChatSession() {
     retry,
     saveDraft,
     sendMessage,
+    setOptimisticGenerating,
     state,
   ])
 }

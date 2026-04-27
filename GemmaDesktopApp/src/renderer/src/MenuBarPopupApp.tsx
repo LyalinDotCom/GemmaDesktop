@@ -114,6 +114,7 @@ export function MenuBarPopupApp() {
           isGenerating={globalChat.isGenerating}
           isCompacting={globalChat.isCompacting}
           pendingCompaction={globalChat.pendingCompaction}
+          pendingToolApproval={globalChat.pendingToolApproval}
           liveActivity={globalChat.liveActivity}
           loading={globalChat.loading}
           error={globalChat.error}

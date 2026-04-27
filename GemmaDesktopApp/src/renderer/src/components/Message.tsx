@@ -15,6 +15,10 @@ import { resolveAttachmentPreviewUrl } from '@/lib/inputAttachments'
 import type { PinnedQuote } from '@/lib/composeQuotedMessage'
 import type { SelectionBlockContextValue } from '@/lib/selectionBlockContext'
 import {
+  getConversationUiActionLockedTitle,
+  type ConversationUiControlLock,
+} from '@/lib/conversationUiControls'
+import {
   buildTurnDurationLabel,
   formatElapsedClock,
 } from '@/lib/turnStatus'
@@ -70,6 +74,7 @@ interface MessageProps {
    * `selectionMode` is true. Caller should dispatch `TOGGLE_PINNED_QUOTE`.
    */
   onToggleSentence?: (quote: PinnedQuote) => void
+  assistantActionLock?: ConversationUiControlLock
   /**
    * True when this message is the most recent assistant turn in the chat.
    * The latest turn shows its duration label permanently and keeps the
@@ -606,6 +611,7 @@ export function Message({
   showSelectionAction = false,
   onToggleSelectionMode,
   onToggleSentence,
+  assistantActionLock,
   isLatestAssistantTurn = false,
 }: MessageProps) {
   const isUser = message.role === 'user'
@@ -617,6 +623,7 @@ export function Message({
   const shouldEnableSentenceSelection =
     Boolean(selectionMode)
     || (pinnedSentenceKeys?.size ?? 0) > 0
+  const assistantActionsLocked = assistantActionLock?.locked ?? false
 
   // Build the sentence-selection context for this assistant message. Null for
   // user messages, streaming placeholders, and messages the parent opted out
@@ -631,7 +638,7 @@ export function Message({
       return null
     }
     return {
-      selectionActive: Boolean(selectionMode),
+      selectionActive: Boolean(selectionMode) && !assistantActionsLocked,
       pinnedSentenceKeys: pinnedSentenceKeys ?? new Set<string>(),
       sourceMessageId: message.id,
       onToggleSentence: (sentenceKey, sentenceText, indices) => {
@@ -652,6 +659,7 @@ export function Message({
     isUser,
     message.id,
     message.timestamp,
+    assistantActionsLocked,
     onToggleSentence,
     pinnedSentenceKeys,
     selectionMode,
@@ -701,17 +709,21 @@ export function Message({
   )
   const selectionButtonVisible = showSelectionAction
   const selectionButtonDisabled = selectionButtonVisible
-    && (Boolean(isStreaming) || !onToggleSelectionMode)
+    && (Boolean(isStreaming) || assistantActionsLocked || !onToggleSelectionMode)
   const selectionButtonTitle = selectionButtonDisabled
-    ? 'Wait for the response to finish before selecting sentences.'
+    ? assistantActionLock?.locked
+      ? getConversationUiActionLockedTitle(assistantActionLock, 'selection')
+      : 'Wait for the response to finish before selecting sentences.'
     : selectionMode
       ? 'Exit selection'
       : 'Select sentences to quote in the next message'
   const copyButtonVisible = showCopyAction
   const copyButtonDisabled = copyButtonVisible
-    && (Boolean(isStreaming) || !onCopyTurn)
+    && (Boolean(isStreaming) || assistantActionsLocked || !onCopyTurn)
   const copyButtonTitle = copyButtonDisabled
-    ? 'Wait for the response to finish before copying this turn.'
+    ? assistantActionLock?.locked
+      ? getConversationUiActionLockedTitle(assistantActionLock, 'copy')
+      : 'Wait for the response to finish before copying this turn.'
     : 'Copy turn'
 
   return (

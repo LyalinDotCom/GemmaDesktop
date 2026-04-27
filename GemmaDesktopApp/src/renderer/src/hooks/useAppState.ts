@@ -1766,11 +1766,14 @@ export function useAppState() {
       }
 
       try {
+        dispatch({ type: 'SET_GENERATING', generating: true })
+        dispatch({ type: 'SET_COMPACTING', compacting: false })
         await window.gemmaDesktopBridge.sessions.sendMessage(sessionId, {
           text: composedText,
           attachments: message.attachments,
         })
       } catch (error) {
+        dispatch({ type: 'SET_GENERATING', generating: false })
         if (shouldClearSelection) {
           dispatch({
             type: 'RESTORE_PINNED_QUOTES',

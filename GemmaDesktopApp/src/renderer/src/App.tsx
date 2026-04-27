@@ -910,6 +910,7 @@ export function App() {
     }
 
     try {
+      globalChatSession.setOptimisticGenerating(true)
       await window.gemmaDesktopBridge.sessions.sendMessage(sessionId, {
         text: composedText,
         attachments: message.attachments,
@@ -917,6 +918,7 @@ export function App() {
       })
       await refreshSessionSummaries()
     } catch (error) {
+      globalChatSession.setOptimisticGenerating(false)
       if (shouldClearSelection) {
         setGlobalChatPinnedQuotes(selectionSnapshot.pinnedQuotes)
         setGlobalChatSelectionModeMessageId(selectionSnapshot.selectionModeMessageId)
@@ -932,6 +934,7 @@ export function App() {
     globalChatPinnedQuotes,
     globalChatSelectionModeMessageId,
     globalChatSession.sessionId,
+    globalChatSession.setOptimisticGenerating,
     globalConversationRunDisabledReason,
     coBrowseActive,
     refreshSessionSummaries,
@@ -1757,6 +1760,7 @@ export function App() {
           onToggleSentence={togglePinnedQuote}
           liveActivity={state.liveActivity}
           pendingCompaction={state.pendingCompaction}
+          pendingToolApproval={state.pendingToolApproval}
           autoExpandActiveBlocks={false}
           topPaddingClass="pt-16"
           contentLayout={mainChatContentLayout}
@@ -2382,6 +2386,7 @@ export function App() {
       onToggleSentence={handleToggleGlobalChatSentence}
       liveActivity={globalChatSession.liveActivity}
       pendingCompaction={globalChatSession.pendingCompaction}
+      pendingToolApproval={globalChatSession.pendingToolApproval}
       autoExpandActiveBlocks={false}
       forceAutoScroll
       topPaddingClass="pt-4"

@@ -229,6 +229,7 @@ export function TalkPanel({
                 forceAutoScroll
                 liveActivity={liveActivity}
                 pendingCompaction={pendingCompaction}
+                pendingToolApproval={pendingToolApproval}
                 getReadAloudButtonState={getReadAloudButtonState}
               />
             ) : (
