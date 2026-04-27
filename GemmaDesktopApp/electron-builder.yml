@@ -1,0 +1,45 @@
+appId: com.gemmadesktop.app
+productName: Gemma Desktop
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**/*
+  - resources/**/*
+  - node_modules/**/*
+  - package.json
+extraResources:
+  - from: resources/
+    to: resources/
+    filter:
+      - "**/*"
+  - from: .cache/read-aloud-assets/
+    to: read-aloud-assets/
+    filter:
+      - "**/*"
+asarUnpack:
+  - node_modules/kokoro-js/voices/**
+  - node_modules/phonemizer/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/@lydell/node-pty-*/prebuilds/**
+# Include all node_modules regardless of npm ls status.
+# The prepare-pack.js script copies monorepo transitive deps that npm
+# considers "extraneous" but are required at runtime by SDK packages.
+buildDependenciesFromSource: false
+npmRebuild: true
+nodeGypRebuild: false
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  icon: resources/icon.ico
+  target:
+    - nsis
+linux:
+  icon: resources/icon.png
+  target:
+    - AppImage
+    - deb

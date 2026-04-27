@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "paths": {
+      "@gemma-desktop/sdk-core": ["./packages/sdk-core/src/index.ts"],
+      "@gemma-desktop/sdk-tools": ["./packages/sdk-tools/src/index.ts"],
+      "@gemma-desktop/sdk-harness": ["./packages/sdk-harness/src/index.ts"],
+      "@gemma-desktop/sdk-runtime-ollama": ["./packages/sdk-runtime-ollama/src/index.ts"],
+      "@gemma-desktop/sdk-runtime-lmstudio": ["./packages/sdk-runtime-lmstudio/src/index.ts"],
+      "@gemma-desktop/sdk-runtime-llamacpp": ["./packages/sdk-runtime-llamacpp/src/index.ts"],
+      "@gemma-desktop/sdk-node": ["./packages/sdk-node/src/index.ts"]
+    }
+  }
+}

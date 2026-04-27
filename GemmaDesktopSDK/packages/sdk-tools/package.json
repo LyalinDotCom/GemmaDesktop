@@ -1,0 +1,22 @@
+{
+  "name": "@gemma-desktop/sdk-tools",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@gemma-desktop/sdk-core": "0.1.0",
+    "@google/genai": "^1.50.1",
+    "@mozilla/readability": "^0.6.0",
+    "ajv": "^8.17.1",
+    "fast-xml-parser": "^5.5.10",
+    "got-scraping": "^4.2.1",
+    "jsdom": "^29.0.1"
+  }
+}

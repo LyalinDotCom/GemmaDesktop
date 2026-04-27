@@ -1,0 +1,47 @@
+{
+  "name": "gemma-desktop",
+  "private": true,
+  "workspaces": [
+    "GemmaDesktopApp",
+    "GemmaDesktopSDK",
+    "GemmaDesktopSDK/packages/*",
+    "gemmadesktop-cli"
+  ],
+  "scripts": {
+    "postinstall": "npm run build:sdk:no-check",
+    "build": "npm run build:sdk && npm run build:cli && npm run build:app",
+    "build:app": "npm --workspace GemmaDesktopApp run build",
+    "build:cli": "npm --workspace gemmadesktop-cli run build",
+    "build:sdk": "npm --workspace GemmaDesktopSDK run build",
+    "build:sdk:no-check": "npm --workspace GemmaDesktopSDK run build:no-check",
+    "check": "npm run check:sdk && npm run check:cli && npm run check:app",
+    "check:default": "npm run check",
+    "check:full": "npm run check && npm run test:live",
+    "check:app": "npm --workspace GemmaDesktopApp run check",
+    "check:cli": "npm --workspace gemmadesktop-cli run check",
+    "check:sdk": "npm --workspace GemmaDesktopSDK run check",
+    "dev": "npm run build:sdk:no-check && npm --workspace GemmaDesktopApp run dev",
+    "dist": "npm run build:sdk:no-check && npm --workspace GemmaDesktopApp run dist",
+    "lint": "npm run lint:sdk && npm run lint:cli && npm run lint:app",
+    "lint:app": "npm --workspace GemmaDesktopApp run lint",
+    "lint:cli": "npm --workspace gemmadesktop-cli run lint",
+    "lint:sdk": "npm --workspace GemmaDesktopSDK run lint",
+    "pack": "npm run build:sdk:no-check && npm --workspace GemmaDesktopApp run pack",
+    "test": "npm run test:sdk && npm run test:cli && npm run test:app",
+    "test:default": "npm run test",
+    "test:live": "npm run test:sdk:live && npm run test:app:live",
+    "test:full": "npm run test:default && npm run test:live",
+    "test:app": "npm --workspace GemmaDesktopApp run test",
+    "test:app:live": "npm --workspace GemmaDesktopApp run test:live",
+    "test:cli": "npm --workspace gemmadesktop-cli run test",
+    "test:sdk": "npm --workspace GemmaDesktopSDK run test",
+    "test:sdk:live": "npm --workspace GemmaDesktopSDK run test:live",
+    "typecheck": "npm run typecheck:sdk && npm run typecheck:cli && npm run typecheck:app",
+    "typecheck:app": "npm --workspace GemmaDesktopApp run typecheck",
+    "typecheck:cli": "npm --workspace gemmadesktop-cli run typecheck",
+    "typecheck:sdk": "npm --workspace GemmaDesktopSDK run typecheck && npm --workspace GemmaDesktopSDK run typecheck:tests"
+  },
+  "dependencies": {
+    "jsdom": "^29.0.2"
+  }
+}

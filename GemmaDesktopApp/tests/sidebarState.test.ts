@@ -1,0 +1,266 @@
+import os from 'os'
+import path from 'path'
+import fs from 'fs/promises'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  SidebarStateStore,
+  normalizeStoredSidebarProjectPath,
+} from '../src/main/sidebarState'
+import type { SidebarSessionReference } from '../src/shared/sidebar'
+
+describe('sidebar state store', () => {
+  let tempDir = ''
+  let sidebarStatePath = ''
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-sidebar-state-'))
+    sidebarStatePath = path.join(tempDir, 'sidebar-state.json')
+  })
+
+  afterEach(async () => {
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  function buildSessionRefs(): {
+    projectAlpha: string
+    projectBeta: string
+    refs: SidebarSessionReference[]
+  } {
+    const projectAlpha = path.join(tempDir, 'alpha')
+    const projectBeta = path.join(tempDir, 'beta')
+
+    return {
+      projectAlpha,
+      projectBeta,
+      refs: [
+        { id: 'session-a', workingDirectory: projectAlpha },
+        { id: 'session-b', workingDirectory: `${projectAlpha}/` },
+        { id: 'session-c', workingDirectory: projectBeta },
+      ],
+    }
+  }
+
+  it('appends pinned sessions in pin order and persists them', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', refs)
+    const result = await store.pinSession('session-c', refs)
+
+    expect(result.state.pinnedSessionIds).toEqual(['session-a', 'session-c'])
+    expect(result.state.projectPaths).toEqual([
+      normalizeStoredSidebarProjectPath(refs[0]!.workingDirectory),
+      normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
+    ])
+
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.pinnedSessionIds).toEqual(['session-a', 'session-c'])
+    expect(reloadedState.state.projectPaths).toEqual([
+      normalizeStoredSidebarProjectPath(refs[0]!.workingDirectory),
+      normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
+    ])
+  })
+
+  it('persists reordered pinned sessions across store reloads', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', refs)
+    await store.pinSession('session-b', refs)
+    await store.pinSession('session-c', refs)
+
+    const moved = await store.movePinnedSession('session-a', 2, refs)
+    expect(moved.state.pinnedSessionIds).toEqual([
+      'session-b',
+      'session-c',
+      'session-a',
+    ])
+
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.pinnedSessionIds).toEqual([
+      'session-b',
+      'session-c',
+      'session-a',
+    ])
+  })
+
+  it('prunes deleted pinned sessions after session cleanup', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', refs)
+    await store.pinSession('session-c', refs)
+
+    const pruned = await store.prune(refs.filter((session) => session.id !== 'session-a'))
+    expect(pruned.state.pinnedSessionIds).toEqual(['session-c'])
+  })
+
+  it('closing a project removes its pinned chats and tracks the closed folder', async () => {
+    const { refs, projectAlpha } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', refs)
+    await store.pinSession('session-c', refs)
+
+    const closed = await store.closeProject(projectAlpha, refs)
+
+    expect(closed.state.pinnedSessionIds).toEqual(['session-c'])
+    expect(closed.state.closedProjectPaths).toEqual([
+      normalizeStoredSidebarProjectPath(projectAlpha),
+    ])
+    expect(closed.state.projectPaths).toEqual([
+      normalizeStoredSidebarProjectPath(projectAlpha),
+      normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
+    ])
+  })
+
+  it('reopening a project restores visibility without restoring old pins', async () => {
+    const { refs, projectAlpha } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', refs)
+    await store.pinSession('session-c', refs)
+    await store.closeProject(projectAlpha, refs)
+
+    const reopened = await store.reopenProject(projectAlpha, refs)
+
+    expect(reopened.state.closedProjectPaths).toEqual([])
+    expect(reopened.state.pinnedSessionIds).toEqual(['session-c'])
+    expect(reopened.state.projectPaths).toEqual([
+      normalizeStoredSidebarProjectPath(projectAlpha),
+      normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
+    ])
+  })
+
+  it('prunes stale pinned ids and closed project paths on initialization', async () => {
+    const { refs, projectAlpha } = buildSessionRefs()
+
+    await fs.writeFile(
+      sidebarStatePath,
+      JSON.stringify({
+        pinnedSessionIds: ['session-a', 'missing-session', 'session-a', ''],
+        closedProjectPaths: [
+          projectAlpha,
+          `${projectAlpha}/`,
+          path.join(tempDir, 'missing-project'),
+          '',
+        ],
+        projectPaths: [
+          projectAlpha,
+          `${projectAlpha}/`,
+          path.join(tempDir, 'missing-project'),
+          '',
+        ],
+      }),
+      'utf-8',
+    )
+
+    const store = new SidebarStateStore(sidebarStatePath)
+    const initialized = await store.init(refs)
+
+    expect(initialized.state).toEqual({
+      pinnedSessionIds: ['session-a'],
+      followUpSessionIds: [],
+      closedProjectPaths: [normalizeStoredSidebarProjectPath(projectAlpha)],
+      projectPaths: [
+        normalizeStoredSidebarProjectPath(projectAlpha),
+        normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
+      ],
+      sessionOrderOverrides: {},
+      projectOrderOverrides: {},
+    })
+  })
+
+  it('persists per-session order overrides and clears them individually', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+    await store.init(refs)
+
+    const set = await store.setSessionOrder('session-a', 2, refs)
+    expect(set.state.sessionOrderOverrides).toEqual({ 'session-a': 2 })
+
+    const updated = await store.setSessionOrder('session-b', 0, refs)
+    expect(updated.state.sessionOrderOverrides).toEqual({
+      'session-a': 2,
+      'session-b': 0,
+    })
+
+    const cleared = await store.clearSessionOrder('session-a', refs)
+    expect(cleared.state.sessionOrderOverrides).toEqual({ 'session-b': 0 })
+
+    // Persistence round-trip
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.sessionOrderOverrides).toEqual({ 'session-b': 0 })
+  })
+
+  it('persists per-project order overrides keyed by normalized path', async () => {
+    const { refs, projectAlpha, projectBeta } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+    await store.init(refs)
+
+    const set = await store.setProjectOrder(`${projectAlpha}/`, 1, refs)
+    expect(set.state.projectOrderOverrides).toEqual({
+      [normalizeStoredSidebarProjectPath(projectAlpha)]: 1,
+    })
+
+    const both = await store.setProjectOrder(projectBeta, 0, refs)
+    expect(both.state.projectOrderOverrides).toEqual({
+      [normalizeStoredSidebarProjectPath(projectAlpha)]: 1,
+      [normalizeStoredSidebarProjectPath(projectBeta)]: 0,
+    })
+
+    const cleared = await store.clearProjectOrder(projectAlpha, refs)
+    expect(cleared.state.projectOrderOverrides).toEqual({
+      [normalizeStoredSidebarProjectPath(projectBeta)]: 0,
+    })
+  })
+
+  it('drops session and project order overrides for items that are no longer present', async () => {
+    const { refs, projectAlpha } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+    await store.init(refs)
+    await store.setSessionOrder('session-a', 1, refs)
+    await store.setProjectOrder(projectAlpha, 0, refs)
+
+    // Drop session-a and the entire alpha project (its sessions)
+    const remainingRefs = refs.filter((entry) => entry.id === 'session-c')
+    const pruned = await store.prune(remainingRefs)
+
+    expect(pruned.state.sessionOrderOverrides).toEqual({})
+    expect(pruned.state.projectOrderOverrides).toEqual({})
+  })
+
+  it('rejects session order overrides for unknown session ids', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+    await store.init(refs)
+
+    const result = await store.setSessionOrder('not-a-real-session', 5, refs)
+    expect(result.state.sessionOrderOverrides).toEqual({})
+  })
+
+  it('clamps negative or non-finite session order overrides to a sane index', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+    await store.init(refs)
+
+    const negative = await store.setSessionOrder('session-a', -3, refs)
+    expect(negative.state.sessionOrderOverrides).toEqual({ 'session-a': 0 })
+
+    const nan = await store.setSessionOrder('session-b', Number.NaN, refs)
+    expect(nan.state.sessionOrderOverrides).toEqual({
+      'session-a': 0,
+      'session-b': 0,
+    })
+  })
+})

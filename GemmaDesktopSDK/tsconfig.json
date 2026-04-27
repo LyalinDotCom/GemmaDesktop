@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/sdk-core" },
+    { "path": "./packages/sdk-tools" },
+    { "path": "./packages/sdk-harness" },
+    { "path": "./packages/sdk-runtime-ollama" },
+    { "path": "./packages/sdk-runtime-lmstudio" },
+    { "path": "./packages/sdk-runtime-llamacpp" },
+    { "path": "./packages/sdk-node" }
+  ]
+}

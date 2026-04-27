@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+
+# Build outputs
+dist/
+build/
+out/
+release/
+.cache/
+.packaging/
+.tmp/
+tmp/
+temp/
+
+# TypeScript
+*.tsbuildinfo
+
+# Electron packaging artifacts
+*.dmg
+*.pkg
+*.exe
+*.msi
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Electron builder
+electron-builder.yml.bak
+
+# Vite
+.vite/
+
+# Test and coverage artifacts
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# macOS
+.DS_Store
+._*
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Misc
+*.pid
+*.seed
+.eslintcache
+hey.md

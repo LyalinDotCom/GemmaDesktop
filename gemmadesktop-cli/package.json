@@ -1,0 +1,37 @@
+{
+  "name": "gemmadesktop-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "gemma-desktop": "./dist/index.js",
+    "gemmadesktop": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "cli": "npm run build && node dist/index.js",
+    "lint": "eslint src tests vitest.config.ts --cache --max-warnings 0",
+    "lint:fix": "eslint src tests vitest.config.ts --fix",
+    "start": "node dist/index.js",
+    "test": "npm run test:default",
+    "test:default": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@gemma-desktop/sdk-core": "0.1.0",
+    "@gemma-desktop/sdk-node": "0.1.0",
+    "@gemma-desktop/sdk-runtime-llamacpp": "0.1.0",
+    "@gemma-desktop/sdk-runtime-lmstudio": "0.1.0",
+    "@gemma-desktop/sdk-runtime-ollama": "0.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^24.3.0",
+    "eslint": "^9.38.0",
+    "globals": "^16.4.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.46.1",
+    "vitest": "^3.2.4"
+  }
+}

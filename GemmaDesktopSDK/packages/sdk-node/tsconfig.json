@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../sdk-core" },
+    { "path": "../sdk-tools" },
+    { "path": "../sdk-harness" },
+    { "path": "../sdk-runtime-ollama" },
+    { "path": "../sdk-runtime-lmstudio" },
+    { "path": "../sdk-runtime-llamacpp" }
+  ]
+}

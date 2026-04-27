@@ -1,0 +1,23 @@
+{
+  "name": "@gemma-desktop/sdk-node",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@gemma-desktop/sdk-core": "0.1.0",
+    "@gemma-desktop/sdk-harness": "0.1.0",
+    "@gemma-desktop/sdk-runtime-llamacpp": "0.1.0",
+    "@gemma-desktop/sdk-runtime-lmstudio": "0.1.0",
+    "@gemma-desktop/sdk-runtime-ollama": "0.1.0",
+    "@gemma-desktop/sdk-tools": "0.1.0",
+    "pdfjs-dist": "~5.4.0",
+    "pdf-to-img": "^5.0.0"
+  }
+}

@@ -1,0 +1,583 @@
+@import 'highlight.js/styles/github-dark.css';
+@import 'katex/dist/katex.min.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface-primary: theme('colors.white');
+    --surface-secondary: theme('colors.zinc.50');
+    --surface-tertiary: theme('colors.zinc.100');
+
+    /* App shell surfaces — tints distinguish panels without dividers. The
+       statusbar deliberately sits a step lighter than the rail so the two
+       don't blend where they meet at the bottom-left of the work surface. */
+    --surface-canvas: theme('colors.white');
+    --surface-rail: theme('colors.zinc.100');
+    /* Right dock shares the rail tone so both side panels read as the
+       same kind of container around the canvas. */
+    --surface-right-dock: theme('colors.zinc.100');
+    --surface-statusbar: #f8f8fa;
+    --surface-rail-edge: rgba(24, 24, 27, 0.08);
+    --surface-statusbar-edge: rgba(24, 24, 27, 0.06);
+  }
+
+  .dark {
+    --surface-primary: theme('colors.zinc.950');
+    --surface-secondary: theme('colors.zinc.900');
+    --surface-tertiary: theme('colors.zinc.800');
+
+    --surface-canvas: theme('colors.zinc.950');
+    --surface-rail: theme('colors.zinc.900');
+    --surface-right-dock: theme('colors.zinc.900');
+    --surface-statusbar: #131318;
+    --surface-rail-edge: rgba(255, 255, 255, 0.05);
+    --surface-statusbar-edge: rgba(255, 255, 255, 0.04);
+  }
+
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button {
+    transition-duration: 180ms !important;
+    transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, filter, translate, scale !important;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    button:not(:disabled):hover {
+      translate: 0 -1px;
+      filter: saturate(1.04);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        0 12px 24px -20px rgba(24, 24, 27, 0.34);
+    }
+
+    .dark button:not(:disabled):hover {
+      filter: brightness(1.05) saturate(1.05);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        0 14px 28px -22px rgba(0, 0, 0, 0.78);
+    }
+  }
+
+  button:not(:disabled):active {
+    translate: 0 0;
+    scale: 0.985;
+    filter: none;
+  }
+
+  button:disabled {
+    filter: none;
+    box-shadow: none;
+    translate: 0 0;
+    scale: 1;
+  }
+
+  /* Electron drag region for title bar */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  /* Surface tokens for the app shell. Use these instead of borders to
+     distinguish the sidebar / talk panel / status bar from the main canvas. */
+  .surface-canvas {
+    background-color: var(--surface-canvas);
+  }
+
+  .surface-rail {
+    background-color: var(--surface-rail);
+    /* Hairline right edge so the rail reads as a solid container against
+       the lighter canvas/statusbar zones to its right. */
+    box-shadow: inset -1px 0 0 var(--surface-rail-edge);
+  }
+
+  .surface-right-dock {
+    background-color: var(--surface-right-dock);
+    /* Mirror of the sidebar rail's right edge — a hairline on the inner
+       side so the right dock reads as a closing container against the
+       canvas. */
+    box-shadow: inset 1px 0 0 var(--surface-rail-edge);
+  }
+
+  .surface-statusbar {
+    background-color: var(--surface-statusbar);
+  }
+
+  /* Wraps the bottom status bar so it floats inset from the sidebar with a
+     visible canvas-colored gutter on the left. The inner statusbar surface
+     gets a rounded top-left corner and a hairline top edge to read as a
+     small ledge sitting inside the work surface. */
+  .statusbar-shell {
+    background-color: var(--surface-canvas);
+    padding-left: 0.625rem;
+  }
+
+  .statusbar-shell .surface-statusbar {
+    border-top-left-radius: 0.625rem;
+    border-top-right-radius: 0.625rem;
+    box-shadow: inset 0 1px 0 var(--surface-statusbar-edge);
+  }
+
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.zinc.400') transparent;
+  }
+
+  .dark .scrollbar-thin {
+    scrollbar-color: theme('colors.zinc.700') transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: theme('colors.zinc.300');
+    border-radius: 3px;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: theme('colors.zinc.700');
+  }
+
+  .assistant-home-nebula {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background:
+      linear-gradient(118deg, transparent 0%, rgba(34, 211, 238, 0.13) 24%, transparent 43%),
+      linear-gradient(244deg, transparent 4%, rgba(244, 114, 182, 0.12) 32%, transparent 56%),
+      linear-gradient(18deg, rgba(52, 211, 153, 0.08) 0%, transparent 38%),
+      radial-gradient(ellipse at 50% 34%, rgba(28, 17, 70, 0.96) 0%, rgba(9, 6, 28, 0.96) 42%, #04020a 100%);
+  }
+
+  .assistant-home-nebula::before {
+    content: "";
+    position: absolute;
+    inset: -18%;
+    background:
+      linear-gradient(105deg, transparent 18%, rgba(103, 232, 249, 0.16) 36%, transparent 52%),
+      linear-gradient(255deg, transparent 20%, rgba(167, 139, 250, 0.15) 42%, transparent 62%),
+      linear-gradient(18deg, transparent 26%, rgba(251, 191, 36, 0.08) 48%, transparent 64%);
+    filter: blur(26px);
+    opacity: 0.78;
+    transform-origin: 50% 50%;
+    animation: assistant-home-light-sweep 18s ease-in-out infinite alternate;
+    transition: opacity 700ms ease, filter 700ms ease;
+  }
+
+  .assistant-home-nebula::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 50%, transparent 0%, transparent 54%, rgba(0, 0, 0, 0.66) 100%),
+      repeating-linear-gradient(
+        0deg,
+        rgba(255, 255, 255, 0.018) 0,
+        rgba(255, 255, 255, 0.018) 1px,
+        transparent 1px,
+        transparent 4px
+      );
+    mix-blend-mode: screen;
+    opacity: 0.72;
+  }
+
+  /* Shared nebula art — same network of glowing curves and nodes that
+     anchors the welcome screen, available in two intensities so the work
+     surface can wear a quieter version of the same design language. */
+  .nebula-field {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .nebula-field-network {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .nebula-field-network path {
+    stroke-linecap: round;
+  }
+
+  .nebula-field-network-slow,
+  .nebula-field-network-fast {
+    transform-origin: 50% 50%;
+  }
+
+  /* Vivid variant — welcome screen, full saturation. */
+  .nebula-field-vivid .nebula-field-network {
+    opacity: 0.76;
+  }
+
+  .nebula-field-vivid .nebula-field-network path {
+    stroke-width: 1.35;
+    opacity: 0.46;
+  }
+
+  .nebula-field-vivid .nebula-field-network-slow {
+    animation: nebula-field-network-float 18s ease-in-out infinite alternate;
+  }
+
+  .nebula-field-vivid .nebula-field-network-fast {
+    animation: nebula-field-network-pulse 7s ease-in-out infinite alternate;
+  }
+
+  .nebula-field-vivid .nebula-field-nodes circle {
+    fill: rgba(224, 242, 254, 0.85);
+    opacity: 0.72;
+    animation: nebula-field-node-pulse 3.8s ease-in-out infinite alternate;
+    transition: fill 700ms ease, opacity 700ms ease;
+  }
+
+  .nebula-field-vivid.nebula-field-busy .nebula-field-network-slow {
+    animation-duration: 9s;
+  }
+
+  .nebula-field-vivid.nebula-field-busy .nebula-field-network-fast {
+    animation-duration: 3.7s;
+  }
+
+  /* Ambient variant — work-mode background. The same paths and nodes,
+     dialed down so they read as quiet structure behind real content.
+     Animations are declared but paused by default so the shapes are always
+     present (no surprise pop-in); the overlay's -running modifier engages
+     motion while the agent is actually working. */
+  .nebula-field-ambient .nebula-field-network {
+    opacity: 0.32;
+  }
+
+  .nebula-field-ambient .nebula-field-network path {
+    stroke-width: 1;
+    opacity: 0.22;
+  }
+
+  .nebula-field-ambient .nebula-field-network-slow {
+    animation: nebula-field-network-float 42s ease-in-out infinite alternate;
+    animation-play-state: paused;
+  }
+
+  .nebula-field-ambient .nebula-field-network-fast {
+    animation: nebula-field-network-pulse 22s ease-in-out infinite alternate;
+    animation-play-state: paused;
+  }
+
+  .nebula-field-ambient .nebula-field-nodes circle {
+    fill: rgba(186, 230, 253, 0.55);
+    opacity: 0.34;
+    animation: nebula-field-node-pulse-ambient 9s ease-in-out infinite alternate;
+    animation-play-state: paused;
+  }
+
+  /* Light theme: bias the ambient palette toward indigo so it reads on a
+     pale background without pushing toward washed-out white. */
+  html:not(.dark) .nebula-field-ambient .nebula-field-network {
+    opacity: 0.22;
+  }
+
+  html:not(.dark) .nebula-field-ambient .nebula-field-nodes circle {
+    fill: rgba(99, 102, 241, 0.5);
+  }
+
+  /* Fixed full-viewport overlay used by AmbientMood. The shapes live here
+     all the time so they never have to fade in; the -running modifier just
+     resumes the animations underneath them. */
+  .nebula-field-ambient-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .nebula-field-ambient-overlay-running .nebula-field-network-slow,
+  .nebula-field-ambient-overlay-running .nebula-field-network-fast,
+  .nebula-field-ambient-overlay-running .nebula-field-nodes circle {
+    animation-play-state: running;
+  }
+
+  .assistant-home-stage {
+    max-height: 100%;
+    transition: gap 220ms ease;
+  }
+
+  .assistant-home-stage-with-conversation {
+    gap: clamp(0.75rem, 1.5vh, 1rem);
+  }
+
+  .assistant-home-stage-empty {
+    gap: clamp(0.65rem, 1.3vh, 0.75rem);
+  }
+
+  .assistant-home-stage-expanded {
+    height: 100%;
+    gap: 0.75rem;
+  }
+
+  .assistant-home-transcript-shell {
+    min-height: 0;
+  }
+
+  .assistant-home-transcript-shell-expanded {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .assistant-home-transcript-toolbar {
+    flex: 0 0 auto;
+  }
+
+  .assistant-home-transcript {
+    display: flex;
+    flex-direction: column;
+    height: clamp(20rem, min(56vh, calc(100vh - 19rem)), 40rem);
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 28px;
+    background: rgba(6, 5, 20, 0.62);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 34px 110px -64px rgba(34, 211, 238, 0.42),
+      0 30px 90px -62px rgba(244, 114, 182, 0.34);
+    backdrop-filter: blur(22px) saturate(135%);
+    transition:
+      border-color 220ms ease,
+      box-shadow 220ms ease,
+      height 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @media (max-height: 760px) {
+    .assistant-home-transcript {
+      height: clamp(17rem, min(52vh, calc(100vh - 17rem)), 32rem);
+    }
+  }
+
+  .assistant-home-transcript-status {
+    margin-top: 0.65rem;
+    width: min(100%, 26rem);
+  }
+
+  .assistant-home-transcript-expanded {
+    flex: 1 1 auto;
+    height: auto;
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      0 42px 120px -66px rgba(34, 211, 238, 0.5),
+      0 38px 102px -70px rgba(244, 114, 182, 0.42);
+  }
+
+  .assistant-home-transcript .assistant-action-button {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(228, 228, 231, 0.68);
+    box-shadow: none;
+  }
+
+  .assistant-home-transcript .assistant-action-button:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.075);
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  .assistant-home-transcript .assistant-action-button[data-active='true'] {
+    border-color: rgba(103, 232, 249, 0.22);
+    background: rgba(34, 211, 238, 0.1);
+    color: rgb(207, 250, 254);
+  }
+
+  .assistant-home-transcript .assistant-action-button:disabled {
+    border-color: rgba(255, 255, 255, 0.055);
+    background: transparent;
+    color: rgba(161, 161, 170, 0.42);
+  }
+
+  .assistant-streaming-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.16rem;
+    color: rgba(113, 113, 122, 0.5);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .dark .assistant-streaming-dots {
+    color: rgba(113, 113, 122, 0.62);
+  }
+
+  .assistant-streaming-dot {
+    animation: assistant-streaming-dot 1.28s ease-in-out infinite;
+  }
+
+  .assistant-streaming-dot:nth-child(2) {
+    animation-delay: 160ms;
+  }
+
+  .assistant-streaming-dot:nth-child(3) {
+    animation-delay: 320ms;
+  }
+
+  .assistant-chat-bottom-status {
+    margin-top: 0;
+  }
+
+  @keyframes assistant-home-light-sweep {
+    from {
+      transform: translate3d(-2%, -1%, 0) rotate(0deg) scale(0.98);
+    }
+    to {
+      transform: translate3d(2%, 1%, 0) rotate(8deg) scale(1.04);
+    }
+  }
+
+  @keyframes nebula-field-network-float {
+    0% {
+      transform: translate3d(-16px, -9px, 0) rotate(-0.25deg) scale(1);
+    }
+    31% {
+      transform: translate3d(10px, -17px, 0) rotate(0.2deg) scale(1.018);
+    }
+    67% {
+      transform: translate3d(19px, 8px, 0) rotate(-0.12deg) scale(1.026);
+    }
+    100% {
+      transform: translate3d(-5px, 15px, 0) rotate(0.28deg) scale(1.012);
+    }
+  }
+
+  @keyframes nebula-field-network-pulse {
+    0% {
+      transform: translate3d(14px, -10px, 0) rotate(0.18deg) scale(1);
+    }
+    38% {
+      transform: translate3d(-9px, -16px, 0) rotate(-0.22deg) scale(1.018);
+    }
+    72% {
+      transform: translate3d(-15px, 11px, 0) rotate(0.12deg) scale(0.996);
+    }
+    100% {
+      transform: translate3d(9px, 15px, 0) rotate(-0.16deg) scale(1.014);
+    }
+  }
+
+  @keyframes nebula-field-node-pulse {
+    from {
+      opacity: 0.38;
+    }
+    to {
+      opacity: 0.92;
+    }
+  }
+
+  @keyframes nebula-field-node-pulse-ambient {
+    from {
+      opacity: 0.34;
+    }
+    to {
+      opacity: 0.6;
+    }
+  }
+
+  @keyframes assistant-streaming-dot {
+    0%,
+    72%,
+    100% {
+      opacity: 0.24;
+      transform: translateY(0);
+    }
+
+    36% {
+      opacity: 0.72;
+      transform: translateY(-1px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .assistant-home-nebula::before,
+    .nebula-field-network-slow,
+    .nebula-field-network-fast,
+    .nebula-field-nodes circle,
+    .assistant-streaming-dot {
+      animation: none;
+    }
+
+    .nebula-field-ambient-overlay {
+      transition: none;
+    }
+  }
+
+  .sidebar-session-running::before {
+    content: '';
+    position: absolute;
+    inset: 6px auto 6px 0;
+    width: 28px;
+    border-radius: 9999px;
+    pointer-events: none;
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(16, 185, 129, 0.22) 28%,
+      rgba(110, 231, 183, 0.55) 50%,
+      rgba(16, 185, 129, 0.22) 72%,
+      transparent 100%
+    );
+    background-size: 240% 100%;
+    background-repeat: no-repeat;
+    filter: blur(4px);
+    opacity: 0.78;
+    animation: sidebar-session-running-wave 2.4s linear infinite;
+  }
+
+  .dark .sidebar-session-running::before {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(34, 197, 94, 0.22) 28%,
+      rgba(110, 231, 183, 0.55) 50%,
+      rgba(34, 197, 94, 0.22) 72%,
+      transparent 100%
+    );
+    opacity: 0.7;
+  }
+
+  @keyframes sidebar-session-running-wave {
+    0% {
+      background-position: -120% 50%;
+    }
+    100% {
+      background-position: 220% 50%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar-session-running::before {
+      animation: none;
+      background-position: 50% 50%;
+      opacity: 0.55;
+    }
+  }
+}
