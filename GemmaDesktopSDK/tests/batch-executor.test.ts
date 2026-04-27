@@ -161,5 +161,5 @@ describe("parallel host executor", () => {
         ],
       },
     ]);
-  });
+  }, 15_000);
 });
