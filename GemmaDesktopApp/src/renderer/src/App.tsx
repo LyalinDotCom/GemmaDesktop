@@ -71,6 +71,7 @@ import {
   getBusyQueueBlockedReason,
 } from '@/lib/sessionQueuePolicy'
 import {
+  getCoBrowseTakeControlDisabledReason,
   getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
   shouldCloseProjectBrowserForConversationSwitch,
@@ -410,19 +411,15 @@ export function App() {
     state.activeSession !== null && state.activeSession.messages.length > 0
   const isBusy = state.isGenerating || state.isCompacting
   const activeConversationKind = state.activeSession?.conversationKind ?? 'normal'
-  const coBrowseControlSessionId =
-    projectBrowserState.coBrowseActive ? projectBrowserState.sessionId : null
-  const coBrowseControlTargetBusy =
-    (coBrowseControlSessionId != null
-      && coBrowseControlSessionId === state.activeSessionId
-      && isBusy)
-    || (coBrowseControlSessionId != null
-      && coBrowseControlSessionId === globalChatSession.sessionId
-      && globalChatBusy)
   const coBrowseTakeControlDisabledReason =
-    coBrowseControlTargetBusy
-      ? 'Wait for the assistant to finish before taking browser control.'
-      : null
+    getCoBrowseTakeControlDisabledReason({
+      coBrowseActive,
+      projectBrowserSessionId: projectBrowserState.sessionId,
+      activeSessionId: state.activeSessionId,
+      activeSessionBusy: isBusy,
+      globalChatSessionId: globalChatSession.sessionId,
+      globalChatBusy,
+    })
   const activeMode: SessionMode = state.activeSession?.workMode ?? 'explore'
   const activePlanMode =
     activeConversationKind === 'normal' && activeMode === 'build'
@@ -546,7 +543,6 @@ export function App() {
   const globalCoBrowseBusyQueueDisabledReason =
     coBrowseActive
     && globalChatSession.sessionId != null
-    && projectBrowserState.sessionId === globalChatSession.sessionId
       ? COBROWSE_BUSY_QUEUE_DISABLED_REASON
       : null
   const ramAwareDefaultModelSelection = useMemo(

@@ -1,5 +1,7 @@
 export const COBROWSE_USER_CONTROL_COMPOSER_LOCK_REASON =
   'Release browser control before sending another CoBrowse request.'
+export const COBROWSE_TAKE_CONTROL_BUSY_REASON =
+  'Wait for the assistant to finish before taking browser control.'
 
 export function shouldCloseProjectBrowserForConversationSwitch(input: {
   projectBrowserOpen: boolean
@@ -42,4 +44,28 @@ export function getCoBrowseUserControlComposerLockReason(input: {
   }
 
   return COBROWSE_USER_CONTROL_COMPOSER_LOCK_REASON
+}
+
+export function getCoBrowseTakeControlDisabledReason(input: {
+  coBrowseActive: boolean
+  projectBrowserSessionId: string | null
+  activeSessionId: string | null
+  activeSessionBusy: boolean
+  globalChatSessionId: string | null
+  globalChatBusy: boolean
+}): string | null {
+  if (!input.coBrowseActive) {
+    return null
+  }
+
+  const browserSessionId = input.projectBrowserSessionId
+  const busy =
+    browserSessionId == null
+      ? input.globalChatBusy || input.activeSessionBusy
+      : (
+          (browserSessionId === input.activeSessionId && input.activeSessionBusy)
+          || (browserSessionId === input.globalChatSessionId && input.globalChatBusy)
+        )
+
+  return busy ? COBROWSE_TAKE_CONTROL_BUSY_REASON : null
 }

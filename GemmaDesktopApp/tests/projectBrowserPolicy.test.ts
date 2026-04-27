@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COBROWSE_TAKE_CONTROL_BUSY_REASON,
   COBROWSE_USER_CONTROL_COMPOSER_LOCK_REASON,
+  getCoBrowseTakeControlDisabledReason,
   getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
   shouldCloseProjectBrowserForConversationSwitch,
@@ -86,5 +88,36 @@ describe('project browser conversation policy', () => {
       projectBrowserSessionId: 'global-chat',
       targetSessionId: 'global-chat',
     })).toBeNull()
+  })
+
+  it('disables Take over during the first CoBrowse run before the browser has a session id', () => {
+    expect(getCoBrowseTakeControlDisabledReason({
+      coBrowseActive: true,
+      projectBrowserSessionId: null,
+      activeSessionId: null,
+      activeSessionBusy: false,
+      globalChatSessionId: 'talk-assistant',
+      globalChatBusy: true,
+    })).toBe(COBROWSE_TAKE_CONTROL_BUSY_REASON)
+  })
+
+  it('disables Take over only for the busy browser-owning session once the browser is stamped', () => {
+    expect(getCoBrowseTakeControlDisabledReason({
+      coBrowseActive: true,
+      projectBrowserSessionId: 'talk-assistant',
+      activeSessionId: 'work-chat',
+      activeSessionBusy: true,
+      globalChatSessionId: 'talk-assistant',
+      globalChatBusy: false,
+    })).toBeNull()
+
+    expect(getCoBrowseTakeControlDisabledReason({
+      coBrowseActive: true,
+      projectBrowserSessionId: 'talk-assistant',
+      activeSessionId: 'work-chat',
+      activeSessionBusy: false,
+      globalChatSessionId: 'talk-assistant',
+      globalChatBusy: true,
+    })).toBe(COBROWSE_TAKE_CONTROL_BUSY_REASON)
   })
 })
