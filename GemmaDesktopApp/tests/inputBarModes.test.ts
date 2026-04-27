@@ -395,6 +395,22 @@ describe('InputBar mode rendering', () => {
     expect(researchMarkup).toContain('Wait for deep research to finish before sending another prompt.')
   })
 
+  it('can disable busy queueing for turn-taking surfaces like CoBrowse', () => {
+    const reason = 'Wait for the current CoBrowse turn to finish before sending another request.'
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        initialDraftText: 'queue this',
+        selectedMode: 'explore',
+        isGenerating: true,
+        busyQueueDisabledReason: reason,
+      })),
+    )
+
+    expect(markup).toContain(reason)
+    expect(markup).toContain(`title="${reason}"`)
+    expect(markup).toContain('disabled=""')
+  })
+
   it('surfaces the app-wide conversation run lock', () => {
     const markup = renderToStaticMarkup(
       createElement(InputBar, buildProps({

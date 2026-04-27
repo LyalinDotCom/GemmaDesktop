@@ -106,6 +106,40 @@ describe('ProjectBrowserPanel', () => {
     expect(markup).toContain('lucide-mouse-pointer2')
   })
 
+  it('disables Take over while the active agent turn is still running', () => {
+    const reason = 'Wait for the assistant to finish before taking browser control.'
+    const markup = renderToStaticMarkup(
+      createElement(ProjectBrowserPanel, {
+        state: {
+          open: true,
+          sessionId: 'session-1',
+          coBrowseActive: true,
+          controlOwner: 'agent',
+          controlReason: null,
+          mounted: true,
+          loading: false,
+          url: 'https://example.com/',
+          canGoBack: false,
+          canGoForward: false,
+          title: 'Example',
+          consoleErrorCount: 0,
+          recentConsoleErrors: [],
+          lastError: null,
+          lastUpdatedAt: 1,
+        },
+        coBrowseActive: true,
+        takeControlDisabledReason: reason,
+        onTakeControl: () => {},
+        onReleaseControl: () => {},
+        onClose: () => {},
+      }),
+    )
+
+    expect(markup).toContain(reason)
+    expect(markup.match(/<button[^>]*aria-label="Take over"[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+  })
+
   it('renders Release control when the user has taken over CoBrowse', () => {
     const markup = renderToStaticMarkup(
       createElement(ProjectBrowserPanel, {

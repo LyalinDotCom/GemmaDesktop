@@ -110,11 +110,10 @@ const RIGHT_DOCK_MIN_WIDTH = 340
 const RIGHT_DOCK_MAX_WIDTH = 2_000
 
 const EMPTY_PINNED_QUOTES: PinnedQuote[] = []
-const COBROWSE_RESUME_INSTRUCTION = [
-  'CoBrowse resume: the user completed the browser-side action in the visible browser.',
-  'Inspect the current page state, retry the blocked browser step, and continue the task from there.',
-  'If the page is still blocked by a CAPTCHA, login, 2FA, payment gate, or permission prompt, ask the user for the next human action instead of trying to bypass it.',
-].join(' ')
+const COBROWSE_BUSY_QUEUE_DISABLED_REASON =
+  'Wait for the current CoBrowse turn to finish before sending another request.'
+const COBROWSE_STALE_QUEUE_DISABLED_REASON =
+  'CoBrowse queued turns do not run automatically. Send a fresh request after the current turn finishes.'
 
 function buildPinnedSentenceKeysMap(
   pinnedQuotes: PinnedQuote[],
@@ -305,8 +304,7 @@ export function App() {
   const [newAutomationSeed, setNewAutomationSeed] = useState(0)
   const [coBrowseActive, setCoBrowseActive] = useState(false)
   const [coBrowseControlBusy, setCoBrowseControlBusy] = useState(false)
-  const [coBrowseResumeBusy, setCoBrowseResumeBusy] = useState(false)
-  const [coBrowseResumeError, setCoBrowseResumeError] = useState<string | null>(null)
+  const [coBrowseControlError, setCoBrowseControlError] = useState<string | null>(null)
   const [projectBrowserState, setProjectBrowserState] = useState<ProjectBrowserState>({
     open: false,
     sessionId: null,
@@ -412,26 +410,19 @@ export function App() {
     state.activeSession !== null && state.activeSession.messages.length > 0
   const isBusy = state.isGenerating || state.isCompacting
   const activeConversationKind = state.activeSession?.conversationKind ?? 'normal'
-  const coBrowseResumeSessionId =
-    (projectBrowserState.coBrowseActive ? projectBrowserState.sessionId : null)
-    ?? globalChatSession.sessionId
-    ?? state.activeSessionId
-    ?? null
-  const coBrowseResumeTargetBusy =
-    (coBrowseResumeSessionId != null
-      && coBrowseResumeSessionId === state.activeSessionId
+  const coBrowseControlSessionId =
+    projectBrowserState.coBrowseActive ? projectBrowserState.sessionId : null
+  const coBrowseControlTargetBusy =
+    (coBrowseControlSessionId != null
+      && coBrowseControlSessionId === state.activeSessionId
       && isBusy)
-    || (coBrowseResumeSessionId != null
-      && coBrowseResumeSessionId === globalChatSession.sessionId
+    || (coBrowseControlSessionId != null
+      && coBrowseControlSessionId === globalChatSession.sessionId
       && globalChatBusy)
-  const coBrowseResumeDisabledReason =
-    !coBrowseResumeSessionId
-      ? 'Select a conversation before resuming CoBrowse.'
-      : coBrowseResumeBusy
-        ? 'CoBrowse is resuming.'
-        : coBrowseResumeTargetBusy
-          ? 'The target conversation is still working.'
-          : null
+  const coBrowseTakeControlDisabledReason =
+    coBrowseControlTargetBusy
+      ? 'Wait for the assistant to finish before taking browser control.'
+      : null
   const activeMode: SessionMode = state.activeSession?.workMode ?? 'explore'
   const activePlanMode =
     activeConversationKind === 'normal' && activeMode === 'build'
@@ -546,6 +537,18 @@ export function App() {
     ?? (globalConversationBlocker
       ? formatConversationExecutionBlockedReason(globalConversationBlocker)
       : null)
+  const primaryCoBrowseBusyQueueDisabledReason =
+    coBrowseActive
+    && state.activeSessionId != null
+    && projectBrowserState.sessionId === state.activeSessionId
+      ? COBROWSE_BUSY_QUEUE_DISABLED_REASON
+      : null
+  const globalCoBrowseBusyQueueDisabledReason =
+    coBrowseActive
+    && globalChatSession.sessionId != null
+    && projectBrowserState.sessionId === globalChatSession.sessionId
+      ? COBROWSE_BUSY_QUEUE_DISABLED_REASON
+      : null
   const ramAwareDefaultModelSelection = useMemo(
     () =>
       createDefaultModelSelectionSettings(
@@ -876,14 +879,18 @@ export function App() {
     const queueWhileBusy = canQueueMessageWhileBusy({
       conversationKind: globalChatDetail.conversationKind,
       planMode: globalChatDetail.planMode,
-    })
+    }) && !coBrowseActive
 
     if (globalChatBusy) {
       if (!queueWhileBusy) {
-        throw new Error(getBusyQueueBlockedReason({
-          conversationKind: globalChatDetail.conversationKind,
-          planMode: globalChatDetail.planMode,
-        }))
+        throw new Error(
+          coBrowseActive
+            ? COBROWSE_BUSY_QUEUE_DISABLED_REASON
+            : getBusyQueueBlockedReason({
+              conversationKind: globalChatDetail.conversationKind,
+              planMode: globalChatDetail.planMode,
+            }),
+        )
       }
 
       if (shouldClearSelection) {
@@ -934,68 +941,50 @@ export function App() {
     refreshSessionSummaries,
   ])
 
-  const handleCoBrowseResume = useCallback(async () => {
-    if (!coBrowseResumeSessionId || coBrowseResumeDisabledReason) {
+  const handleCoBrowseTakeControl = useCallback(async () => {
+    if (coBrowseTakeControlDisabledReason) {
       return
     }
 
-    setCoBrowseResumeBusy(true)
-    setCoBrowseResumeError(null)
-    try {
-      await window.gemmaDesktopBridge.sessions.sendHiddenInstruction(
-        coBrowseResumeSessionId,
-        COBROWSE_RESUME_INSTRUCTION,
-      )
-      await refreshSessionSummaries()
-    } catch (error) {
-      setCoBrowseResumeError(
-        error instanceof Error ? error.message : String(error),
-      )
-    } finally {
-      setCoBrowseResumeBusy(false)
-    }
-  }, [
-    coBrowseResumeDisabledReason,
-    coBrowseResumeSessionId,
-    refreshSessionSummaries,
-  ])
-
-  const handleCoBrowseTakeControl = useCallback(async () => {
     setCoBrowseControlBusy(true)
-    setCoBrowseResumeError(null)
+    setCoBrowseControlError(null)
     try {
-      await window.gemmaDesktopBridge.browser.takeControl()
+      const nextState = await window.gemmaDesktopBridge.browser.takeControl()
+      setProjectBrowserState(nextState)
+      projectBrowserOpenRef.current = nextState.open
+      projectBrowserCoBrowseActiveRef.current = isProjectBrowserCoBrowseState({
+        projectBrowserOpen: nextState.open,
+        projectBrowserCoBrowseActive: nextState.coBrowseActive,
+      })
     } catch (error) {
-      setCoBrowseResumeError(
+      setCoBrowseControlError(
         error instanceof Error ? error.message : String(error),
       )
     } finally {
       setCoBrowseControlBusy(false)
     }
-  }, [])
+  }, [coBrowseTakeControlDisabledReason])
 
   const handleCoBrowseReleaseControl = useCallback(async () => {
     setCoBrowseControlBusy(true)
-    setCoBrowseResumeError(null)
+    setCoBrowseControlError(null)
     try {
-      await window.gemmaDesktopBridge.browser.releaseControl()
+      const nextState = await window.gemmaDesktopBridge.browser.releaseControl()
+      setProjectBrowserState(nextState)
+      projectBrowserOpenRef.current = nextState.open
+      projectBrowserCoBrowseActiveRef.current = isProjectBrowserCoBrowseState({
+        projectBrowserOpen: nextState.open,
+        projectBrowserCoBrowseActive: nextState.coBrowseActive,
+      })
     } catch (error) {
-      setCoBrowseResumeError(
+      setCoBrowseControlError(
         error instanceof Error ? error.message : String(error),
       )
       setCoBrowseControlBusy(false)
       return
     }
     setCoBrowseControlBusy(false)
-
-    if (coBrowseResumeSessionId && !coBrowseResumeDisabledReason) {
-      await handleCoBrowseResume()
-    }
-  }, [
-    coBrowseResumeDisabledReason,
-    coBrowseResumeSessionId,
-    handleCoBrowseResume,
-  ])
+  }, [])
 
   const handleRunGlobalChatShellCommand = useCallback(async (command: string) => {
     const sessionId = globalChatSession.sessionId
@@ -1038,6 +1027,21 @@ export function App() {
     }
 
     if (drainingGlobalQueuedMessagesRef.current.has(nextQueuedMessage.id)) {
+      return
+    }
+
+    if (nextQueuedMessage.coBrowse) {
+      setGlobalQueuedMessages((current) =>
+        current.map((message) =>
+          message.id === nextQueuedMessage.id
+            ? {
+                ...message,
+                status: 'failed',
+                error: COBROWSE_STALE_QUEUE_DISABLED_REASON,
+              }
+            : message,
+        ),
+      )
       return
     }
 
@@ -1357,7 +1361,7 @@ export function App() {
 
     if (view !== 'browser' || rightDockView === 'browser') {
       setCoBrowseActive(false)
-      setCoBrowseResumeError(null)
+      setCoBrowseControlError(null)
     }
 
     if (view === 'assistant') {
@@ -1428,7 +1432,7 @@ export function App() {
     setAssistantHomeVisible(true)
     setCoBrowseActive(true)
     setCoBrowseControlBusy(false)
-    setCoBrowseResumeError(null)
+    setCoBrowseControlError(null)
     setRightDockView(null)
   }, [dispatch, state.currentView])
 
@@ -1488,7 +1492,7 @@ export function App() {
       setProjectBrowserState(nextState)
       if (wasOpen && !nextState.open) {
         setCoBrowseActive(false)
-        setCoBrowseResumeError(null)
+        setCoBrowseControlError(null)
       } else if (
         (!wasOpen && nextState.open)
         || (wasOpen && nextState.open && wasCoBrowse !== nextStateIsCoBrowse)
@@ -1590,7 +1594,7 @@ export function App() {
     setRightDockView((current) => (current === 'browser' ? null : current))
     setCoBrowseActive(false)
     setCoBrowseControlBusy(false)
-    setCoBrowseResumeError(null)
+    setCoBrowseControlError(null)
     void window.gemmaDesktopBridge.browser.close().catch((error) => {
       console.error('Failed to close project browser:', error)
     })
@@ -1601,9 +1605,8 @@ export function App() {
       state={projectBrowserState}
       coBrowseActive={coBrowseActive}
       controlBusy={coBrowseControlBusy}
-      resumeBusy={coBrowseResumeBusy}
-      resumeDisabledReason={coBrowseResumeDisabledReason}
-      resumeError={coBrowseResumeError}
+      takeControlDisabledReason={coBrowseTakeControlDisabledReason}
+      resumeError={coBrowseControlError}
       surfaceVisible={projectBrowserSurfaceVisible}
       onTakeControl={handleCoBrowseTakeControl}
       onReleaseControl={handleCoBrowseReleaseControl}
@@ -1633,7 +1636,9 @@ export function App() {
           error={globalChatSession.error}
           enterToSend={state.settings.enterToSend}
           onRetry={globalChatSession.retry}
-          onSend={globalChatSession.sendMessage}
+          onSend={async (text) => {
+            await handleGlobalChatInputSend({ text })
+          }}
           onCancel={globalChatSession.cancelGeneration}
           onCompact={globalChatSession.compactSession}
           onSaveDraft={globalChatSession.saveDraft}
@@ -2165,6 +2170,7 @@ export function App() {
       onSelectModel={handleSelectConversationModel}
       modeChangeDisabled={isBusy || !state.activeSessionId}
       conversationRunDisabledReason={primaryConversationRunDisabledReason}
+      busyQueueDisabledReason={primaryCoBrowseBusyQueueDisabledReason}
       messages={state.activeSession.messages}
       streamingContent={state.streamingContent}
       debugOpen={state.debugOpen}
@@ -2284,6 +2290,7 @@ export function App() {
       onSelectModel={handleSelectGlobalChatModel}
       modeChangeDisabled={globalChatBusy || !globalChatSession.sessionId}
       conversationRunDisabledReason={globalConversationRunDisabledReason}
+      busyQueueDisabledReason={globalCoBrowseBusyQueueDisabledReason}
       messages={globalChatDetail.messages}
       streamingContent={globalChatSession.streamingContent}
       debugOpen={false}

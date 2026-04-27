@@ -211,6 +211,35 @@ Settings, conversations, sessions, caches, and other generated state are fair ga
 
 When diagnosing `GemmaDesktopApp` session state after the recent storage change, do not assume sessions are stored in one global `.gemma` directory. The app keeps a global list of open projects in application state, but each project's actual session data lives inside that project's hidden `.gemma/session-state` directory. In practice, inspect the global application state to find the relevant project path first, then open that project's `.gemma/session-state` folder when tracing or debugging a session.
 
+### Global Assistant Chat Diagnostics
+
+Assistant Home, Welcome Chat, the right-dock Assistant Chat, and menu-bar Assistant Chat can all point at the app-global Assistant Chat surface. Do not debug these as normal project sessions unless the global chat target is explicitly assigned to a project session.
+
+For the built-in fallback Assistant Chat, the session id is `talk-assistant` and the persisted state lives under Electron `userData`, not a project `.gemma` folder:
+
+- macOS default: `~/Library/Application Support/Gemma Desktop/global-session-state/talk/session.json`
+- code path: `getTalkSessionFilePath(app.getPath('userData'))`
+- workspace path: `~/Library/Application Support/Gemma Desktop/global-session-state/talk/workspace`
+
+When diagnosing confusing Assistant Chat or CoBrowse behavior, inspect this JSON read-only first. The highest-signal fields are:
+
+- `appMessages` for the visible conversation turns
+- `debugLogs` for IPC events, duplicate send attempts, cancellations, hidden resume turns, tool calls, and runtime activity
+- `pendingTurn` for a turn that was still active when the app crashed, reloaded, or was stopped
+- `snapshot.metadata` and `snapshot.history` for session metadata and SDK-visible history
+
+Helpful quick inspection pattern:
+
+```sh
+node -e 'const fs=require("fs"); const p=process.env.HOME+"/Library/Application Support/Gemma Desktop/global-session-state/talk/session.json"; const s=JSON.parse(fs.readFileSync(p,"utf8")); console.log({id:s.meta?.id,lastMessage:s.meta?.lastMessage,messages:s.appMessages?.length,debugLogs:s.debugLogs?.length,pendingTurn:Boolean(s.pendingTurn)});'
+```
+
+For CoBrowse bugs, correlate UI symptoms with both `appMessages` and `debugLogs`. A visible assistant turn without a neighboring visible user message may have been triggered by `sendHiddenInstruction` / CoBrowse resume. If the browser jumps to an old topic, look for a hidden resume turn that reused stale context, a queued message draining after a control handoff, or assistant-heartbeat "missing completion" recovery continuing an old turn.
+
+Queued messages in the renderer (`globalQueuedMessages` and `queuedMessagesBySession`) are in-memory UI state, not the source of truth in `session.json`. The persisted evidence is usually the resulting `sessions.send-message.request`, `sessions.talk.send-message.request`, `session.event.user_message`, `generation_started`, `generation_cancelled`, and `turn_complete` entries in `debugLogs`.
+
+Do not delete or rewrite `global-session-state/talk/session.json` during diagnosis unless the user explicitly asks to reset Assistant Chat. This file is not the curated memory file, but it is still the user's conversation history and often the only durable evidence for timing-sensitive bugs.
+
 ### Browser And Search Surfaces
 
 Gemma Desktop has several browser-like and web-access surfaces. Keep their names and roles precise so future changes do not blur the product behavior:

@@ -128,6 +128,7 @@ export interface InputBarProps {
   }) => void | Promise<void>
   modeChangeDisabled?: boolean
   conversationRunDisabledReason?: string | null
+  busyQueueDisabledReason?: string | null
   messages: ChatMessage[]
   streamingContent?: MessageContent[] | null
   sessionTools: SessionToolDefinition[]
@@ -296,6 +297,7 @@ export function InputBar({
   onSelectModel,
   modeChangeDisabled = false,
   conversationRunDisabledReason = null,
+  busyQueueDisabledReason = null,
   messages,
   streamingContent,
   sessionTools,
@@ -443,16 +445,18 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const conversationRunBlocked = Boolean(conversationRunDisabledReason)
   const isSubmitPending = sendingSessionId === sessionId
   const submitLocked = isComposerSubmitLocked({ isSubmitPending, sessionBusy })
-  const canQueueWhileBusy = canQueueMessageWhileBusy({
+  const queueAllowedByPolicy = canQueueMessageWhileBusy({
     conversationKind,
     planMode,
   })
-  const busyQueueBlockedReason = canQueueWhileBusy
-    ? null
-    : getBusyQueueBlockedReason({
-      conversationKind,
-      planMode,
-    })
+  const canQueueWhileBusy = queueAllowedByPolicy && !busyQueueDisabledReason
+  const busyQueueBlockedReason = busyQueueDisabledReason
+    ?? (queueAllowedByPolicy
+      ? null
+      : getBusyQueueBlockedReason({
+        conversationKind,
+        planMode,
+      }))
   const speechLocked =
     speechVisualState === 'listening'
     || speechVisualState === 'processing'

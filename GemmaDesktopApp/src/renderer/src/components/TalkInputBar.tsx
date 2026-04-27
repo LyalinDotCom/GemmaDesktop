@@ -80,6 +80,7 @@ export function TalkInputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
   const draftPersistTimeoutRef = useRef<number | null>(null)
+  const submittingRef = useRef(false)
 
   useEffect(() => {
     setText(initialDraftText)
@@ -169,11 +170,12 @@ export function TalkInputBar({
   )
 
   const handleSubmit = useCallback(async () => {
-    if (busy || conversationRunBlocked || trimmedText.length === 0) {
+    if (submittingRef.current || busy || conversationRunBlocked || trimmedText.length === 0) {
       return
     }
 
     const outgoingText = trimmedText
+    submittingRef.current = true
     setSubmitting(true)
     setText('')
     try {
@@ -184,6 +186,7 @@ export function TalkInputBar({
       await onSaveDraft(outgoingText)
       throw error
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }, [busy, conversationRunBlocked, onSaveDraft, onSend, trimmedText])
@@ -258,6 +261,8 @@ export function TalkInputBar({
     ? 'Compacting Assistant Chat...'
     : isGenerating
       ? 'Assistant Chat is answering...'
+      : conversationRunDisabledReason
+        ? conversationRunDisabledReason
       : clearingSession
         ? 'Clearing Assistant Chat conversation...'
       : 'Message Assistant Chat'
@@ -326,6 +331,7 @@ export function TalkInputBar({
                 && !event.shiftKey
                 && enterToSend
                 && !busy
+                && !conversationRunBlocked
               ) {
                 event.preventDefault()
                 void handleSubmit()
@@ -333,6 +339,7 @@ export function TalkInputBar({
             }}
             rows={1}
             placeholder={placeholder}
+            disabled={conversationRunBlocked}
             className={`${COMPOSER_TEXTAREA_BASE} flex-1 py-1`}
           />
 
@@ -463,6 +470,11 @@ export function TalkInputBar({
             </button>
           </div>
         </div>
+        {conversationRunDisabledReason ? (
+          <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            {conversationRunDisabledReason}
+          </div>
+        ) : null}
       </div>
     )
   }

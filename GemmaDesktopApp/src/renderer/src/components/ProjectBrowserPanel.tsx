@@ -7,10 +7,9 @@ interface ProjectBrowserPanelProps {
   state: ProjectBrowserState
   onClose: () => void
   coBrowseActive?: boolean
-  resumeBusy?: boolean
-  resumeDisabledReason?: string | null
   resumeError?: string | null
   controlBusy?: boolean
+  takeControlDisabledReason?: string | null
   onTakeControl?: () => void
   onReleaseControl?: () => void
   surfaceVisible?: boolean
@@ -74,10 +73,9 @@ export function ProjectBrowserPanel({
   state,
   onClose,
   coBrowseActive = false,
-  resumeBusy = false,
-  resumeDisabledReason = null,
   resumeError = null,
   controlBusy = false,
+  takeControlDisabledReason = null,
   onTakeControl,
   onReleaseControl,
   surfaceVisible = true,
@@ -130,20 +128,16 @@ export function ProjectBrowserPanel({
   }
   const controlLabel = userHasControl ? 'Release control' : 'Take over'
   const controlTitle = userHasControl
-    ? resumeDisabledReason
-      ? `Release browser control. ${resumeDisabledReason}`
-      : resumeBusy
-        ? 'Release browser control. CoBrowse is resuming.'
-        : 'Release browser control back to the agent.'
-    : 'Take over browser control for a human-only action.'
+    ? 'Release browser control back to the agent for your next request.'
+    : takeControlDisabledReason ?? 'Take over browser control for a human-only action.'
   const controlDisabled = controlBusy
-    || (userHasControl ? !onReleaseControl : !onTakeControl)
+    || (userHasControl ? !onReleaseControl : !onTakeControl || Boolean(takeControlDisabledReason))
   const controlSummary = userHasControl
     ? 'User has browser control'
     : 'Agent owns browser control'
   const controlDetail = userHasControl
     ? (state.controlReason ?? 'Finish the browser-side action, then release control.')
-    : 'The page is read-only for you until you take over or the agent asks for help.'
+    : takeControlDisabledReason ?? 'The page is read-only for you until you take over or the agent asks for help.'
 
   useEffect(() => {
     if (surfaceVisibleRef.current === surfaceVisible) {

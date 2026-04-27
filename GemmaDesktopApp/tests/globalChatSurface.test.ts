@@ -558,4 +558,40 @@ describe('Assistant Chat surface copy', () => {
     expect(markup).not.toContain('flex min-h-[44px] items-end')
     expect(markup).not.toContain('border-t border-zinc-200/80 px-4 py-2')
   })
+
+  it('locks the docked Assistant Chat composer when CoBrowse user control blocks sending', () => {
+    const reason = 'Release browser control before sending another CoBrowse request.'
+    const markup = renderToStaticMarkup(
+      createElement(TalkPanel, {
+        variant: 'docked',
+        title: 'Assistant Chat',
+        targetKind: 'fallback',
+        sessionId: 'assistant-global',
+        messages: [],
+        draftText: 'Find the open story',
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        conversationRunDisabledReason: reason,
+        pendingCompaction: null,
+        pendingToolApproval: null,
+        liveActivity: null,
+        loading: false,
+        error: null,
+        enterToSend: true,
+        onRetry: async () => {},
+        onSend: async () => {},
+        onCancel: async () => {},
+        onCompact: async () => {},
+        onSaveDraft: async () => {},
+        onClearSession: async () => {},
+      }),
+    )
+
+    expect(markup).toContain(reason)
+    expect(markup.match(/<textarea[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+    expect(markup).toContain(`title="${reason}"`)
+    expect(markup).toContain('disabled=""')
+  })
 })
