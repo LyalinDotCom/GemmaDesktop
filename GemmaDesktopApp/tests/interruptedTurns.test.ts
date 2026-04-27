@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   buildFailedAssistantMessage,
   buildInterruptedAssistantMessage,
+  buildRecoveredFailedAssistantMessage,
   CANCELLED_TURN_ID_SUFFIX,
   CANCELLED_TURN_WARNING,
   FAILED_TURN_ID_SUFFIX,
   INTERRUPTED_TURN_ID_SUFFIX,
   INTERRUPTED_TURN_WARNING,
+  RECOVERED_TURN_ID_SUFFIX,
+  RECOVERED_TURN_WARNING,
 } from '../src/main/interruptedTurns'
 
 describe('interrupted turn recovery', () => {
@@ -145,6 +148,49 @@ describe('interrupted turn recovery', () => {
         {
           type: 'error',
           message: 'Runtime stream ended without a final response.',
+        },
+      ],
+    })
+  })
+
+  it('appends a recovered user-facing message without preserving the raw turn error as the final block', () => {
+    const message = buildRecoveredFailedAssistantMessage({
+      turnId: 'turn_recovered',
+      timestamp: 400,
+      durationMs: 24_000,
+      recoveryMessage:
+        'I confirmed the official search path was blocked and could not verify the White House schedule before the turn stopped.',
+      content: [
+        {
+          type: 'tool_call',
+          toolName: 'search_web',
+          input: { query: 'White House today' },
+          output: 'Gemini search capacity was exhausted.',
+          status: 'error',
+        },
+      ],
+    })
+
+    expect(message).toEqual({
+      id: `turn_recovered${RECOVERED_TURN_ID_SUFFIX}`,
+      role: 'assistant',
+      timestamp: 400,
+      durationMs: 24_000,
+      content: [
+        {
+          type: 'tool_call',
+          toolName: 'search_web',
+          input: { query: 'White House today' },
+          output: 'Gemini search capacity was exhausted.',
+          status: 'error',
+        },
+        {
+          type: 'warning',
+          message: RECOVERED_TURN_WARNING,
+        },
+        {
+          type: 'text',
+          text: 'I confirmed the official search path was blocked and could not verify the White House schedule before the turn stopped.',
         },
       ],
     })

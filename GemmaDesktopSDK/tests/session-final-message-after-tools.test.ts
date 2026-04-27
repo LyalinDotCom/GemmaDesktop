@@ -255,7 +255,7 @@ describe("final assistant message after tool use", () => {
     });
   });
 
-  it("throws when the turn exhausts immediately after a tool call", async () => {
+  it("runs one no-tools finalization pass when the turn exhausts immediately after a tool call", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({
         text: "I will write the file.",
@@ -263,6 +263,55 @@ describe("final assistant message after tool use", () => {
         toolInput: {
           path: "index.html",
           content: "<!doctype html>",
+        },
+      }),
+      createTextResponse("I wrote index.html, but I reached the tool-step budget before any further verification."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 1,
+    });
+
+    const result = await engine.run("Create index.html.");
+
+    expect(result.text).toBe(
+      "I wrote index.html, but I reached the tool-step budget before any further verification.",
+    );
+    expect(result.toolResults).toHaveLength(1);
+    expect(result.warnings).toContain(
+      "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.",
+    );
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.tools).toEqual([]);
+    expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
+      "You no longer have tool access for this finalization pass.",
+    );
+  });
+
+  it("still throws when the no-tools finalization pass cannot produce a response", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will write the file.",
+        toolName: "write_file",
+        toolInput: {
+          path: "index.html",
+          content: "<!doctype html>",
+        },
+      }),
+      createToolCallResponse({
+        text: "I need another tool.",
+        toolName: "write_file",
+        toolInput: {
+          path: "verify.txt",
+          content: "verify",
         },
       }),
     ]);

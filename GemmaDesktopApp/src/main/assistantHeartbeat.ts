@@ -10,6 +10,7 @@ export interface AssistantHelperActivity {
   consultedForTurnAudit?: boolean
   completedTurnMessage?: boolean
   restartedTurn?: boolean
+  recoveredFailedTurn?: boolean
   restartInstruction?: string | null
   completionMessage?: string | null
 }
@@ -51,6 +52,13 @@ function normalizeCompletionText(
   }
 
   return normalized.slice(0, maxLength).trim() || undefined
+}
+
+export function normalizeAssistantCompletionMessage(
+  value: unknown,
+  maxLength = 1_200,
+): string | undefined {
+  return normalizeCompletionText(value, maxLength)
 }
 
 export function normalizeAssistantHeartbeatDecision(
@@ -95,6 +103,10 @@ export function normalizeAssistantHeartbeatDecision(
 export function buildAssistantHelperToolSummary(
   activity: AssistantHelperActivity,
 ): string {
+  if (activity.recoveredFailedTurn) {
+    return 'Recovered the failed turn'
+  }
+
   if (activity.restartedTurn) {
     return 'Restarted the turn once'
   }
@@ -115,7 +127,9 @@ export function buildAssistantHelperToolOutput(
 ): string | undefined {
   const lines: string[] = []
 
-  if (activity.restartedTurn) {
+  if (activity.recoveredFailedTurn) {
+    lines.push('Recovered a final message after the primary turn failed.')
+  } else if (activity.restartedTurn) {
     lines.push('Restarted the turn once with a hidden steer.')
   } else if (activity.completedTurnMessage) {
     lines.push('Added a missing final completion message.')

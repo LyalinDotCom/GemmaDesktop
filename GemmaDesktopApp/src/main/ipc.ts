@@ -315,6 +315,7 @@ import {
   applyAssistantCompletionMessage,
   buildAssistantHelperToolOutput,
   buildAssistantHelperToolSummary,
+  normalizeAssistantCompletionMessage,
   normalizeAssistantHeartbeatDecision,
   stripHiddenAssistantHeartbeatMessages,
 } from './assistantHeartbeat'
@@ -332,6 +333,7 @@ import { AppTerminalManager } from './appTerminal'
 import {
   buildFailedAssistantMessage,
   buildInterruptedAssistantMessage,
+  buildRecoveredFailedAssistantMessage,
   CANCELLED_TURN_ID_SUFFIX,
   CANCELLED_TURN_WARNING,
   INTERRUPTED_TURN_ID_SUFFIX,
@@ -6362,6 +6364,14 @@ const ASSISTANT_TURN_AUDIT_RESPONSE_FORMAT = makeStructuredResponseFormat(
   ['action'],
 )
 
+const ASSISTANT_TURN_RECOVERY_RESPONSE_FORMAT = makeStructuredResponseFormat(
+  'assistant_turn_recovery',
+  {
+    completionMessage: { type: 'string' },
+  },
+  ['completionMessage'],
+)
+
 async function runHelperStructuredTask(input: {
   ownerId: string
   sessionRole: string
@@ -9032,6 +9042,56 @@ function summarizeToolResultsForHeartbeat(toolResults: ToolResult[]): string {
     .join('\n')
 }
 
+function summarizeFailedTurnBlocksForRecovery(
+  content: Array<Record<string, unknown>>,
+): string {
+  const parts: string[] = []
+
+  for (const block of content) {
+    if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+      parts.push(`[assistant] ${block.text.trim().slice(0, 900)}`)
+      continue
+    }
+
+    if (block.type === 'thinking' && typeof block.text === 'string' && block.text.trim()) {
+      parts.push(`[thinking] ${truncateTextToApproxTokens(block.text, 220)}`)
+      continue
+    }
+
+    if (block.type === 'error' && typeof block.message === 'string') {
+      parts.push(`[error] ${block.message.trim().slice(0, 700)}`)
+      continue
+    }
+
+    if (block.type === 'warning' && typeof block.message === 'string') {
+      parts.push(`[warning] ${block.message.trim().slice(0, 700)}`)
+      continue
+    }
+
+    if (block.type === 'tool_call' && typeof block.toolName === 'string') {
+      const input = normalizeUnknownRecord(block.input)
+      const inputHints = Object.entries(input)
+        .filter(([, value]) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+        .slice(0, 4)
+        .map(([key, value]) => `${key}: ${String(value).slice(0, 240)}`)
+        .join(', ')
+      const status = typeof block.status === 'string' ? block.status : 'unknown'
+      const output =
+        typeof block.output === 'string' && block.output.trim().length > 0
+          ? block.output.trim().slice(0, 900)
+          : 'no output captured'
+      parts.push([
+        `[tool:${block.toolName}] status=${status}`,
+        inputHints ? `input: ${inputHints}` : null,
+        `output: ${output}`,
+      ].filter(Boolean).join('\n'))
+    }
+  }
+
+  const joined = parts.join('\n\n').trim()
+  return joined.length > 0 ? joined.slice(0, 6_000) : '[no failed turn content]'
+}
+
 async function auditAssistantTurnWithHelper(input: {
   sessionId: string
   workingDirectory: string
@@ -9085,6 +9145,67 @@ async function auditAssistantTurnWithHelper(input: {
 
   return {
     decision: normalizeAssistantHeartbeatDecision(result.structuredOutput),
+    helperModelId: result.helperModelId,
+    helperRuntimeId: result.helperRuntimeId,
+  }
+}
+
+async function recoverFailedAssistantTurnWithHelper(input: {
+  sessionId: string
+  workingDirectory: string
+  snapshot: SessionSnapshot
+  userPrompt: string
+  errorMessage: string
+  content: Array<Record<string, unknown>>
+  signal?: AbortSignal
+}): Promise<{
+  completionMessage: string
+  helperModelId: string
+  helperRuntimeId: string
+}> {
+  const conversationContext = buildAssistantHeartbeatConversationContext(
+    input.sessionId,
+    input.snapshot,
+  )
+  const result = await runHelperStructuredTask({
+    ownerId: `${input.sessionId}-turn-recovery`,
+    sessionRole: 'assistant_turn_recovery',
+    workingDirectory: input.workingDirectory,
+    signal: input.signal,
+    responseFormat: ASSISTANT_TURN_RECOVERY_RESPONSE_FORMAT,
+    systemInstructions: [
+      'You are Gemma Desktop\'s hidden Assistant Chat failed-turn recovery agent.',
+      'The primary assistant turn failed after doing some visible work.',
+      'Write one concise user-facing completion message that helps the user understand the useful evidence and the blocker.',
+      'Use only the conversation, failed turn transcript, tool outputs, and error string provided to you.',
+      'Do not pretend unverified facts are verified.',
+      'Be specific about what was confirmed, what could not be confirmed, and why the turn stopped.',
+      'Do not mention helper models, hidden recovery, JSON, or internal event names.',
+      'Translate technical errors into plain language unless the exact error text is useful to the user.',
+    ].join('\n'),
+    sessionInput: [
+      {
+        type: 'text',
+        text: [
+          `Recent conversation:\n${conversationContext || '[no conversation context]'}`,
+          `Latest user message:\n${input.userPrompt.trim().slice(0, 800) || '[no prompt text]'}`,
+          `Primary turn error:\n${input.errorMessage.trim().slice(0, 1_000) || '[no error text]'}`,
+          `Failed turn transcript:\n${summarizeFailedTurnBlocksForRecovery(input.content)}`,
+          'Return only the best user-facing completionMessage.',
+        ].join('\n\n'),
+      },
+    ],
+  })
+  const completionMessage =
+    normalizeAssistantCompletionMessage(result.structuredOutput.completionMessage)
+    ?? normalizeAssistantCompletionMessage(result.outputText)
+
+  if (!completionMessage) {
+    throw new Error('Helper did not produce a recovery completion message.')
+  }
+
+  return {
+    completionMessage,
     helperModelId: result.helperModelId,
     helperRuntimeId: result.helperRuntimeId,
   }
@@ -13176,6 +13297,7 @@ async function sendSessionMessageInternal(
     consultedForTurnAudit: false,
     completedTurnMessage: false,
     restartedTurn: false,
+    recoveredFailedTurn: false,
     restartInstruction: null as string | null,
     completionMessage: null as string | null,
     helperModelId: null as string | null,
@@ -14164,14 +14286,85 @@ async function sendSessionMessageInternal(
         })
       } else {
         const durationMs = Math.max(Date.now() - turnStartedAt, 1)
+        let recoveredMessage: AppMessage | null = null
+
+        if (isTalkSessionConfig(currentConfig) && !abortController.signal.aborted) {
+          const failedTurnContent = serializeStreamingBlocks(contentBlocks, { cancelled: true })
+          try {
+            const recovery = await recoverFailedAssistantTurnWithHelper({
+              sessionId,
+              workingDirectory: currentSnapshot.workingDirectory,
+              snapshot: currentSnapshot,
+              userPrompt: message.text,
+              errorMessage: errMsg,
+              content: failedTurnContent,
+              signal: abortController.signal,
+            })
+            helperActivity.recoveredFailedTurn = true
+            helperActivity.completionMessage = recovery.completionMessage
+            recordHelperConsultation({
+              helperModelId: recovery.helperModelId,
+              helperRuntimeId: recovery.helperRuntimeId,
+              progressId: 'turn-recovery',
+              label: 'Recovering the failed Assistant Chat turn',
+              summary: 'Recovering a final message from the failed turn',
+              tone: 'warning',
+            })
+            appendDebugLog(sessionId, {
+              layer: 'ipc',
+              direction: 'app->sdk',
+              event: 'sessions.assistant-heartbeat.recover',
+              summary: 'Helper supplied a final message after the primary turn failed',
+              turnId: runtimeTurnId,
+              data: {
+                sessionId,
+                turnId: runtimeTurnId,
+                originalError: errMsg,
+                completionMessage: recovery.completionMessage,
+              },
+            })
+            finalizeHelperToolBlock()
+            recoveredMessage = buildRecoveredFailedAssistantMessage({
+              turnId: runtimeTurnId ?? randomUUID(),
+              content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
+              recoveryMessage: recovery.completionMessage,
+              timestamp: Date.now(),
+              durationMs,
+            }) as AppMessage | null
+          } catch (recoveryError) {
+            if (abortController.signal.aborted) {
+              throw recoveryError
+            }
+            appendDebugLog(sessionId, {
+              layer: 'ipc',
+              direction: 'app->sdk',
+              event: 'sessions.assistant-heartbeat.recovery-failed',
+              summary:
+                recoveryError instanceof Error
+                  ? recoveryError.message
+                  : 'Failed turn recovery helper failed',
+              turnId: runtimeTurnId,
+              data: {
+                sessionId,
+                originalError: errMsg,
+                recoveryError:
+                  recoveryError instanceof Error
+                    ? recoveryError.message
+                    : String(recoveryError),
+              },
+            })
+          }
+        }
+
         const errorMessage: AppMessage =
-          buildFailedAssistantMessage({
-            turnId: runtimeTurnId ?? randomUUID(),
-            content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
-            errorMessage: errMsg,
-            timestamp: Date.now(),
-            durationMs,
-          })
+          recoveredMessage
+          ?? buildFailedAssistantMessage({
+              turnId: runtimeTurnId ?? randomUUID(),
+              content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
+              errorMessage: errMsg,
+              timestamp: Date.now(),
+              durationMs,
+            })
           ?? {
               id: `err-${Date.now()}`,
               role: 'assistant',
@@ -14190,9 +14383,15 @@ async function sendSessionMessageInternal(
         appendDebugLog(sessionId, {
           layer: 'ipc',
           direction: 'main->renderer',
-          event: 'sessions.send-message.error',
-          summary: errMsg,
-          data: { error: errMsg },
+          event: recoveredMessage
+            ? 'sessions.send-message.recovered-error'
+            : 'sessions.send-message.error',
+          summary: recoveredMessage
+            ? 'Recovered a user-facing completion after the primary turn failed'
+            : errMsg,
+          data: recoveredMessage
+            ? { originalError: errMsg, recovered: true }
+            : { error: errMsg },
         })
       }
     }

@@ -717,6 +717,17 @@ const COMPLETE_WITH_GROUNDED_RESULT_OR_BLOCKER_INSTRUCTION = [
   "Do not emit another tool call unless it is materially different from the failed attempt and still required to finish.",
 ].join("\n");
 
+const FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION = [
+  "The previous step used tools and the turn has reached its tool-step budget.",
+  "You no longer have tool access for this finalization pass. Do not call any more tools.",
+  "Using only the user request, conversation context, and tool results already visible in the session, send the best user-facing final answer now.",
+  "Be specific about what was confirmed, what could not be confirmed, and any lookup or verification that was blocked.",
+  "Do not promise to keep checking or say you will try another tool.",
+].join("\n");
+
+const MAX_STEP_FINALIZATION_WARNING =
+  "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
+
 const TOOL_SURFACE_REGISTRATION_ERROR_PATTERN =
   /^Tool "([^"]+)" is not registered in the active tool surface\.$/;
 
@@ -1595,6 +1606,7 @@ export class SessionEngine {
     responseFormat: StructuredOutputSpec | undefined,
     debug: RuntimeDebugRecorder | undefined,
     continuationInstruction?: string,
+    availableTools?: ToolDefinition[],
   ): ChatRequest {
     const systemPromptSections = resolveSessionSystemInstructions({
       modelId: this.model,
@@ -1632,7 +1644,7 @@ export class SessionEngine {
     return {
       model: this.model,
       messages,
-      tools: this.availableTools,
+      tools: availableTools ?? this.availableTools,
       responseFormat,
       signal,
       debug,
@@ -2617,6 +2629,85 @@ export class SessionEngine {
 
     if (!finalResponse) {
       throw new GemmaDesktopError("transport_error", "Turn completed without a model response.");
+    }
+
+    if (finalResponse.toolCalls.length > 0 && !completedFromFinalizationToolResponse) {
+      const finalizationStep = maxSteps + 1;
+      warnings.push(MAX_STEP_FINALIZATION_WARNING);
+      this.emit(queue, turnId, "warning.raised", {
+        step: finalizationStep,
+        warning: MAX_STEP_FINALIZATION_WARNING,
+      });
+      this.emit(queue, turnId, "turn.step.started", {
+        step: finalizationStep,
+        finalization: true,
+        toolAccess: false,
+      });
+
+      const request = this.buildRequest(
+        options.signal,
+        options.responseFormat,
+        options.debug,
+        FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION,
+        [],
+      );
+      let response: ChatResponse | undefined;
+
+      for await (const adapterEvent of this.adapter.stream(request)) {
+        switch (adapterEvent.type) {
+          case "text.delta":
+            this.emit(queue, turnId, "content.delta", {
+              step: finalizationStep,
+              channel: "assistant",
+              delta: adapterEvent.delta,
+            });
+            break;
+          case "reasoning.delta":
+            this.emit(queue, turnId, "content.delta", {
+              step: finalizationStep,
+              channel: "reasoning",
+              delta: adapterEvent.delta,
+            });
+            break;
+          case "warning":
+            warnings.push(adapterEvent.warning);
+            this.emit(queue, turnId, "warning.raised", {
+              step: finalizationStep,
+              warning: adapterEvent.warning,
+            }, adapterEvent.raw);
+            break;
+          case "lifecycle":
+            this.emit(queue, turnId, "runtime.lifecycle", {
+              step: finalizationStep,
+              stage: adapterEvent.stage,
+              progress: adapterEvent.progress,
+            }, adapterEvent.raw);
+            break;
+          case "response.complete":
+            response = adapterEvent.response;
+            break;
+        }
+      }
+
+      throwIfCancelled(options.signal);
+
+      if (!response) {
+        throw new GemmaDesktopError("transport_error", "Runtime stream ended without a final response.");
+      }
+
+      this.emit(queue, turnId, "content.completed", {
+        step: finalizationStep,
+        text: response.text,
+        reasoning: response.reasoning,
+        toolCalls: response.toolCalls,
+      }, response.raw);
+
+      if (response.toolCalls.length === 0 && hasVisibleAssistantOutcome(response)) {
+        this.appendAssistantResponse(response);
+        finalResponse = response;
+        totalUsage = this.mergeUsage(totalUsage, response.usage);
+        executedSteps = finalizationStep;
+      }
     }
 
     if (finalResponse.toolCalls.length > 0 && !completedFromFinalizationToolResponse) {

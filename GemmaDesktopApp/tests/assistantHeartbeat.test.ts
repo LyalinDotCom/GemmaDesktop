@@ -4,6 +4,7 @@ import {
   applyAssistantCompletionMessage,
   buildAssistantHelperToolOutput,
   buildAssistantHelperToolSummary,
+  normalizeAssistantCompletionMessage,
   normalizeAssistantHeartbeatDecision,
   stripHiddenAssistantHeartbeatMessages,
 } from '../src/main/assistantHeartbeat'
@@ -39,6 +40,12 @@ describe('assistant heartbeat helpers', () => {
 
   it('preserves markdown structure in helper completion messages', () => {
     expect(
+      normalizeAssistantCompletionMessage(
+        '  I checked CNN.\r\n\r\nSearch was blocked, so this is only partial.  ',
+      ),
+    ).toBe('I checked CNN.\n\nSearch was blocked, so this is only partial.')
+
+    expect(
       normalizeAssistantHeartbeatDecision({
         action: 'complete',
         completionMessage:
@@ -63,6 +70,18 @@ describe('assistant heartbeat helpers', () => {
         consultedForTurnAudit: true,
       }),
     ).toBe('Checked the finished turn and no restart was needed.')
+
+    expect(
+      buildAssistantHelperToolSummary({
+        recoveredFailedTurn: true,
+      }),
+    ).toBe('Recovered the failed turn')
+
+    expect(
+      buildAssistantHelperToolOutput({
+        recoveredFailedTurn: true,
+      }),
+    ).toBe('Recovered a final message after the primary turn failed.')
   })
 
   it('replaces the last visible text block with a helper completion message', () => {
