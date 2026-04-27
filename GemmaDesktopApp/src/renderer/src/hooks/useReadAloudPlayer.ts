@@ -245,7 +245,21 @@ export function useReadAloudPlayer(input: UseReadAloudPlayerInput) {
           : 0
       nextAudio.load()
 
-      await nextAudio.play()
+      try {
+        await nextAudio.play()
+      } catch (error) {
+        if (requestTokenRef.current !== nextToken) {
+          nextAudio.pause()
+          nextAudio.currentTime = 0
+          return
+        }
+
+        console.warn('Read aloud audio is ready but playback did not start:', error)
+        syncTransport()
+        setPhase('paused')
+        return
+      }
+
       if (requestTokenRef.current !== nextToken) {
         nextAudio.pause()
         nextAudio.currentTime = 0

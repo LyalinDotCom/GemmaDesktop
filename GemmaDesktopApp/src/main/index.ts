@@ -263,6 +263,7 @@ function createWindow(): void {
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      autoplayPolicy: 'no-user-gesture-required',
       sandbox: false,
       spellcheck: true,
     },
@@ -445,6 +446,7 @@ async function ensureMenuBarPopupWindow(): Promise<BrowserWindow> {
     movable: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      autoplayPolicy: 'no-user-gesture-required',
       sandbox: false,
       spellcheck: true,
     },
