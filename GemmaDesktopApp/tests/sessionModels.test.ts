@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest'
+import { resolveSessionModelContextLength } from '../src/renderer/src/lib/sessionModels'
+import type { ModelSummary } from '../src/renderer/src/types'
+
+function makeModel(
+  input: Partial<ModelSummary> & Pick<ModelSummary, 'id' | 'runtimeId'>,
+): ModelSummary {
+  const { id, runtimeId, ...rest } = input
+
+  return {
+    status: 'available',
+    id,
+    name: id,
+    runtimeId,
+    runtimeName: runtimeId,
+    ...rest,
+  }
+}
+
+describe('resolveSessionModelContextLength', () => {
+  it('borrows same-model Ollama native metadata for OpenAI-compatible sessions', () => {
+    const models: ModelSummary[] = [
+      makeModel({
+        id: 'gemma4:31b-mlx-bf16',
+        runtimeId: 'ollama-openai',
+      }),
+      makeModel({
+        id: 'gemma4:31b-mlx-bf16',
+        runtimeId: 'ollama-native',
+        contextLength: 262_144,
+      }),
+    ]
+
+    expect(
+      resolveSessionModelContextLength(models, {
+        modelId: 'gemma4:31b-mlx-bf16',
+        runtimeId: 'ollama-openai',
+      }),
+    ).toBe(262_144)
+  })
+
+  it('uses requested runtime options before the generic fallback', () => {
+    const models: ModelSummary[] = [
+      makeModel({
+        id: 'custom:latest',
+        runtimeId: 'ollama-openai',
+        runtimeConfig: {
+          provider: 'ollama',
+          requestedOptions: {
+            num_ctx: 65_536,
+          },
+        },
+      }),
+    ]
+
+    expect(
+      resolveSessionModelContextLength(models, {
+        modelId: 'custom:latest',
+        runtimeId: 'ollama-openai',
+      }),
+    ).toBe(65_536)
+  })
+})

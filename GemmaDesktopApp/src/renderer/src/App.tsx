@@ -65,6 +65,7 @@ import {
   type ChatContentLayout,
 } from '@/lib/rightDockLayout'
 import { buildSessionContextEstimate } from '@/lib/sessionContext'
+import { resolveSessionModelContextLength } from '@/lib/sessionModels'
 import { buildSessionSpeedStats } from '@/lib/sessionSpeed'
 import {
   canQueueMessageWhileBusy,
@@ -1265,24 +1266,19 @@ export function App() {
   }
   const sessionContext = {
     tokensUsed: sessionContextEstimate.tokensUsed,
-    contextLength:
-      state.models.find(
-        (model) =>
-          model.id === state.activeSession?.modelId
-          && model.runtimeId === state.activeSession?.runtimeId,
-      )
-        ?.contextLength ?? 32768,
+    contextLength: resolveSessionModelContextLength(state.models, {
+      modelId: state.activeSession?.modelId,
+      runtimeId: state.activeSession?.runtimeId,
+    }),
     speed: sessionSpeed,
     source: sessionContextEstimate.source,
   }
   const globalChatContext = {
     tokensUsed: globalChatContextEstimate.tokensUsed,
-    contextLength:
-      state.models.find(
-        (model) =>
-          model.id === globalChatDetail?.modelId
-          && model.runtimeId === globalChatDetail?.runtimeId,
-      )?.contextLength ?? 32768,
+    contextLength: resolveSessionModelContextLength(state.models, {
+      modelId: globalChatDetail?.modelId,
+      runtimeId: globalChatDetail?.runtimeId,
+    }),
     speed: globalChatSpeed,
     source: globalChatContextEstimate.source,
   }

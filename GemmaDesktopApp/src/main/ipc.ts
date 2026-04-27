@@ -5755,15 +5755,61 @@ function setPendingCompactionState(
 async function resolveSessionContextLength(snapshot: SessionSnapshot): Promise<number> {
   try {
     const env = await gemmaDesktop.inspectEnvironment()
-    const models = mapModels(env.runtimes)
+    const currentSettings = await getSettingsState().catch(() => null)
+    const models = mapModels(env.runtimes, currentSettings)
     const matched = models.find(
       (model) =>
         model.id === snapshot.modelId && model.runtimeId === snapshot.runtimeId,
     )
-    return matched?.contextLength ?? 32768
+    const exactContextLength = resolveMappedModelContextLength(matched)
+    if (exactContextLength) {
+      return exactContextLength
+    }
+
+    const family = runtimeFamilyFromRuntimeId(snapshot.runtimeId)
+    const familyMatch = models.find(
+      (model) =>
+        model.id === snapshot.modelId
+        && runtimeFamilyFromRuntimeId(model.runtimeId) === family
+        && resolveMappedModelContextLength(model),
+    )
+    const familyContextLength = resolveMappedModelContextLength(familyMatch)
+    if (familyContextLength) {
+      return familyContextLength
+    }
+
+    const sameModel = models.find(
+      (model) =>
+        model.id === snapshot.modelId
+        && resolveMappedModelContextLength(model),
+    )
+    return resolveMappedModelContextLength(sameModel) ?? 32768
   } catch {
     return 32768
   }
+}
+
+function runtimeFamilyFromRuntimeId(runtimeId: string): string {
+  if (runtimeId.startsWith('ollama')) {
+    return 'ollama'
+  }
+  if (runtimeId.startsWith('lmstudio')) {
+    return 'lmstudio'
+  }
+  if (runtimeId.startsWith('llamacpp')) {
+    return 'llamacpp'
+  }
+  return runtimeId
+}
+
+function resolveMappedModelContextLength(
+  model: MappedModelSummary | undefined,
+): number | undefined {
+  return model?.contextLength
+    ?? model?.runtimeConfig?.loadedContextLength
+    ?? model?.runtimeConfig?.nominalContextLength
+    ?? model?.runtimeConfig?.requestedOptions?.num_ctx
+    ?? model?.runtimeConfig?.requestedOptions?.context_length
 }
 
 async function validateOutgoingAttachmentsForSession(input: {
@@ -5952,6 +5998,10 @@ function appendStreamingDelta(
   type: 'text' | 'thinking',
   delta: string,
 ): string {
+  if (delta.length === 0) {
+    return ''
+  }
+
   const last = blocks[blocks.length - 1]
   if (last?.type === type) {
     const previousText = last.text
@@ -5965,6 +6015,10 @@ function appendStreamingDelta(
   }
 
   const nextText = stripAssistantTransportArtifacts(delta)
+  if (nextText.length === 0) {
+    return ''
+  }
+
   blocks.push({ type, text: nextText, rawText: delta })
   return nextText
 }

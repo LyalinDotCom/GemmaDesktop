@@ -111,6 +111,55 @@ function pickMetadata(
   return undefined
 }
 
+function modelContextLength(model: ModelSummary | undefined): number | undefined {
+  if (!model) {
+    return undefined
+  }
+
+  return model.contextLength
+    ?? model.runtimeConfig?.loadedContextLength
+    ?? model.runtimeConfig?.nominalContextLength
+    ?? model.runtimeConfig?.requestedOptions?.num_ctx
+    ?? model.runtimeConfig?.requestedOptions?.context_length
+}
+
+export function resolveSessionModelContextLength(
+  models: ModelSummary[],
+  target: { modelId?: string | null; runtimeId?: string | null },
+  fallback = 32_768,
+): number {
+  const modelId = target.modelId ?? ''
+  const runtimeId = target.runtimeId ?? ''
+  if (!modelId) {
+    return fallback
+  }
+
+  const exact = models.find(
+    (model) => model.id === modelId && model.runtimeId === runtimeId,
+  )
+  const exactContextLength = modelContextLength(exact)
+  if (exactContextLength) {
+    return exactContextLength
+  }
+
+  const targetFamily = runtimeId ? runtimeFamilyFromId(runtimeId) : undefined
+  const familyMatch = models.find(
+    (model) =>
+      model.id === modelId
+      && (!targetFamily || runtimeFamilyFromId(model.runtimeId) === targetFamily)
+      && modelContextLength(model),
+  )
+  const familyContextLength = modelContextLength(familyMatch)
+  if (familyContextLength) {
+    return familyContextLength
+  }
+
+  const sameModel = models.find(
+    (model) => model.id === modelId && modelContextLength(model),
+  )
+  return modelContextLength(sameModel) ?? fallback
+}
+
 export function buildSelectableModels(
   models: ModelSummary[],
   mode: SessionMode,

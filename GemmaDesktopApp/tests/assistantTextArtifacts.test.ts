@@ -86,6 +86,60 @@ describe('assistant text artifact sanitization', () => {
     ])
   })
 
+  it('coalesces adjacent text and thinking blocks from tokenized reasoning streams', () => {
+    const blocks = [
+      {
+        type: 'thinking',
+        text: 'The',
+      },
+      {
+        type: 'thinking',
+        text: ' model',
+      },
+      {
+        type: 'text',
+        text: 'Answer',
+      },
+      {
+        type: 'text',
+        text: ' body',
+      },
+      {
+        type: 'tool_call',
+        toolName: 'read_file',
+        input: {},
+        output: 'done',
+        status: 'success',
+      },
+      {
+        type: 'thinking',
+        text: 'Later thought',
+      },
+    ] satisfies Array<Record<string, unknown>>
+
+    expect(sanitizeRenderableContentBlocks(blocks)).toEqual([
+      {
+        type: 'thinking',
+        text: 'The model',
+      },
+      {
+        type: 'text',
+        text: 'Answer body',
+      },
+      {
+        type: 'tool_call',
+        toolName: 'read_file',
+        input: {},
+        output: 'done',
+        status: 'success',
+      },
+      {
+        type: 'thinking',
+        text: 'Later thought',
+      },
+    ])
+  })
+
   it('returns the original block array when nothing needs cleanup', () => {
     const cleanBlocks = [
       {

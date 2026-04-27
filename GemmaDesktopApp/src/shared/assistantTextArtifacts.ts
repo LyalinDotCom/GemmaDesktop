@@ -67,25 +67,46 @@ export function sanitizeRenderableContentBlocks<T extends Array<Record<string, u
 ): T {
   let changed = false
 
-  const nextBlocks = blocks.map((block) => {
+  const nextBlocks = blocks.reduce<Array<Record<string, unknown>>>((sanitizedBlocks, block) => {
     const type = block.type
     const text = typeof block.text === 'string' ? block.text : null
 
     if ((type !== 'text' && type !== 'thinking') || text == null) {
-      return block
+      sanitizedBlocks.push(block)
+      return sanitizedBlocks
     }
 
     const sanitizedText = stripAssistantTransportArtifacts(text)
-    if (sanitizedText === text) {
-      return block
+    const nextBlock =
+      sanitizedText === text
+        ? block
+        : {
+            ...block,
+            text: sanitizedText,
+          }
+
+    if (sanitizedText !== text) {
+      changed = true
     }
 
-    changed = true
-    return {
-      ...block,
-      text: sanitizedText,
+    const previous = sanitizedBlocks[sanitizedBlocks.length - 1]
+    if (
+      previous
+      && previous.type === type
+      && typeof previous.text === 'string'
+      && typeof nextBlock.text === 'string'
+    ) {
+      sanitizedBlocks[sanitizedBlocks.length - 1] = {
+        ...previous,
+        text: `${previous.text}${nextBlock.text}`,
+      }
+      changed = true
+      return sanitizedBlocks
     }
-  })
+
+    sanitizedBlocks.push(nextBlock)
+    return sanitizedBlocks
+  }, [])
 
   return (changed ? nextBlocks : blocks) as T
 }
