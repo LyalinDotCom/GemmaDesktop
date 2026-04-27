@@ -461,6 +461,13 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     speechVisualState === 'listening'
     || speechVisualState === 'processing'
     || speechVisualState === 'stopping'
+  const attachmentsLocked =
+    isResearchConversation
+    || sessionBusy
+    || conversationRunBlocked
+    || submitLocked
+    || speechLocked
+    || isShellMode
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
@@ -1272,6 +1279,12 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   }, [forceStopSpeech, sessionBusy])
 
   useEffect(() => {
+    if (attachmentsLocked) {
+      setIsDragOver(false)
+    }
+  }, [attachmentsLocked])
+
+  useEffect(() => {
     if (!text.trim() && attachments.length === 0 && escapeClearState !== 'idle') {
       resetEscapeClearState()
     }
@@ -1574,6 +1587,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   ])
 
   const appendFiles = useCallback(async (files: Iterable<File> | ArrayLike<File>) => {
+    if (attachmentsLocked) {
+      return
+    }
+
     if (isResearchConversation) {
       setAttachmentErrorMessage(
         'Research conversations currently support text prompts only.',
@@ -1665,6 +1682,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     resetEscapeClearState()
     setAttachments((current) => [...current, ...plannedAttachments])
   }, [
+    attachmentsLocked,
     attachments,
     isResearchConversation,
     isShellMode,
@@ -1704,10 +1722,8 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
   const handleAttachButtonClick = useCallback(() => {
     if (
-      isResearchConversation
-      || sessionBusy
+      attachmentsLocked
       || isSubmitPending
-      || speechLocked
       || attachmentAccept.length === 0
     ) {
       return
@@ -1715,11 +1731,9 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
     fileInputRef.current?.click()
   }, [
+    attachmentsLocked,
     attachmentAccept.length,
-    isResearchConversation,
     isSubmitPending,
-    sessionBusy,
-    speechLocked,
   ])
 
   const handleAttachInputChange = useCallback(
@@ -1740,19 +1754,19 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
   const handleDragEnter = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (isResearchConversation || !dataTransferMayContainFiles(event.dataTransfer)) {
+      if (attachmentsLocked || !dataTransferMayContainFiles(event.dataTransfer)) {
         return
       }
 
       event.preventDefault()
       setIsDragOver(true)
     },
-    [isResearchConversation],
+    [attachmentsLocked],
   )
 
   const handleDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (isResearchConversation || !dataTransferMayContainFiles(event.dataTransfer)) {
+      if (attachmentsLocked || !dataTransferMayContainFiles(event.dataTransfer)) {
         return
       }
 
@@ -1762,12 +1776,12 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         setIsDragOver(true)
       }
     },
-    [isDragOver, isResearchConversation],
+    [attachmentsLocked, isDragOver],
   )
 
   const handleDragLeave = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (isResearchConversation || !dataTransferMayContainFiles(event.dataTransfer)) {
+      if (attachmentsLocked || !dataTransferMayContainFiles(event.dataTransfer)) {
         return
       }
 
@@ -1778,29 +1792,23 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
       setIsDragOver(false)
     },
-    [isResearchConversation],
+    [attachmentsLocked],
   )
 
   const handleDrop = useCallback(
     async (event: React.DragEvent<HTMLDivElement>) => {
-      if (isResearchConversation || !dataTransferMayContainFiles(event.dataTransfer)) {
+      if (attachmentsLocked || !dataTransferMayContainFiles(event.dataTransfer)) {
         return
       }
 
       event.preventDefault()
       setIsDragOver(false)
-      if (sessionBusy || isSubmitPending || speechLocked) {
-        return
-      }
 
       await appendFiles(event.dataTransfer.files)
     },
     [
       appendFiles,
-      isResearchConversation,
-      isSubmitPending,
-      sessionBusy,
-      speechLocked,
+      attachmentsLocked,
     ],
   )
 
@@ -2047,6 +2055,21 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         : `${floatingPresentation ? 'rounded-2xl p-2' : 'rounded-md p-1.5'} bg-violet-600 text-white transition-colors hover:bg-violet-700 disabled:opacity-30 disabled:hover:bg-violet-600`
   const assistantNarrationTitle = assistantNarrationDisabledReason
     ?? describeAssistantNarrationMode(assistantNarrationMode)
+  const attachmentButtonTitle = isResearchConversation
+    ? 'Research conversations currently support text prompts only.'
+    : isShellMode
+    ? 'Shell mode does not accept attachments'
+    : sessionBusy
+      ? isCompacting
+        ? 'Wait for compaction to finish before attaching files'
+        : 'Wait for this turn to finish before attaching files'
+      : conversationRunDisabledReason
+        ? conversationRunDisabledReason
+      : speechLocked
+        ? 'Finish speech input before attaching files'
+      : attachmentAccept.length > 0
+        ? 'Attach file'
+        : 'This model does not currently accept local attachments'
   const trimmedText = text.trim()
   const canRunShellCommand =
     isShellMode
@@ -2303,6 +2326,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
               type="file"
               accept={attachmentAccept}
               multiple
+              disabled={attachmentsLocked || isSubmitPending || attachmentAccept.length === 0}
               tabIndex={-1}
               className="hidden"
             onChange={(event) => {
@@ -2328,40 +2352,16 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
             <div className="flex flex-none items-center gap-1 self-center">
               <button
                 onClick={handleAttachButtonClick}
-                disabled={
-                  isResearchConversation
-                  || sessionBusy
-                  || conversationRunBlocked
-                  || submitLocked
-                  || speechLocked
-                  || isShellMode
-                  || attachmentAccept.length === 0
-                }
-                className={`${floatingPresentation ? 'rounded-xl p-2' : 'rounded-md p-1.5'} text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300`}
-                title={
-                  isResearchConversation
-                    ? 'Research conversations currently support text prompts only.'
-                    : isShellMode
-                    ? 'Shell mode does not accept attachments'
-                    : conversationRunDisabledReason
-                      ? conversationRunDisabledReason
-                    : attachmentAccept.length > 0
-                      ? 'Attach file'
-                      : 'This model does not currently accept local attachments'
-                }
+                disabled={attachmentsLocked || isSubmitPending || attachmentAccept.length === 0}
+                className={`${floatingPresentation ? 'rounded-xl p-2' : 'rounded-md p-1.5'} text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 dark:disabled:hover:bg-transparent dark:disabled:hover:text-zinc-400`}
+                title={attachmentButtonTitle}
+                aria-label={attachmentButtonTitle}
               >
                 <Paperclip size={16} />
               </button>
               <button
                 onClick={() => setCameraOpen(true)}
-                disabled={
-                  isResearchConversation
-                  || sessionBusy
-                  || conversationRunBlocked
-                  || submitLocked
-                  || speechLocked
-                  || isShellMode
-                }
+                disabled={attachmentsLocked}
                 className={`${floatingPresentation ? 'rounded-xl p-2' : 'rounded-md p-1.5'} text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-300`}
                 title={
                   isResearchConversation
@@ -2831,6 +2831,9 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
             open={cameraOpen}
             onClose={() => setCameraOpen(false)}
             onConfirm={(attachment) => {
+              if (attachmentsLocked) {
+                return
+              }
               setAttachments((current) => [...current, attachment])
             }}
           />

@@ -395,6 +395,22 @@ describe('InputBar mode rendering', () => {
     expect(researchMarkup).toContain('Wait for deep research to finish before sending another prompt.')
   })
 
+  it('locks the attachment control while the agent is running', () => {
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        selectedMode: 'explore',
+        isGenerating: true,
+      })),
+    )
+
+    expect(markup).toContain('Wait for this turn to finish before attaching files')
+    expect(markup.match(/<input[^>]*type="file"[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+    expect(
+      markup.match(/<button[^>]*aria-label="Wait for this turn to finish before attaching files"[^>]*>/)?.[0] ?? '',
+    ).toMatch(/\sdisabled(?=[\s=>])/)
+  })
+
   it('can disable busy queueing for turn-taking surfaces like CoBrowse', () => {
     const reason = 'Wait for the current CoBrowse turn to finish before sending another request.'
     const markup = renderToStaticMarkup(
