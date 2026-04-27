@@ -580,4 +580,83 @@
       opacity: 0.55;
     }
   }
+
+  /* Read-aloud playback overlay — animated indicators that signal live audio.
+     Three-bar equalizer next to the title and a soft pulse on the scrubber
+     thumb give the player a "now playing" presence without taking space. */
+  .read-aloud-equalizer-bar {
+    display: block;
+    width: 3px;
+    height: 100%;
+    border-radius: 9999px;
+    transform-origin: bottom;
+    animation: read-aloud-equalizer 1.05s ease-in-out infinite;
+  }
+
+  .read-aloud-equalizer-bar:nth-child(2) {
+    animation-delay: 140ms;
+    animation-duration: 0.92s;
+  }
+
+  .read-aloud-equalizer-bar:nth-child(3) {
+    animation-delay: 280ms;
+    animation-duration: 1.18s;
+  }
+
+  @keyframes read-aloud-equalizer {
+    0%,
+    100% {
+      transform: scaleY(0.35);
+      opacity: 0.65;
+    }
+    45% {
+      transform: scaleY(1);
+      opacity: 1;
+    }
+    70% {
+      transform: scaleY(0.55);
+      opacity: 0.85;
+    }
+  }
+
+  .read-aloud-thumb-pulse {
+    animation: read-aloud-thumb-pulse 1.6s ease-in-out infinite;
+  }
+
+  .read-aloud-thumb-pulse-cosmic {
+    animation: read-aloud-thumb-pulse-cosmic 1.6s ease-in-out infinite;
+  }
+
+  @keyframes read-aloud-thumb-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(99, 102, 241, 0);
+    }
+  }
+
+  @keyframes read-aloud-thumb-pulse-cosmic {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+    }
+    50% {
+      box-shadow: 0 0 0 7px rgba(34, 211, 238, 0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .read-aloud-equalizer-bar,
+    .read-aloud-thumb-pulse,
+    .read-aloud-thumb-pulse-cosmic {
+      animation: none;
+    }
+
+    .read-aloud-equalizer-bar {
+      transform: scaleY(0.7);
+      opacity: 0.85;
+    }
+  }
 }

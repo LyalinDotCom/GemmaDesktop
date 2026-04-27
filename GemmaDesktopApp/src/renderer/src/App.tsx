@@ -2433,6 +2433,7 @@ export function App() {
       readAloudSlot={
         <ReadAloudPlaybackOverlay
           controls={readAloudPlayer.playbackControls}
+          variant="cosmic"
           className="pointer-events-auto mt-3"
         />
       }
