@@ -38,6 +38,34 @@ function domainMonogram(domain: string): string {
   return letters || '?'
 }
 
+function normalizeIconDomain(domain: string): string | null {
+  const trimmed = domain
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .replace(/^www\./i, '')
+    .toLowerCase()
+
+  return /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(trimmed) ? trimmed : null
+}
+
+export function buildDomainIconCandidates(domain: string): string[] {
+  const normalized = normalizeIconDomain(domain)
+  if (!normalized) {
+    return []
+  }
+
+  const candidates = [
+    `https://${normalized}/favicon.ico`,
+  ]
+
+  candidates.push(
+    `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(`https://${normalized}`)}&sz=64`,
+  )
+
+  return [...new Set(candidates)]
+}
+
 function StepIcon({ status, animate = true }: { status: ResearchPanelStepStatus; animate?: boolean }) {
   if (status === 'running') {
     return (
@@ -75,9 +103,31 @@ function StepIcon({ status, animate = true }: { status: ResearchPanelStepStatus;
 
 function DomainBadge({ domain }: { domain: string }) {
   const monogram = domainMonogram(domain)
+  const iconCandidates = useMemo(() => buildDomainIconCandidates(domain), [domain])
+  const [iconIndex, setIconIndex] = useState(0)
+  const iconUrl = iconCandidates[iconIndex]
+
+  useEffect(() => {
+    setIconIndex(0)
+  }, [domain])
+
   return (
-    <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-[10px] font-semibold tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-      {monogram.length > 0 ? monogram : <Globe size={12} />}
+    <span className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 text-[10px] font-semibold tracking-wide text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+      <span className="flex h-full w-full items-center justify-center">
+        {monogram.length > 0 ? monogram : <Globe size={12} />}
+      </span>
+      {iconUrl && (
+        <img
+          src={iconUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full bg-white object-contain p-0.5 dark:bg-zinc-900"
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          aria-hidden="true"
+          onError={() => setIconIndex((index) => index + 1)}
+        />
+      )}
     </span>
   )
 }
