@@ -1,7 +1,10 @@
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { InputBar } from '../src/renderer/src/components/InputBar'
+import {
+  InputBar,
+  isComposerSubmitLocked,
+} from '../src/renderer/src/components/InputBar'
 import type { InputBarProps } from '../src/renderer/src/components/InputBar'
 import { getNextAssistantNarrationMode } from '../src/renderer/src/lib/assistantNarrationMode'
 import type { ModelSummary } from '../src/renderer/src/types'
@@ -86,6 +89,18 @@ function buildProps(
 }
 
 describe('InputBar mode rendering', () => {
+  it('releases the local send lock once the session is busy so the next turn can queue', () => {
+    expect(isComposerSubmitLocked({
+      isSubmitPending: true,
+      sessionBusy: false,
+    })).toBe(true)
+
+    expect(isComposerSubmitLocked({
+      isSubmitPending: true,
+      sessionBusy: true,
+    })).toBe(false)
+  })
+
   it('cycles spoken response modes from off to summaries to full responses', () => {
     expect(getNextAssistantNarrationMode('off')).toBe('summary')
     expect(getNextAssistantNarrationMode('summary')).toBe('full')
@@ -344,6 +359,7 @@ describe('InputBar mode rendering', () => {
   it('only advertises busy queueing for normal work conversations', () => {
     const buildMarkup = renderToStaticMarkup(
       createElement(InputBar, buildProps({
+        initialDraftText: 'queue this',
         selectedMode: 'build',
         isGenerating: true,
       })),
@@ -370,6 +386,10 @@ describe('InputBar mode rendering', () => {
     )
 
     expect(buildMarkup).toContain('Queue the next message while this turn runs')
+    expect(buildMarkup.match(/<textarea[^>]*>/)?.[0] ?? '')
+      .not.toMatch(/\sdisabled(?=[\s=>])/)
+    expect(buildMarkup.match(/<button[^>]*title="Queue message"[^>]*>/)?.[0] ?? '')
+      .not.toMatch(/\sdisabled(?=[\s=>])/)
     expect(exploreMarkup).toContain('Queue the next message while this turn runs')
     expect(planMarkup).toContain('Wait for plan mode to finish before sending another prompt.')
     expect(researchMarkup).toContain('Wait for deep research to finish before sending another prompt.')

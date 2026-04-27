@@ -71,6 +71,7 @@ import {
   getBusyQueueBlockedReason,
 } from '@/lib/sessionQueuePolicy'
 import {
+  getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
   shouldCloseProjectBrowserForConversationSwitch,
 } from '@/lib/projectBrowserPolicy'
@@ -515,18 +516,36 @@ export function App() {
       state.activeSessionId,
     )
     : null
-  const primaryConversationRunDisabledReason = primaryConversationBlocker
-    ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
-    : null
   const globalConversationBlocker = globalChatSession.sessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
       globalChatSession.sessionId,
     )
     : null
-  const globalConversationRunDisabledReason = globalConversationBlocker
-    ? formatConversationExecutionBlockedReason(globalConversationBlocker)
-    : null
+  const primaryCoBrowseUserControlDisabledReason =
+    getCoBrowseUserControlComposerLockReason({
+      coBrowseActive,
+      projectBrowserCoBrowseActive: projectBrowserState.coBrowseActive,
+      projectBrowserControlOwner: projectBrowserState.controlOwner,
+      projectBrowserSessionId: projectBrowserState.sessionId,
+      targetSessionId: state.activeSessionId,
+    })
+  const primaryConversationRunDisabledReason = primaryCoBrowseUserControlDisabledReason
+    ?? (primaryConversationBlocker
+      ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
+      : null)
+  const globalCoBrowseUserControlDisabledReason =
+    getCoBrowseUserControlComposerLockReason({
+      coBrowseActive,
+      projectBrowserCoBrowseActive: projectBrowserState.coBrowseActive,
+      projectBrowserControlOwner: projectBrowserState.controlOwner,
+      projectBrowserSessionId: projectBrowserState.sessionId,
+      targetSessionId: globalChatSession.sessionId,
+    })
+  const globalConversationRunDisabledReason = globalCoBrowseUserControlDisabledReason
+    ?? (globalConversationBlocker
+      ? formatConversationExecutionBlockedReason(globalConversationBlocker)
+      : null)
   const ramAwareDefaultModelSelection = useMemo(
     () =>
       createDefaultModelSelectionSettings(
@@ -1013,6 +1032,7 @@ export function App() {
       || !nextQueuedMessage
       || globalChatBusy
       || globalConversationRunDisabledReason
+      || globalCoBrowseUserControlDisabledReason
     ) {
       return
     }
@@ -1022,6 +1042,9 @@ export function App() {
     }
 
     drainingGlobalQueuedMessagesRef.current.add(nextQueuedMessage.id)
+    setGlobalQueuedMessages((current) =>
+      current.filter((message) => message.id !== nextQueuedMessage.id),
+    )
     void window.gemmaDesktopBridge.sessions
       .sendMessage(sessionId, {
         text: nextQueuedMessage.text,
@@ -1029,9 +1052,6 @@ export function App() {
         coBrowse: nextQueuedMessage.coBrowse,
       })
       .then(async () => {
-        setGlobalQueuedMessages((current) =>
-          current.filter((message) => message.id !== nextQueuedMessage.id),
-        )
         await refreshSessionSummaries()
       })
       .catch((error) => {
@@ -1042,20 +1062,21 @@ export function App() {
           errorMessage.includes('already generating a response')
           || isConversationExecutionBlockedError(errorMessage)
         ) {
+          setGlobalQueuedMessages((current) => [
+            nextQueuedMessage,
+            ...current.filter((message) => message.id !== nextQueuedMessage.id),
+          ])
           return
         }
 
-        setGlobalQueuedMessages((current) =>
-          current.map((message) =>
-            message.id === nextQueuedMessage.id
-              ? {
-                  ...message,
-                  status: 'failed',
-                  error: errorMessage,
-                }
-              : message,
-          ),
-        )
+        setGlobalQueuedMessages((current) => [
+          {
+            ...nextQueuedMessage,
+            status: 'failed',
+            error: errorMessage,
+          },
+          ...current.filter((message) => message.id !== nextQueuedMessage.id),
+        ])
       })
       .finally(() => {
         drainingGlobalQueuedMessagesRef.current.delete(nextQueuedMessage.id)
@@ -1063,6 +1084,7 @@ export function App() {
   }, [
     globalChatBusy,
     globalChatSession.sessionId,
+    globalCoBrowseUserControlDisabledReason,
     globalConversationRunDisabledReason,
     globalQueuedMessages,
     refreshSessionSummaries,

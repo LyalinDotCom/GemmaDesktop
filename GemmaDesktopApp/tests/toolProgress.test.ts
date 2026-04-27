@@ -28,6 +28,7 @@ describe('tool progress helpers', () => {
 
     expect(activity.activeToolName).toBe('edit_file')
     expect(activity.activeToolLabel).toBe('Updating files')
+    expect(activity.activeToolContext).toBe('src/App.tsx')
     expect(activity.runningToolCount).toBe(1)
     expect(activity.completedToolCount).toBe(0)
     expect(activity.recentProgressCount).toBe(1)
@@ -99,6 +100,44 @@ describe('tool progress helpers', () => {
     expect(fetched.blocks[0]?.worker?.counters?.toolCalls).toBe(1)
     expect(fetched.blocks[0]?.worker?.counters?.toolResults).toBe(1)
     expect(fetched.blocks[0]?.worker?.counters?.fetchedSources).toBe(1)
+  })
+
+  it('surfaces delegated child tool context in live activity', () => {
+    const blocks = appendToolCallBlock(
+      [],
+      {
+        toolName: 'workspace_search_agent',
+        input: { goal: 'Find where thinking summaries are generated' },
+        callId: 'tool-search',
+      },
+      1_000,
+    )
+
+    const updated = applyDelegatedProgressToBlocks(
+      blocks,
+      {
+        parentToolCallId: 'tool-search',
+        parentToolName: 'workspace_search_agent',
+        kind: 'event',
+        childEventType: 'tool.call',
+        childPayload: {
+          toolName: 'search_text',
+          input: {
+            pattern: 'thinkingSummary.generate',
+          },
+        },
+      },
+      1_200,
+    )
+    const activity = refreshLiveActivityFromToolBlocks(
+      createInitialSessionLiveActivity(1_000),
+      updated.blocks,
+      1_200,
+      1,
+    )
+
+    expect(activity.activeToolLabel).toBe('Inspecting project')
+    expect(activity.activeToolContext).toBe('thinkingSummary.generate')
   })
 
   it('hydrates delegated web research agent results with sources and trace metadata', () => {

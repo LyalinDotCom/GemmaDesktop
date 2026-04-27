@@ -4,6 +4,7 @@ export interface ThinkingSummaryTaskInput {
   thinkingText: string
   userText?: string
   conversationTitle?: string
+  turnContext?: string
 }
 
 export interface ThinkingSummaryTask {
@@ -32,6 +33,7 @@ export const MIN_THINKING_LENGTH_FOR_SUMMARY = 80
 const MAX_THINKING_PROMPT_CHARS = 64000
 const MAX_USER_PROMPT_CHARS = 2000
 const MAX_TITLE_PROMPT_CHARS = 200
+const MAX_TURN_CONTEXT_PROMPT_CHARS = 4000
 const MAX_SUMMARY_OUTPUT_CHARS = 80
 
 function clipForPrompt(value: string, maxLength: number): string {
@@ -138,11 +140,13 @@ export function buildThinkingSummaryTask(
   const thinking = clipFromBothEnds(input.thinkingText, MAX_THINKING_PROMPT_CHARS)
   const userText = clipForPrompt(input.userText ?? '', MAX_USER_PROMPT_CHARS)
   const title = clipForPrompt(input.conversationTitle ?? '', MAX_TITLE_PROMPT_CHARS)
+  const turnContext = clipForPrompt(input.turnContext ?? '', MAX_TURN_CONTEXT_PROMPT_CHARS)
 
   return {
     systemInstructions: [
       'You write a one-line preview of what an AI assistant was thinking through internally.',
       "Read the assistant's hidden chain-of-thought and produce a short status line that names what the assistant was working on or weighing.",
+      'Use the user request and completed-turn context as grounding. If they conflict with the hidden text, prefer the completed-turn context.',
       'Style: present-participle phrase, 4 to 10 words, that reads like a status indicator.',
       'Examples:',
       '- Tracing the rename across files',
@@ -153,6 +157,7 @@ export function buildThinkingSummaryTask(
       'Rules:',
       '- Name the line of inquiry, not the conclusion or the final answer.',
       '- Be concrete about the subject; reference the actual topic when it is clear.',
+      '- Prefer real files, tools, commands, queries, errors, or results from the completed-turn context over generic wording.',
       "- Do not start with words like 'Thinking', 'The assistant', 'I am', or 'Considering whether'.",
       '- No markdown, quotes, emojis, trailing punctuation, or stage directions.',
       '- One line, single phrase, capitalize only the first word.',
@@ -164,6 +169,7 @@ export function buildThinkingSummaryTask(
         text: [
           title ? `Conversation title: ${title}` : '',
           userText ? `User request: ${userText}` : '',
+          turnContext ? `Completed-turn context:\n${turnContext}` : '',
           'Assistant chain-of-thought (verbatim, possibly truncated in the middle):',
           '"""',
           thinking,

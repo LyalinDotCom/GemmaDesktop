@@ -70,6 +70,25 @@ describe('live activity presentation', () => {
     expect(label).toBe('Fetching sources')
   })
 
+  it('uses grounded tool context for detail text and hover notes', () => {
+    const presentation = buildLiveActivityPresentation(makeActivity({
+      lastEventAt: 5_000,
+      activeToolName: 'search_text',
+      activeToolLabel: 'Inspecting project',
+      activeToolContext: 'thinkingSummary.generate',
+      runningToolCount: 1,
+    }), 10_000)
+
+    expect(presentation.label).toBe('Inspecting project')
+    expect(presentation.detail).toBe('thinkingSummary.generate')
+    expect(presentation.note).toBe('Inspecting project: thinkingSummary.generate')
+    expect(presentation.metrics).toEqual(
+      expect.arrayContaining([
+        { label: 'Context', value: 'thinkingSummary.generate' },
+      ]),
+    )
+  })
+
   it('includes chunk counts, first token timing, and tool progress fields in the hover metrics', () => {
     const activity = makeActivity({
       state: 'streaming',

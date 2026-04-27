@@ -24,18 +24,25 @@ describe('thinking summary helper prompt', () => {
         'The user wants me to rename the function getCwd to getCurrentWorkingDirectory across the project. I should grep for all usages first, then update each call site, then run tests.',
       userText: 'Rename getCwd to getCurrentWorkingDirectory',
       conversationTitle: 'Refactor pass',
+      turnContext: [
+        'Tool: search_text success | pattern getCwd',
+        'Files changed: src/fs.ts, tests/fs.test.ts',
+      ].join('\n'),
     })
 
     expect(task.systemInstructions).toContain('one-line preview')
     expect(task.systemInstructions).toContain('present-participle phrase')
     expect(task.systemInstructions).toContain('4 to 10 words')
     expect(task.systemInstructions).toContain('Name the line of inquiry')
+    expect(task.systemInstructions).toContain('completed-turn context')
     expect(task.systemInstructions).toContain('No markdown')
     expect(task.systemInstructions).toContain('"summary" field')
 
     const text = extractFirstText(task.sessionInput)
     expect(text).toContain('Conversation title: Refactor pass')
     expect(text).toContain('User request: Rename getCwd to getCurrentWorkingDirectory')
+    expect(text).toContain('Completed-turn context:')
+    expect(text).toContain('Files changed: src/fs.ts, tests/fs.test.ts')
     expect(text).toContain('Assistant chain-of-thought')
     expect(text).toContain('Write the one-line status preview now.')
   })

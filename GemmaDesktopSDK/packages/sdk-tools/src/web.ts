@@ -180,9 +180,14 @@ export type SearchProviderOverride = (
 ) => Promise<GeminiApiSearchResponse>;
 
 let searchProviderOverride: SearchProviderOverride | null = null;
+let geminiSearchRetryDelaysMs = [0, 1_000, 2_000, 4_000, 8_000];
 
 export function setSearchProviderForTests(fn: SearchProviderOverride | null): void {
   searchProviderOverride = fn;
+}
+
+export function setGeminiSearchRetryDelaysForTests(delaysMs: number[] | null): void {
+  geminiSearchRetryDelaysMs = delaysMs ?? [0, 1_000, 2_000, 4_000, 8_000];
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -378,6 +383,19 @@ function buildRequestRetryLabel(input: {
   return `Retrying request after ${reason} (attempt ${input.nextAttempt} of ${input.totalAttempts})`;
 }
 
+function buildGeminiSearchRetryLabel(input: {
+  status?: number | string;
+  error?: string;
+  nextAttempt: number;
+  totalAttempts: number;
+}): string {
+  const reason =
+    typeof input.status === "number" || typeof input.status === "string"
+      ? `HTTP ${input.status}`
+      : normalizeWhitespace(input.error ?? "Gemini capacity pressure");
+  return `Retrying Gemini search after ${reason} (attempt ${input.nextAttempt} of ${input.totalAttempts})`;
+}
+
 function describeRequestAttempt(attempt: RequestAttemptRecord): string {
   if (typeof attempt.status === "number") {
     return `HTTP ${attempt.status}`;
@@ -452,6 +470,154 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 function shouldRetryStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function isRetryableGeminiSearchFailure(error: unknown): boolean {
+  if (!(error instanceof GemmaDesktopError)) {
+    return isLikelyTransientNetworkError(error);
+  }
+
+  const details = error.details ?? {};
+  const status = details.status;
+  const errorKind = details.errorKind;
+  const providerStatus = details.providerStatus;
+  const message = [
+    error.message,
+    typeof details.errorMessage === "string" ? details.errorMessage : "",
+    typeof details.rawErrorMessage === "string" ? details.rawErrorMessage : "",
+    typeof providerStatus === "string" ? providerStatus : "",
+  ].join("\n");
+
+  if (
+    errorKind === "quota_exhausted"
+    || errorKind === "capacity_exhausted"
+    || providerStatus === "RESOURCE_EXHAUSTED"
+    || providerStatus === "UNAVAILABLE"
+  ) {
+    return true;
+  }
+
+  return (
+    typeof status === "number"
+    && (status === 408 || status === 425 || status === 429 || status === 502 || status === 503 || status === 504)
+  ) || /\b(?:resource.?exhausted|rate.?limit|too many requests|capacity|high demand|temporar(?:y|ily) unavailable|unavailable|overloaded)\b/i.test(message);
+}
+
+function getGeminiSearchFailureStatus(error: unknown): number | string | undefined {
+  if (!(error instanceof GemmaDesktopError)) {
+    return undefined;
+  }
+
+  const status = error.details?.status;
+  if (typeof status === "number" || typeof status === "string") {
+    return status;
+  }
+
+  return undefined;
+}
+
+function getGeminiSearchFailureMessage(error: unknown): string {
+  if (error instanceof GemmaDesktopError) {
+    const details = error.details ?? {};
+    return typeof details.errorMessage === "string" && details.errorMessage.trim().length > 0
+      ? details.errorMessage
+      : error.message;
+  }
+
+  return extractErrorMessage(error);
+}
+
+function buildRetriedGeminiSearchMessage(
+  error: GemmaDesktopError,
+  attempts: Array<{ status?: number | string; error: string }>,
+): string {
+  const lastAttempt = attempts.at(-1);
+  const errorKind = error.details?.errorKind;
+  const attemptCount = formatCountLabel(attempts.length, "attempt");
+  const lastFailure = lastAttempt?.error ?? "unknown failure";
+
+  if (errorKind === "capacity_exhausted") {
+    return [
+      `Gemini search seems down or out of capacity after ${attemptCount}.`,
+      "This looks like Gemini provider capacity pressure, not a bad API key and not clearly your project's quota.",
+      `Last provider error: ${lastFailure}`,
+    ].join(" ");
+  }
+
+  if (errorKind === "quota_exhausted") {
+    return [
+      `Gemini API quota or rate limit is exhausted after ${attemptCount}.`,
+      "This looks tied to the configured AI Studio project quota/rate-limit window; check AI Studio usage/billing or wait for the window to reset.",
+      `Last provider error: ${lastFailure}`,
+    ].join(" ");
+  }
+
+  return `${error.message} Gemini search failed after ${attemptCount}. Last failure: ${lastFailure}.`;
+}
+
+function buildRetriedGeminiSearchError(error: unknown, attempts: Array<{ status?: number | string; error: string }>): unknown {
+  if (!(error instanceof GemmaDesktopError) || attempts.length <= 1) {
+    return error;
+  }
+
+  return new GemmaDesktopError(
+    error.kind,
+    buildRetriedGeminiSearchMessage(error, attempts),
+    {
+      details: {
+        ...(error.details ?? {}),
+        retryCount: attempts.length - 1,
+        attempts,
+      },
+      raw: error.raw,
+    },
+  );
+}
+
+async function executeGeminiApiSearchWithRetries(
+  input: GeminiApiSearchInput,
+  options: WebExecutionOptions,
+): Promise<{ result: GeminiApiSearchResponse; attempts: Array<{ status?: number | string; error: string }> }> {
+  const delays = geminiSearchRetryDelaysMs.length > 0
+    ? geminiSearchRetryDelaysMs
+    : [0, 1_000, 2_000, 4_000, 8_000];
+  const attempts: Array<{ status?: number | string; error: string }> = [];
+
+  for (let index = 0; index < delays.length; index += 1) {
+    if (index > 0) {
+      await sleep(delays[index] ?? 0, options.signal);
+    }
+
+    try {
+      const result = searchProviderOverride
+        ? await searchProviderOverride(input, options)
+        : await executeGeminiApiSearch(input, undefined, { signal: options.signal });
+      return { result, attempts };
+    } catch (error) {
+      const attempt = {
+        status: getGeminiSearchFailureStatus(error),
+        error: getGeminiSearchFailureMessage(error),
+      };
+      attempts.push(attempt);
+
+      if (!isRetryableGeminiSearchFailure(error) || index >= delays.length - 1) {
+        throw buildRetriedGeminiSearchError(error, attempts);
+      }
+
+      emitWebProgress(options, {
+        id: "search-gemini-retry",
+        label: buildGeminiSearchRetryLabel({
+          status: attempt.status,
+          error: attempt.error,
+          nextAttempt: index + 2,
+          totalAttempts: delays.length,
+        }),
+        tone: "warning",
+      });
+    }
+  }
+
+  throw new GemmaDesktopError("tool_execution_failed", "Gemini search retry loop exited unexpectedly.");
 }
 
 function isLocalhostUrl(url: string): boolean {
@@ -2179,10 +2345,11 @@ export async function executeSearchWeb(
   });
 
   let geminiResult: GeminiApiSearchResponse;
+  let geminiAttempts: Array<{ status?: number | string; error: string }> = [];
   try {
-    geminiResult = override
-      ? await override(geminiInput, options)
-      : await executeGeminiApiSearch(geminiInput, undefined, { signal: options.signal });
+    const executed = await executeGeminiApiSearchWithRetries(geminiInput, options);
+    geminiResult = executed.result;
+    geminiAttempts = executed.attempts;
   } catch (error) {
     emitWebProgress(options, {
       id: "search-complete",
@@ -2273,6 +2440,10 @@ export async function executeSearchWeb(
       warnings: geminiResult.warnings,
       webSearchQueries: geminiResult.webSearchQueries,
       truncated: filteredResults.length >= normalized.maxResults,
+      retryCount: geminiAttempts.length,
+      recoveredAfterRetry: geminiAttempts.length > 0,
+      transientRecovery: geminiAttempts.length > 0,
+      ...(geminiAttempts.length > 0 ? { attempts: geminiAttempts } : {}),
     },
   };
 }
@@ -2306,8 +2477,10 @@ export const __testing = {
   isAbortError,
   isLikelyTransientNetworkError,
   isLikelyTransientNetworkMessage,
+  isRetryableGeminiSearchFailure,
   parseBingHtml,
   parseGoogleHtml,
   rankSearchResults,
+  setGeminiSearchRetryDelaysForTests,
   shouldFallbackToNativeFetch,
 };

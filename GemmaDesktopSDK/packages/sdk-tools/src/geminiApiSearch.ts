@@ -8,6 +8,7 @@ export type GeminiApiSearchErrorKind =
   | "missing_key"
   | "auth_invalid"
   | "quota_exhausted"
+  | "capacity_exhausted"
   | "timeout"
   | "network_error"
   | "safety_blocked"
@@ -282,15 +283,26 @@ function classifyApiSearchFailure(
   context: { durationMs: number; model: string },
 ): GemmaDesktopError {
   const message = error instanceof Error ? error.message : String(error);
-  const status = (error as { status?: number; code?: number | string })?.status
+  const providerError = parseProviderErrorMessage(message);
+  const status = providerError?.code
+    ?? (error as { status?: number; code?: number | string })?.status
     ?? (error as { status?: number; code?: number | string })?.code;
-  const lowered = message.toLowerCase();
+  const providerStatus = providerError?.status;
+  const providerMessage = providerError?.message ?? message;
+  const lowered = `${providerMessage}\n${message}`.toLowerCase();
+  const details = {
+    ...context,
+    status,
+    providerStatus,
+    errorMessage: providerMessage,
+    rawErrorMessage: message,
+  };
 
   if (error instanceof Error && error.name === "AbortError") {
     return buildApiSearchError({
       kind: "timeout",
       reason: "Gemini API web search was aborted before returning. Tell the user the search was cancelled and suggest retrying.",
-      details: { ...context, errorMessage: message },
+      details,
     });
   }
 
@@ -298,7 +310,7 @@ function classifyApiSearchFailure(
     return buildApiSearchError({
       kind: "timeout",
       reason: `Gemini API did not return a search result within ${Math.round(GEMINI_API_SEARCH_TIMEOUT_MS / 1000)} seconds. Tell the user the web search timed out and suggest they retry or rephrase the query.`,
-      details: { ...context, errorMessage: message },
+      details,
     });
   }
 
@@ -311,19 +323,48 @@ function classifyApiSearchFailure(
       kind: "auth_invalid",
       reason:
         "The Gemini API key was rejected. Tell the user to open Gemma Desktop -> Settings -> Integrations and paste a working Gemini API key from https://aistudio.google.com/app/apikey. Web search will stay broken until the key is fixed.",
-      details: { ...context, status, errorMessage: message },
+      details,
+    });
+  }
+
+  if (
+    /quota exceeded|exceeded your current quota|check your plan and billing|requests per day|tokens per minute|requests per minute|quotametric|quota metric/i.test(
+      lowered,
+    )
+  ) {
+    return buildApiSearchError({
+      kind: "quota_exhausted",
+      reason:
+        "The Gemini API rejected the search because the configured project's quota or rate limit appears to be exhausted. Tell the user to check the AI Studio project quota/billing or wait for the quota window to reset.",
+      details,
     });
   }
 
   if (
     status === 429
-    || /quota|rate.?limit|resource.?exhausted|too many requests|capacity/i.test(lowered)
+    || status === 502
+    || status === 503
+    || status === 504
+    || providerStatus === "RESOURCE_EXHAUSTED"
+    || providerStatus === "UNAVAILABLE"
+    || /resource.?exhausted|capacity|high demand|temporar(?:y|ily) unavailable|unavailable|overloaded|try again later/i.test(
+      lowered,
+    )
   ) {
+    return buildApiSearchError({
+      kind: "capacity_exhausted",
+      reason:
+        "Gemini search appears to be down or out of capacity. Tell the user this looks like provider capacity pressure, not a bad API key or clearly exhausted project quota.",
+      details,
+    });
+  }
+
+  if (/rate.?limit|too many requests/i.test(lowered)) {
     return buildApiSearchError({
       kind: "quota_exhausted",
       reason:
-        "The Gemini API rejected the search with a quota/rate-limit error. Tell the user the Gemini API is over capacity or the key has hit its quota, and suggest they wait a minute or upgrade the key.",
-      details: { ...context, status, errorMessage: message },
+        "The Gemini API rejected the search with a rate-limit response. Tell the user the configured project is being throttled and they may need to wait for the rate-limit window to reset.",
+      details,
     });
   }
 
@@ -331,15 +372,35 @@ function classifyApiSearchFailure(
     return buildApiSearchError({
       kind: "network_error",
       reason: "Gemini API search failed because the network request could not complete. Tell the user the device may be offline or blocked from reaching generativelanguage.googleapis.com, and include the underlying error detail.",
-      details: { ...context, errorMessage: message },
+      details,
     });
   }
 
   return buildApiSearchError({
     kind: "api_error",
-    reason: `Gemini API web search failed: ${message}. Tell the user the Gemini Search backend returned an error and share the message if it helps.`,
-    details: { ...context, status, errorMessage: message },
+    reason: `Gemini API web search failed: ${providerMessage}. Tell the user the Gemini Search backend returned an error and share the message if it helps.`,
+    details,
   });
+}
+
+function parseProviderErrorMessage(message: string): { code?: number; message?: string; status?: string } | null {
+  const trimmed = message.trim();
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?: {
+        code?: number;
+        message?: string;
+        status?: string;
+      };
+    };
+    return parsed.error ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function buildApiSearchError(input: {

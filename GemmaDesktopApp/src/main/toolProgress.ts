@@ -137,6 +137,7 @@ export interface SessionLiveActivity {
   lifecycleEvents: number
   activeToolName?: string
   activeToolLabel?: string
+  activeToolContext?: string
   runningToolCount: number
   completedToolCount: number
   recentProgressCount: number
@@ -164,6 +165,7 @@ export interface DirectToolProgressEvent {
 interface ToolActivitySummary {
   activeToolName?: string
   activeToolLabel?: string
+  activeToolContext?: string
   runningToolCount: number
   completedToolCount: number
 }
@@ -289,6 +291,43 @@ function buildPreview(value: unknown, maxLength = 120): string | undefined {
   }
 
   return undefined
+}
+
+function compactContext(value: string | undefined, maxLength = 96): string | undefined {
+  if (!value) {
+    return undefined
+  }
+
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length === 0) {
+    return undefined
+  }
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 3).trimEnd()}...`
+    : normalized
+}
+
+function buildToolActivityContext(block: ToolCallProgressBlock | undefined): string | undefined {
+  if (!block) {
+    return undefined
+  }
+
+  const latestTimeline = block.worker?.timeline?.[block.worker.timeline.length - 1]
+  const latestProgress = block.progressEntries?.[block.progressEntries.length - 1]
+  const workerGoal = block.worker?.goal
+  const inputPreview = buildPreview(block.input)
+  const outputPreview = block.status === 'running'
+    ? undefined
+    : buildPreview(block.worker?.resultSummary ?? block.summary ?? block.output)
+
+  return compactContext(
+    latestTimeline?.detail
+    ?? workerGoal
+    ?? inputPreview
+    ?? outputPreview
+    ?? latestProgress?.label,
+  )
 }
 
 function getCounterValue(
@@ -1047,6 +1086,7 @@ export function summarizeToolActivity(
       ?? (activeBlock?.toolName
         ? formatToolActivityLabel(activeBlock.toolName)
         : undefined),
+    activeToolContext: buildToolActivityContext(activeBlock),
     runningToolCount: runningBlocks.length,
     completedToolCount,
   }
@@ -1071,6 +1111,7 @@ export function refreshLiveActivityFromToolBlocks(
     lastEventAt: timestamp,
     activeToolName: summary.activeToolName,
     activeToolLabel: summary.activeToolLabel,
+    activeToolContext: summary.activeToolContext,
     runningToolCount: summary.runningToolCount,
     completedToolCount: summary.completedToolCount,
     recentProgressCount: activity.recentProgressCount + progressDelta,

@@ -138,6 +138,7 @@ export interface LiveActivitySnapshot {
   lifecycleEvents: number
   activeToolName?: string
   activeToolLabel?: string
+  activeToolContext?: string
   runningToolCount: number
   completedToolCount: number
   recentProgressCount: number
@@ -1194,6 +1195,7 @@ export interface GemmaDesktopBridge {
       userText?: string
       conversationTitle?: string
       workingDirectory?: string
+      turnContext?: string
     }): Promise<{
       summary: string | null
       helperModelId: string | null

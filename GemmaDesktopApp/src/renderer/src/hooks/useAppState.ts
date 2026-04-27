@@ -79,6 +79,110 @@ interface SelectionState {
   pinnedQuotes: PinnedQuote[]
 }
 
+function compactThinkingContext(value: string | undefined, maxLength = 240): string | undefined {
+  if (!value) return undefined
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (!normalized) return undefined
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 3).trimEnd()}...`
+    : normalized
+}
+
+function previewThinkingContextValue(value: unknown, maxLength = 180): string | undefined {
+  if (typeof value === 'string') {
+    return compactThinkingContext(value, maxLength)
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const preview = previewThinkingContextValue(entry, maxLength)
+      if (preview) return preview
+    }
+    return undefined
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    for (const key of ['query', 'url', 'path', 'pattern', 'command', 'goal', 'summary', 'output', 'error']) {
+      const preview = previewThinkingContextValue(record[key], maxLength)
+      if (preview) return preview
+    }
+  }
+
+  return undefined
+}
+
+function buildThinkingTurnContext(message: ChatMessage): string {
+  const lines: string[] = []
+
+  for (const block of message.content) {
+    if (lines.length >= 12) break
+
+    switch (block.type) {
+      case 'tool_call': {
+        const parts = [
+          `${block.toolName} ${block.status}`,
+          compactThinkingContext(block.summary),
+          compactThinkingContext(block.worker?.currentAction),
+          compactThinkingContext(block.worker?.timeline?.[block.worker.timeline.length - 1]?.detail),
+          previewThinkingContextValue(block.input),
+          compactThinkingContext(block.worker?.resultSummary),
+          previewThinkingContextValue(block.output),
+        ].filter((part): part is string => Boolean(part))
+        if (parts.length > 0) {
+          lines.push(`Tool: ${parts.join(' | ')}`)
+        }
+
+        const filesChanged = block.worker?.resultData?.filesChanged ?? []
+        if (filesChanged.length > 0 && lines.length < 12) {
+          lines.push(`Files changed: ${filesChanged.slice(0, 5).join(', ')}`)
+        }
+
+        const commands = block.worker?.resultData?.commands ?? []
+        if (commands.length > 0 && lines.length < 12) {
+          lines.push(`Commands: ${commands.slice(0, 3).map((command) => command.command).join('; ')}`)
+        }
+
+        const sources = block.worker?.resultData?.sources ?? []
+        if (sources.length > 0 && lines.length < 12) {
+          lines.push(`Sources: ${sources.slice(0, 3).join(', ')}`)
+        }
+        break
+      }
+      case 'file_edit':
+        lines.push(`File edit: ${block.path} ${block.changeType} (+${block.addedLines}/-${block.removedLines})`)
+        break
+      case 'text': {
+        const preview = compactThinkingContext(block.text, 320)
+        if (preview) lines.push(`Assistant output: ${preview}`)
+        break
+      }
+      case 'error':
+        lines.push(`Error: ${compactThinkingContext(block.message) ?? 'Unknown error'}`)
+        break
+      case 'warning':
+        lines.push(`Warning: ${compactThinkingContext(block.message) ?? 'Warning'}`)
+        break
+      case 'research_panel':
+        lines.push(`Research: ${block.panel.stage} ${block.panel.runStatus}${block.panel.title ? ` | ${block.panel.title}` : ''}`)
+        break
+      case 'image':
+      case 'pdf':
+      case 'audio':
+      case 'video':
+      case 'thinking':
+      case 'code':
+      case 'diff':
+      case 'file_excerpt':
+      case 'shell_session':
+      case 'folder_link':
+        break
+    }
+  }
+
+  return lines.join('\n').slice(0, 4000).trim()
+}
+
 const EMPTY_SELECTION: SelectionState = {
   selectionModeMessageId: null,
   pinnedQuotes: [],
@@ -1028,6 +1132,7 @@ export function useAppState() {
 
     const conversationTitle = session?.title ?? ''
     const workingDirectory = session?.workingDirectory ?? ''
+    const turnContext = buildThinkingTurnContext(message)
 
     message.content.forEach((block, blockIndex) => {
       if (block.type !== 'thinking') return
@@ -1046,6 +1151,7 @@ export function useAppState() {
           userText,
           conversationTitle,
           workingDirectory,
+          turnContext,
         })
         .then((result) => {
           const summary = result?.summary?.trim()

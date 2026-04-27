@@ -86,6 +86,10 @@ export function deriveLiveActivityLabel(
 }
 
 function buildDetail(activity: LiveActivitySnapshot): string {
+  if (activity.activeToolContext) {
+    return activity.activeToolContext
+  }
+
   if (activity.activeToolName) {
     return activity.activeToolName.replace(/[._-]+/g, ' ')
   }
@@ -110,7 +114,9 @@ function buildNote(
   }
 
   if (activity.activeToolLabel) {
-    return `${activity.activeToolLabel} is in progress.`
+    return activity.activeToolContext
+      ? `${activity.activeToolLabel}: ${activity.activeToolContext}`
+      : `${activity.activeToolLabel} is in progress.`
   }
 
   if (activity.state === 'streaming') {
@@ -197,6 +203,13 @@ export function buildLiveActivityMetrics(
       value: activity.activeToolName
         ? `${activity.activeToolLabel} (${activity.activeToolName})`
         : activity.activeToolLabel,
+    })
+  }
+
+  if (activity.activeToolContext) {
+    metrics.splice(activity.activeToolLabel ? 5 : 4, 0, {
+      label: 'Context',
+      value: activity.activeToolContext,
     })
   }
 

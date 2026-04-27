@@ -9,6 +9,7 @@ import {
   setSearchProviderForTests,
   type SearchProviderOverride,
 } from "../packages/sdk-tools/src/web.js";
+import { __testing as geminiApiSearchTesting } from "../packages/sdk-tools/src/geminiApiSearch.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
 describe("web host tools", () => {
@@ -54,6 +55,7 @@ describe("web host tools", () => {
     delete process.env.GEMMA_DESKTOP_GOOGLE_SEARCH_ENDPOINT;
     delete process.env.GEMMA_DESKTOP_BING_SEARCH_ENDPOINT;
     setSearchProviderForTests(null);
+    webTesting.setGeminiSearchRetryDelaysForTests(null);
     while (cleanup.length > 0) {
       await cleanup.pop()?.();
     }
@@ -316,6 +318,227 @@ describe("web host tools", () => {
     const details = failure.details as { provider?: string; errorKind?: string };
     expect(details.provider).toBe("gemini-api");
     expect(details.errorKind).toBe("auth_invalid");
+  });
+
+  it("retries transient Gemini API capacity failures before returning search results", async () => {
+    webTesting.setGeminiSearchRetryDelaysForTests([0, 0, 0, 0, 0]);
+    const progressLabels: string[] = [];
+    let callCount = 0;
+
+    installSearchProvider(async () => {
+      callCount += 1;
+      if (callCount < 3) {
+        throw new GemmaDesktopError(
+          "tool_execution_failed",
+          "The Gemini API rejected the search with a 429 resource-exhausted response.",
+          {
+            details: {
+              provider: "gemini-api",
+              errorKind: "quota_exhausted",
+              status: 429,
+              providerStatus: "RESOURCE_EXHAUSTED",
+              errorMessage: "Resource has been exhausted (e.g. check quota).",
+            },
+          },
+        );
+      }
+
+      return {
+        summary: "Gemini recovered after temporary capacity pressure.",
+        sources: [
+          {
+            title: "Recovered result",
+            url: "https://example.com/recovered",
+            snippet: "Recovered after retries.",
+          },
+        ],
+        model: "gemini-3-flash-preview",
+        durationMs: 321,
+        webSearchQueries: ["recovered search"],
+      };
+    });
+
+    const tool = getTool("search_web");
+    const result = await tool.execute(
+      {
+        query: "recovered search",
+        depth: "quick",
+      },
+      await createContext({
+        geminiApiKey: "AIzaSy-test",
+        emitProgress: (progress) => {
+          progressLabels.push(progress.label);
+        },
+      }),
+    );
+
+    expect(callCount).toBe(3);
+    expect(result.output).toContain("Recovered result");
+    expect(progressLabels).toEqual(expect.arrayContaining([
+      "Retrying Gemini search after HTTP 429 (attempt 2 of 5)",
+      "Retrying Gemini search after HTTP 429 (attempt 3 of 5)",
+      "Search complete",
+    ]));
+    expect(result.metadata).toMatchObject({
+      retryCount: 2,
+      recoveredAfterRetry: true,
+      transientRecovery: true,
+    });
+  });
+
+  it("gives up after five transient Gemini API capacity failures", async () => {
+    webTesting.setGeminiSearchRetryDelaysForTests([0, 0, 0, 0, 0]);
+    const progressLabels: string[] = [];
+    let callCount = 0;
+
+    installSearchProvider(async () => {
+      callCount += 1;
+      throw new GemmaDesktopError(
+        "tool_execution_failed",
+        "The Gemini API search backend is temporarily out of capacity.",
+        {
+          details: {
+            provider: "gemini-api",
+            errorKind: "capacity_exhausted",
+            status: 503,
+            providerStatus: "UNAVAILABLE",
+            errorMessage: "This model is currently experiencing high demand.",
+          },
+        },
+      );
+    });
+
+    const tool = getTool("search_web");
+    let raised: unknown;
+    try {
+      await tool.execute(
+        {
+          query: "capacity failure",
+          depth: "quick",
+        },
+        await createContext({
+          geminiApiKey: "AIzaSy-test",
+          emitProgress: (progress) => {
+            progressLabels.push(progress.label);
+          },
+        }),
+      );
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(callCount).toBe(5);
+    expect(progressLabels).toEqual(expect.arrayContaining([
+      "Retrying Gemini search after HTTP 503 (attempt 2 of 5)",
+      "Retrying Gemini search after HTTP 503 (attempt 5 of 5)",
+      "Search failed",
+    ]));
+    expect(raised).toBeInstanceOf(GemmaDesktopError);
+    const failure = raised as GemmaDesktopError;
+    expect(failure.message).toContain("Gemini search seems down or out of capacity");
+    expect(failure.message).toContain("after 5 attempts");
+    expect(failure.message).toContain("not a bad API key");
+    expect(failure.details).toMatchObject({
+      errorKind: "capacity_exhausted",
+      retryCount: 4,
+    });
+  });
+
+  it("explains exhausted Gemini project quota separately from provider capacity", async () => {
+    webTesting.setGeminiSearchRetryDelaysForTests([0, 0, 0, 0, 0]);
+    let callCount = 0;
+
+    installSearchProvider(async () => {
+      callCount += 1;
+      throw new GemmaDesktopError(
+        "tool_execution_failed",
+        "The Gemini API rejected the search because the configured project's quota or rate limit appears to be exhausted.",
+        {
+          details: {
+            provider: "gemini-api",
+            errorKind: "quota_exhausted",
+            status: 429,
+            errorMessage: "Quota exceeded for quota metric GenerateRequestsPerMinutePerProjectPerModel.",
+          },
+        },
+      );
+    });
+
+    const tool = getTool("search_web");
+    let raised: unknown;
+    try {
+      await tool.execute(
+        {
+          query: "quota failure",
+          depth: "quick",
+        },
+        await createContext({
+          geminiApiKey: "AIzaSy-test",
+        }),
+      );
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(callCount).toBe(5);
+    expect(raised).toBeInstanceOf(GemmaDesktopError);
+    const failure = raised as GemmaDesktopError;
+    expect(failure.message).toContain("Gemini API quota or rate limit is exhausted");
+    expect(failure.message).toContain("AI Studio usage/billing");
+    expect(failure.details).toMatchObject({
+      errorKind: "quota_exhausted",
+      retryCount: 4,
+    });
+  });
+
+  it("classifies generic Gemini RESOURCE_EXHAUSTED as provider capacity rather than project quota", () => {
+    const failure = geminiApiSearchTesting.classifyApiSearchFailure(
+      Object.assign(
+        new Error(
+          JSON.stringify({
+            error: {
+              code: 429,
+              message: "Resource has been exhausted (e.g. check quota).",
+              status: "RESOURCE_EXHAUSTED",
+            },
+          }),
+        ),
+        { status: 429 },
+      ),
+      { durationMs: 123, model: "gemini-3-flash-preview" },
+    );
+
+    expect(failure.details).toMatchObject({
+      errorKind: "capacity_exhausted",
+      providerStatus: "RESOURCE_EXHAUSTED",
+      status: 429,
+    });
+    expect(failure.message).toContain("Gemini search appears to be down or out of capacity");
+  });
+
+  it("classifies explicit Gemini quota metric failures as quota exhaustion", () => {
+    const failure = geminiApiSearchTesting.classifyApiSearchFailure(
+      Object.assign(
+        new Error(
+          JSON.stringify({
+            error: {
+              code: 429,
+              message: "Quota exceeded for quota metric GenerateRequestsPerMinutePerProjectPerModel.",
+              status: "RESOURCE_EXHAUSTED",
+            },
+          }),
+        ),
+        { status: 429 },
+      ),
+      { durationMs: 123, model: "gemini-3-flash-preview" },
+    );
+
+    expect(failure.details).toMatchObject({
+      errorKind: "quota_exhausted",
+      providerStatus: "RESOURCE_EXHAUSTED",
+      status: 429,
+    });
+    expect(failure.message).toContain("quota or rate limit appears to be exhausted");
   });
 
   it("fails with missing_key when no API key is configured and no override is installed", async () => {

@@ -265,6 +265,13 @@ function focusComposerTextarea(textarea: HTMLTextAreaElement | null): void {
   textarea.setSelectionRange(caret, caret)
 }
 
+export function isComposerSubmitLocked(input: {
+  isSubmitPending: boolean
+  sessionBusy: boolean
+}): boolean {
+  return input.isSubmitPending && !input.sessionBusy
+}
+
 export function InputBar({
   sessionId,
   presentation = 'default',
@@ -435,6 +442,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const sessionBusy = isGenerating || isCompacting
   const conversationRunBlocked = Boolean(conversationRunDisabledReason)
   const isSubmitPending = sendingSessionId === sessionId
+  const submitLocked = isComposerSubmitLocked({ isSubmitPending, sessionBusy })
   const canQueueWhileBusy = canQueueMessageWhileBusy({
     conversationKind,
     planMode,
@@ -2040,12 +2048,13 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     isShellMode
     && shellCommand.length > 0
     && attachments.length === 0
-    && !isSubmitPending
+    && !submitLocked
+    && !sessionBusy
   const canSubmitDraft =
     (isShellMode
       ? canRunShellCommand
       : (trimmedText.length > 0 || attachments.length > 0))
-    && !isSubmitPending
+    && !submitLocked
     && (isShellMode || !isCompacting)
     && (isShellMode || !conversationRunBlocked)
     && (!sessionBusy || canQueueWhileBusy)
@@ -2306,7 +2315,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                 onInput={handleInput}
                 placeholder={composerPlaceholder}
                 rows={1}
-                disabled={isSubmitPending || (isCompacting && !isShellMode)}
+                disabled={submitLocked || (isCompacting && !isShellMode)}
                 readOnly={speechLocked}
                 className={`${floatingPresentation ? COMPOSER_TEXTAREA_BASE_FLOATING : COMPOSER_TEXTAREA_BASE} ${floatingPresentation ? 'px-3 py-2.5 text-[17px]' : 'px-2 py-2 text-sm'} ${text.length === 0 ? 'truncate' : ''}`}
               />
@@ -2319,7 +2328,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                   isResearchConversation
                   || sessionBusy
                   || conversationRunBlocked
-                  || isSubmitPending
+                  || submitLocked
                   || speechLocked
                   || isShellMode
                   || attachmentAccept.length === 0
@@ -2345,7 +2354,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                   isResearchConversation
                   || sessionBusy
                   || conversationRunBlocked
-                  || isSubmitPending
+                  || submitLocked
                   || speechLocked
                   || isShellMode
                 }
@@ -2366,7 +2375,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                 <SpeechComposerControl
                   speech={speechStatus}
                   state={speechVisualState}
-                  disabled={sessionBusy || conversationRunBlocked || isSubmitPending}
+                  disabled={sessionBusy || conversationRunBlocked || submitLocked}
                   onToggle={handleSpeechToggle}
                   onInstall={onInstallSpeech}
                   onRepair={onRepairSpeech}

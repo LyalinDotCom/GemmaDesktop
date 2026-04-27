@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COBROWSE_USER_CONTROL_COMPOSER_LOCK_REASON,
+  getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
   shouldCloseProjectBrowserForConversationSwitch,
 } from '../src/renderer/src/lib/projectBrowserPolicy'
@@ -56,5 +58,33 @@ describe('project browser conversation policy', () => {
       projectBrowserOpen: false,
       projectBrowserCoBrowseActive: true,
     })).toBe(false)
+  })
+
+  it('locks the matching CoBrowse composer while the user owns browser control', () => {
+    expect(getCoBrowseUserControlComposerLockReason({
+      coBrowseActive: true,
+      projectBrowserCoBrowseActive: true,
+      projectBrowserControlOwner: 'user',
+      projectBrowserSessionId: 'global-chat',
+      targetSessionId: 'global-chat',
+    })).toBe(COBROWSE_USER_CONTROL_COMPOSER_LOCK_REASON)
+  })
+
+  it('does not lock other conversations or agent-owned CoBrowse browser state', () => {
+    expect(getCoBrowseUserControlComposerLockReason({
+      coBrowseActive: true,
+      projectBrowserCoBrowseActive: true,
+      projectBrowserControlOwner: 'user',
+      projectBrowserSessionId: 'global-chat',
+      targetSessionId: 'work-chat',
+    })).toBeNull()
+
+    expect(getCoBrowseUserControlComposerLockReason({
+      coBrowseActive: true,
+      projectBrowserCoBrowseActive: true,
+      projectBrowserControlOwner: 'agent',
+      projectBrowserSessionId: 'global-chat',
+      targetSessionId: 'global-chat',
+    })).toBeNull()
   })
 })

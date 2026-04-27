@@ -16871,6 +16871,7 @@ export function registerIpcHandlers(): void {
       userText: typeof input.userText === 'string' ? input.userText : '',
       conversationTitle:
         typeof input.conversationTitle === 'string' ? input.conversationTitle : '',
+      turnContext: typeof input.turnContext === 'string' ? input.turnContext : '',
     })
 
     try {
