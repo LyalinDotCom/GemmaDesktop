@@ -230,7 +230,7 @@ type Action =
   | { type: 'SET_SIDEBAR_STATE'; sidebar: SidebarState }
   | { type: 'SET_SESSIONS'; sessions: SessionSummary[] }
   | { type: 'SET_ACTIVE_SESSION'; session: SessionDetail | null; id: string | null }
-  | { type: 'ADD_MESSAGE'; message: ChatMessage }
+  | { type: 'ADD_MESSAGE'; message: ChatMessage; clearStreaming?: boolean }
   | { type: 'UPDATE_MESSAGE'; message: ChatMessage }
   | { type: 'SET_STREAMING_CONTENT'; content: MessageContent[] | null }
   | { type: 'MARK_STREAMING_CONTENT_STOPPING' }
@@ -708,7 +708,7 @@ function reducer(state: AppState, action: Action): AppState {
           ...state.activeSession,
           messages: appendChatMessage(state.activeSession.messages, message),
         },
-        streamingContent: null,
+        streamingContent: action.clearStreaming ? null : state.streamingContent,
       }
     }
     case 'UPDATE_MESSAGE': {
@@ -1474,6 +1474,12 @@ export function useAppState() {
             })
             break
           case 'user_message':
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: e.message,
+              clearStreaming: true,
+            })
+            break
           case 'message_appended':
             dispatch({ type: 'ADD_MESSAGE', message: e.message })
             break
@@ -1505,7 +1511,11 @@ export function useAppState() {
             })
             break
           case 'turn_complete':
-            dispatch({ type: 'ADD_MESSAGE', message: e.message })
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: e.message,
+              clearStreaming: true,
+            })
             dispatch({ type: 'SET_GENERATING', generating: false })
             dispatch({
               type: 'SET_LIVE_ACTIVITY',

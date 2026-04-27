@@ -28,7 +28,7 @@ export function updateChatMessage(
   )
 }
 
-function isBackgroundProcessNoticeMessage(message: ChatMessage): boolean {
+export function isBackgroundProcessNoticeMessage(message: ChatMessage): boolean {
   if (message.role !== 'assistant') return false
   if (message.content.length === 0) return false
   return message.content.every(

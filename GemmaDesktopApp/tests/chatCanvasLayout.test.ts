@@ -62,4 +62,52 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('Wait for the session run to finish before copying this turn.')
     expect(markup.match(/disabled=""/g)?.length ?? 0).toBe(3)
   })
+
+  it('keeps the streaming assistant row visible when a background process starts', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Build me a black hole simulation' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'process-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'shell_session',
+                terminalId: 'terminal-1',
+                command: 'cd blackhole-sim && npm run dev',
+                workingDirectory: '/tmp/blackhole-sim',
+                status: 'running',
+                startedAt: 1500,
+                transcript: '',
+                collapsed: false,
+                displayMode: 'sidebar',
+              },
+            ],
+            timestamp: 1500,
+          },
+        ],
+        streamingContent: [
+          { type: 'thinking', text: 'Checking the dev server output.' },
+          { type: 'text', text: 'I have the simulation running and I am verifying it now.' },
+        ],
+        isGenerating: true,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('I have the simulation running and I am verifying it now.')
+    expect(markup).toContain('Background process')
+    expect(markup.indexOf('I have the simulation running')).toBeLessThan(
+      markup.indexOf('Background process'),
+    )
+  })
 })

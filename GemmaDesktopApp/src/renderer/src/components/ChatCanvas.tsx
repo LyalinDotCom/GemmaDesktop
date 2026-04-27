@@ -17,7 +17,10 @@ import {
   type InlineDebugCard,
   splitInlineDebugLogs,
 } from '@/lib/debugTimeline'
-import { demoteBackgroundProcessNotices } from '@/lib/messageState'
+import {
+  demoteBackgroundProcessNotices,
+  isBackgroundProcessNoticeMessage,
+} from '@/lib/messageState'
 import { normalizeSelectedReadAloudText } from '@/lib/readAloudText'
 import { serializeAssistantTurn } from '@/lib/chatCopy'
 import {
@@ -628,9 +631,15 @@ export function ChatCanvas({
           {conversation.turns.map((turn, turnIndex) => {
             const turnLogs = debugTimeline.turnLogs[turnIndex]
             const betweenTurnLogs = debugTimeline.interstitialLogs[turnIndex + 1] ?? []
+            const regularResponses = turn.responses.filter(
+              (message) => !isBackgroundProcessNoticeMessage(message),
+            )
+            const backgroundProcessNotices = turn.responses.filter(
+              isBackgroundProcessNoticeMessage,
+            )
             const isPendingTurn =
               (isGenerating || isCompacting)
-              && turn.responses.length === 0
+              && regularResponses.length === 0
               && turnIndex === conversation.turns.length - 1
 
             return (
@@ -640,7 +649,7 @@ export function ChatCanvas({
                 {debugEnabled &&
                   turnLogs?.beforeResult.map((card) => renderDebugCard(card))}
 
-                {turn.responses.map((message) => renderMessage(message))}
+                {regularResponses.map((message) => renderMessage(message))}
 
                 {isPendingTurn && (
                   <Message
@@ -676,6 +685,8 @@ export function ChatCanvas({
                     assistantActionLock={assistantActionLock}
                   />
                 )}
+
+                {backgroundProcessNotices.map((message) => renderMessage(message))}
 
                 {debugEnabled &&
                   turnLogs?.afterResult.map((card) => renderDebugCard(card))}
