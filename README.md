@@ -6,10 +6,6 @@ Gemma 4 is the guided first-class path. Other open models work too, through Olla
 
 > **Status: alpha.** This is an unaffiliated **fan project**. It is **not** built by, endorsed by, or affiliated with the Gemma team or Google. No warranties, no license granted by this repository. See [Alpha & Safety](#alpha--safety) before running it on anything you care about.
 
-![Hero — Assistant Home with the Nebula welcome surface](docs/screenshots/hero.png)
-
----
-
 ## Why this exists
 
 Open models are getting good fast — but the path from "Ollama is running" to "I shipped real software with this" is still full of loose wiring. Runtime quirks, capability mismatches, context windows, quantization tradeoffs, multimodal support that varies by model, tool-use that breaks differently on every backend.
@@ -47,7 +43,7 @@ The rest of this README walks through each of these.
 
 ## The welcome experience
 
-![Welcome — Assistant Home with mode toggles and Nebula background](docs/screenshots/welcome.png)
+![Welcome chat experience](docs/screenshots/GemmaDesktop_Welcome01-HackerNews.png)
 
 First launch drops you into **Assistant Home** with the Nebula welcome surface — an animated ambient backdrop that doubles as the model's default canvas. From here you can:
 
@@ -62,7 +58,7 @@ If Ollama isn't running yet, the bootstrap layer pulls the default model and war
 
 ## Two ways to use it
 
-![Work mode and Global Chat side by side](docs/screenshots/work-vs-global-chat.png)
+![Work mode with app preview](docs/screenshots/GemmaDesktop_WorkView-WebApp01-AppPreviewBrowser.png)
 
 **Work mode** binds a session to a working directory. The model can list trees, read files, search text, edit surgically, run commands, watch a build pass, and keep its history pinned to that project. Each project has its own `.gemma/session-state` — your sessions stay where the work lives.
 
@@ -74,8 +70,6 @@ Sessions are organized in a left sidebar with pinning, drag-to-reorder, project 
 
 ## CoBrowse — browse the web together
 
-![CoBrowse — visible Project Browser with control handoff](docs/screenshots/cobrowse.png)
-
 The web is messy. Logins, CAPTCHAs, dynamic JS, pages that won't load without scrolling — most agent browsers fail here, and the human can't tell why.
 
 **CoBrowse** is a different model: the agent and the human share one real browser. The Project Browser is an embedded Chromium surface you can watch the model use, click into when it gets stuck, and hand back. When the agent needs you, it stops and tells you why ("Agent needs you to complete a browser-side action"). When you're done, it picks up where it left off.
@@ -86,15 +80,11 @@ Underneath, it uses the Chrome DevTools MCP for navigation, DOM snapshots, scree
 
 ## Voice in
 
-![Voice — Talk panel with live transcript](docs/screenshots/voice-in.png)
-
 Hold-to-talk. Speak, watch the transcript form, send. The microphone path runs **local speech-to-text** through a managed runtime (whisper.cpp-compatible on supported builds), so your audio doesn't leave the machine.
 
 There's a dedicated **Talk panel** with its own transcript view, a slim **Talk overlay** when you want a minimal indicator while the model speaks back, and a composer-level mic toggle for inline dictation in any conversation.
 
 ## Voice out
-
-![Voice — Read Aloud playback overlay](docs/screenshots/voice-out.png)
 
 **Read Aloud** turns assistant messages into speech using a local **Kokoro** ONNX model — fully offline once cached. Multiple voices, adjustable speed (0.5×–2×), and a playback overlay with scrub controls.
 
@@ -103,8 +93,6 @@ Optional **Assistant Narration** layers brief spoken commentary on what the mode
 ---
 
 ## Files, PDFs, images, audio, video
-
-![Attachments — file tree, PDF preview, image attachment](docs/screenshots/attachments.png)
 
 The file surface is one of the things this app cares most about getting right.
 
@@ -145,8 +133,6 @@ Each tool call shows up inline in the chat with arguments, results, and a status
 
 ## Plan, Build, Explore
 
-![Plan card and Build verification](docs/screenshots/plan-build.png)
-
 The model has modes, and the modes change what it can do.
 
 - **Explore** — read-only investigation. Search, browse, read, summarize. No writes, no commands.
@@ -161,7 +147,7 @@ Each mode has its own prompt profile, tool policy, and approval rules. Switching
 
 ## Research
 
-![Research progress — planning, discovery, synthesis](docs/screenshots/research.png)
+![Research report experience](docs/screenshots/GemmaDesktop_WorkView-Research-ReportReady.png)
 
 For anything bigger than a one-shot search, there's a structured **Research** flow:
 
@@ -175,8 +161,6 @@ Two profiles ship: **quick** (2 passes, 8 sources, 3 domains) and **deep** (3 pa
 
 ## Skills, MCP, and extension points
 
-![Skills modal and MCP integration](docs/screenshots/skills.png)
-
 Gemma Desktop is built to be extended.
 
 - **Skills** — drop a folder into your local skills directory and it becomes an installable capability with frontmatter metadata, activation IDs, and bundled tools. Up to 16 files per skill, ~90 KB content. Skills are user-curated; agents don't add or remove them on your behalf.
@@ -189,8 +173,6 @@ The SDK exposes a clean tool registry so anything you build is observable, cance
 
 ## Memory
 
-![Memory panel — durable user facts](docs/screenshots/memory.png)
-
 The model can remember things across sessions. Tell it to remember something, and the helper model distills it into a concise third-person fact and appends it to a `memory.md` file in the app's userData directory.
 
 Memory is **passive context**, not instructions — it informs the model without trying to override your current request. There's a Memory panel in the app for editing, removing, or auditing what's stored. It's plain markdown; you can open it in any editor.
@@ -199,8 +181,6 @@ Memory is **passive context**, not instructions — it informs the model without
 
 ## Automations
 
-![Automations — scheduled prompts](docs/screenshots/automations.png)
-
 Schedule a prompt to run on its own. Pick the model, runtime, work mode, and working directory, then either fire it once at a specific time or on a recurring interval (minutes, hours, days). Enable, disable, or run on demand. Execution history is tracked.
 
 Useful for daily reports, repeated research checks, or anything you'd otherwise paste into a chat at 9 AM.
@@ -208,8 +188,6 @@ Useful for daily reports, repeated research checks, or anything you'd otherwise 
 ---
 
 ## Doctor
-
-![Doctor panel — runtime health and diagnosis](docs/screenshots/doctor.png)
 
 Local AI breaks in interesting ways. The **Doctor panel** is built to make those breakages legible:
 
@@ -225,8 +203,6 @@ Run it before you blame the model.
 ---
 
 ## Sessions, sidebar, right dock
-
-![Sidebar with sessions and right dock with Files panel](docs/screenshots/layout.png)
 
 The layout is deliberate.
 
