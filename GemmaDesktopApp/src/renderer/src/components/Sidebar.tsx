@@ -471,8 +471,13 @@ export function Sidebar({
   const quickCreateConversationDisabled =
     conversationCreationPending || activeProject === null
   const quickCreateConversationTitle = activeProject
-    ? `Add conversation to ${activeProject.name}`
-    : 'Select a project conversation first'
+    ? conversationCreationPending
+      ? `Creating conversation in ${activeProject.name}`
+      : `Add conversation to ${activeProject.name}`
+    : 'Open a project before adding a conversation'
+  const quickCreateConversationHint = activeProject
+    ? activeProject.name
+    : 'No project selected'
   const quickCreateMenuClassName = quickCreateMenuPinned
     ? 'pointer-events-auto translate-y-0 opacity-100'
     : 'pointer-events-none translate-y-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'
@@ -1630,9 +1635,7 @@ export function Sidebar({
                         Add conversation
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-zinc-500 dark:text-zinc-400">
-                        {activeProject
-                          ? activeProject.name
-                          : 'Select a project conversation first'}
+                        {quickCreateConversationHint}
                       </span>
                     </span>
                   </button>

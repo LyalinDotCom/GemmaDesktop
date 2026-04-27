@@ -64,6 +64,7 @@ function renderSidebar(input?: {
         projectPaths: ['/tmp/project-alpha'],
         sessionOrderOverrides: {},
         projectOrderOverrides: {},
+        lastActiveSessionId: null,
       },
       activeSessionId: 'session-1',
       onSelectSession: () => {},
@@ -110,6 +111,7 @@ describe('Sidebar search rendering', () => {
         projectPaths: ['/tmp/project-alpha'],
         sessionOrderOverrides: {},
         projectOrderOverrides: {},
+        lastActiveSessionId: null,
       },
     })
 

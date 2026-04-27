@@ -5577,6 +5577,7 @@ function sidebarStateToRecord(state: SidebarState): Record<string, unknown> {
     projectPaths: nextState.projectPaths,
     sessionOrderOverrides: nextState.sessionOrderOverrides,
     projectOrderOverrides: nextState.projectOrderOverrides,
+    lastActiveSessionId: nextState.lastActiveSessionId,
   }
 }
 
@@ -14668,6 +14669,22 @@ export function registerIpcHandlers(): void {
 
     return sidebarStateToRecord(result.state)
   })
+
+  ipcMain.handle(
+    'sidebar:remember-active-session',
+    async (_, sessionId: string | null) => {
+      const result = await getSidebarStateStore().rememberActiveSession(
+        sessionId,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
 
   ipcMain.handle(
     'sidebar:move-pinned-session',

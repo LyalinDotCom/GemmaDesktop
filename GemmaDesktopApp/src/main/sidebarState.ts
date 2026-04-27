@@ -43,6 +43,10 @@ function orderRecordsEqual(
 }
 
 function sidebarStatesEqual(left: SidebarState, right: SidebarState): boolean {
+  if (left.lastActiveSessionId !== right.lastActiveSessionId) {
+    return false
+  }
+
   if (left.pinnedSessionIds.length !== right.pinnedSessionIds.length) {
     return false
   }
@@ -248,6 +252,21 @@ export class SidebarStateStore {
     })
   }
 
+  async rememberActiveSession(
+    sessionId: string | null,
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const validSessionIds = new Set(sessionRefs.map((session) => session.id))
+    const nextState = this.pruneState(this.state, sessionRefs)
+    const nextSessionId =
+      sessionId && validSessionIds.has(sessionId) ? sessionId : null
+
+    return await this.commit({
+      ...nextState,
+      lastActiveSessionId: nextSessionId,
+    })
+  }
+
   async unflagFollowUp(
     sessionId: string,
     sessionRefs: SidebarSessionReference[],
@@ -366,6 +385,11 @@ export class SidebarStateStore {
       ]),
       sessionOrderOverrides,
       projectOrderOverrides,
+      lastActiveSessionId:
+        currentState.lastActiveSessionId
+        && validSessionIds.has(currentState.lastActiveSessionId)
+          ? currentState.lastActiveSessionId
+          : null,
     }
   }
 

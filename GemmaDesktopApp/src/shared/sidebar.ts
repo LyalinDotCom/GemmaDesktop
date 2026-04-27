@@ -5,6 +5,7 @@ export interface SidebarState {
   projectPaths: string[]
   sessionOrderOverrides: Record<string, number>
   projectOrderOverrides: Record<string, number>
+  lastActiveSessionId: string | null
 }
 
 export interface SidebarSessionReference {
@@ -19,6 +20,7 @@ export const EMPTY_SIDEBAR_STATE: SidebarState = {
   projectPaths: [],
   sessionOrderOverrides: {},
   projectOrderOverrides: {},
+  lastActiveSessionId: null,
 }
 
 export function normalizeSidebarProjectPath(targetPath: string): string {
@@ -55,6 +57,7 @@ export function cloneSidebarState(state: SidebarState): SidebarState {
     projectPaths: [...state.projectPaths],
     sessionOrderOverrides: { ...state.sessionOrderOverrides },
     projectOrderOverrides: { ...state.projectOrderOverrides },
+    lastActiveSessionId: state.lastActiveSessionId,
   }
 }
 
@@ -153,6 +156,11 @@ export function sanitizeSidebarState(input: unknown): SidebarState {
     ),
     sessionOrderOverrides,
     projectOrderOverrides,
+    lastActiveSessionId:
+      typeof record?.['lastActiveSessionId'] === 'string'
+      && record['lastActiveSessionId'].trim().length > 0
+        ? record['lastActiveSessionId']
+        : null,
   }
 }
 

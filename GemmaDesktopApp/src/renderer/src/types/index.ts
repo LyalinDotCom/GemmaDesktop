@@ -943,6 +943,7 @@ export interface GemmaDesktopBridge {
     unpinSession(sessionId: string): Promise<SidebarState>
     flagFollowUp(sessionId: string): Promise<SidebarState>
     unflagFollowUp(sessionId: string): Promise<SidebarState>
+    rememberActiveSession(sessionId: string | null): Promise<SidebarState>
     movePinnedSession(sessionId: string, toIndex: number): Promise<SidebarState>
     setSessionOrder(sessionId: string, toIndex: number): Promise<SidebarState>
     clearSessionOrder(sessionId: string): Promise<SidebarState>

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSidebarModel,
   findActiveProjectForSession,
+  findInitialVisibleSessionId,
+  findReplacementSessionAfterDelete,
   findReopenSessionForProject,
 } from '../src/renderer/src/lib/sidebarModel'
 import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '../src/shared/globalChat'
@@ -179,6 +181,52 @@ describe('sidebar model', () => {
       name: 'alpha',
     })
     expect(findActiveProjectForSession(sessions, 'missing')).toBeNull()
+  })
+
+  it('restores the last active visible conversation on startup', () => {
+    const sessions = [
+      makeSession('alpha-older', '/tmp/alpha', 100),
+      makeSession('alpha-newer', '/tmp/alpha', 300),
+      makeSession('beta-chat', '/tmp/beta', 200),
+    ]
+    const sidebarState = makeSidebarState({
+      lastActiveSessionId: 'beta-chat',
+      projectPaths: ['/tmp/alpha', '/tmp/beta'],
+    })
+
+    expect(findInitialVisibleSessionId(sessions, sidebarState)).toBe('beta-chat')
+    expect(
+      findInitialVisibleSessionId(
+        sessions,
+        makeSidebarState({
+          lastActiveSessionId: 'missing-chat',
+          projectPaths: ['/tmp/alpha', '/tmp/beta'],
+        }),
+      ),
+    ).toBe('alpha-newer')
+  })
+
+  it('selects the conversation above the deleted active one when possible', () => {
+    const sessions = [
+      makeSession('alpha-newest', '/tmp/alpha', 300),
+      makeSession('alpha-middle', '/tmp/alpha', 200),
+      makeSession('alpha-oldest', '/tmp/alpha', 100),
+    ]
+    const sidebarState = makeSidebarState({ projectPaths: ['/tmp/alpha'] })
+
+    expect(
+      findReplacementSessionAfterDelete(sessions, sidebarState, 'alpha-middle'),
+    ).toBe('alpha-newest')
+    expect(
+      findReplacementSessionAfterDelete(sessions, sidebarState, 'alpha-newest'),
+    ).toBe('alpha-middle')
+    expect(
+      findReplacementSessionAfterDelete(
+        [makeSession('only-chat', '/tmp/alpha', 100)],
+        sidebarState,
+        'only-chat',
+      ),
+    ).toBeNull()
   })
 
   it('anchors a moved conversation at its saved index inside its project group', () => {

@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
       ipcRenderer.invoke('sidebar:flag-followup', sessionId),
     unflagFollowUp: (sessionId: string) =>
       ipcRenderer.invoke('sidebar:unflag-followup', sessionId),
+    rememberActiveSession: (sessionId: string | null) =>
+      ipcRenderer.invoke('sidebar:remember-active-session', sessionId),
     movePinnedSession: (sessionId: string, toIndex: number) =>
       ipcRenderer.invoke('sidebar:move-pinned-session', sessionId, toIndex),
     setSessionOrder: (sessionId: string, toIndex: number) =>

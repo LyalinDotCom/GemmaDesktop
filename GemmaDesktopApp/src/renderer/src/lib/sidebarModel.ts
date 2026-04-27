@@ -147,6 +147,38 @@ export function buildSidebarModel(
   }
 }
 
+export function findInitialVisibleSessionId(
+  sessions: SessionSummary[],
+  sidebarState: SidebarState,
+): string | null {
+  const visibleSessionIds = buildSidebarModel(sessions, sidebarState).visibleSessionIds
+  if (
+    sidebarState.lastActiveSessionId
+    && visibleSessionIds.includes(sidebarState.lastActiveSessionId)
+  ) {
+    return sidebarState.lastActiveSessionId
+  }
+
+  return visibleSessionIds[0] ?? null
+}
+
+export function findReplacementSessionAfterDelete(
+  sessions: SessionSummary[],
+  sidebarState: SidebarState,
+  deletedSessionId: string,
+): string | null {
+  const visibleSessionIds = buildSidebarModel(sessions, sidebarState).visibleSessionIds
+  const deletedIndex = visibleSessionIds.indexOf(deletedSessionId)
+
+  if (deletedIndex === -1) {
+    return visibleSessionIds.find((sessionId) => sessionId !== deletedSessionId) ?? null
+  }
+
+  return visibleSessionIds[deletedIndex - 1]
+    ?? visibleSessionIds[deletedIndex + 1]
+    ?? null
+}
+
 export function findMostRecentSessionInProject(
   sessions: SessionSummary[],
   projectPath: string,

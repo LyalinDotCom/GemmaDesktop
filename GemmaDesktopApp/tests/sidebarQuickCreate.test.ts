@@ -52,6 +52,7 @@ function renderSidebar(input: {
         projectPaths: ['/tmp/project-alpha'],
         sessionOrderOverrides: {},
         projectOrderOverrides: {},
+        lastActiveSessionId: null,
       },
       activeSessionId: input.activeSessionId ?? 'session-1',
       onSelectSession: () => {},
@@ -103,6 +104,7 @@ describe('Sidebar quick create menu', () => {
       sessions: [makeSession({ workingDirectory: '' })],
     })
 
-    expect(markup).toContain('Select a project conversation first')
+    expect(markup).toContain('Open a project before adding a conversation')
+    expect(markup).toContain('No project selected')
   })
 })

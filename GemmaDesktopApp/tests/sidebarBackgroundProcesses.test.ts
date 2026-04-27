@@ -37,6 +37,7 @@ const sidebarState: SidebarState = {
   projectPaths: ['/tmp/project'],
   sessionOrderOverrides: {},
   projectOrderOverrides: {},
+  lastActiveSessionId: null,
 }
 
 const systemStats: SystemStats = {

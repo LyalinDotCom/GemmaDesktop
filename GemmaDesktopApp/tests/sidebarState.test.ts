@@ -102,6 +102,24 @@ describe('sidebar state store', () => {
     expect(pruned.state.pinnedSessionIds).toEqual(['session-c'])
   })
 
+  it('persists the last active session and prunes it after deletion', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    const remembered = await store.rememberActiveSession('session-b', refs)
+    expect(remembered.state.lastActiveSessionId).toBe('session-b')
+
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.lastActiveSessionId).toBe('session-b')
+
+    const pruned = await reloaded.prune(
+      refs.filter((session) => session.id !== 'session-b'),
+    )
+    expect(pruned.state.lastActiveSessionId).toBeNull()
+  })
+
   it('closing a project removes its pinned chats and tracks the closed folder', async () => {
     const { refs, projectAlpha } = buildSessionRefs()
     const store = new SidebarStateStore(sidebarStatePath)
@@ -177,6 +195,7 @@ describe('sidebar state store', () => {
       ],
       sessionOrderOverrides: {},
       projectOrderOverrides: {},
+      lastActiveSessionId: null,
     })
   })
 

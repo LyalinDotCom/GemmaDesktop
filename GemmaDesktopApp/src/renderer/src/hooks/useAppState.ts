@@ -4,7 +4,10 @@ import {
   appendChatMessage,
   updateChatMessage,
 } from '@/lib/messageState'
-import { buildSidebarModel } from '@/lib/sidebarModel'
+import {
+  findInitialVisibleSessionId,
+  findReplacementSessionAfterDelete,
+} from '@/lib/sidebarModel'
 import {
   buildComposedMessageText,
   type PinnedQuote,
@@ -440,6 +443,7 @@ const initialState: AppState = {
     projectPaths: [],
     sessionOrderOverrides: {},
     projectOrderOverrides: {},
+    lastActiveSessionId: null,
   },
   sessions: [],
   activeSessionId: null,
@@ -1104,6 +1108,26 @@ export function useAppState() {
     return detail
   }, [])
 
+  const rememberActiveSession = useCallback(async (sessionId: string | null) => {
+    try {
+      const sidebar = await window.gemmaDesktopBridge.sidebar.rememberActiveSession(
+        sessionId,
+      )
+      dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    } catch (error) {
+      console.error('Failed to remember active session:', error)
+    }
+  }, [])
+
+  const selectAndRememberSession = useCallback(
+    async (sessionId: string) => {
+      const detail = await syncActiveSessionDetail(sessionId)
+      void rememberActiveSession(detail.id)
+      return detail
+    },
+    [rememberActiveSession, syncActiveSessionDetail],
+  )
+
   useEffect(() => {
     activeSessionRef.current = state.activeSession
   }, [state.activeSession])
@@ -1231,15 +1255,12 @@ export function useAppState() {
         dispatch({ type: 'SET_SPEECH_STATUS', speechStatus })
         dispatch({ type: 'SET_READ_ALOUD_STATUS', readAloudStatus })
 
-        // Auto-open the first session if available
-        const firstVisibleSessionId = buildSidebarModel(
-          sessions,
-          sidebar,
-        ).visibleSessionIds[0]
-        if (firstVisibleSessionId) {
+        const initialSessionId = findInitialVisibleSessionId(sessions, sidebar)
+        if (initialSessionId) {
           try {
-            const detail = await window.gemmaDesktopBridge.sessions.get(firstVisibleSessionId)
+            const detail = await window.gemmaDesktopBridge.sessions.get(initialSessionId)
             dispatch({ type: 'SET_ACTIVE_SESSION', session: detail, id: detail.id })
+            void rememberActiveSession(detail.id)
           } catch (err) {
             console.error('Failed to load session detail:', err)
           }
@@ -1249,7 +1270,7 @@ export function useAppState() {
       }
     }
     void init()
-  }, [])
+  }, [rememberActiveSession])
 
   useEffect(() => {
     const unsub = window.gemmaDesktopBridge.sidebar.onChanged((sidebar) => {
@@ -1310,6 +1331,14 @@ export function useAppState() {
 
       const activeSessionId = state.activeSessionId
       if (!activeSessionId) {
+        const nextSessionId = findInitialVisibleSessionId(nextSessions, state.sidebar)
+        if (nextSessionId) {
+          void selectAndRememberSession(nextSessionId).catch((err) => {
+            if (!cancelled) {
+              console.error('Failed to select a session after session list change:', err)
+            }
+          })
+        }
         return
       }
 
@@ -1318,7 +1347,17 @@ export function useAppState() {
       )
 
       if (!activeSessionStillExists) {
-        dispatch({ type: 'SET_ACTIVE_SESSION', session: null, id: null })
+        const nextSessionId = findInitialVisibleSessionId(nextSessions, state.sidebar)
+        if (nextSessionId) {
+          void selectAndRememberSession(nextSessionId).catch((err) => {
+            if (!cancelled) {
+              console.error('Failed to select a session after active session removal:', err)
+            }
+          })
+        } else {
+          dispatch({ type: 'SET_ACTIVE_SESSION', session: null, id: null })
+          void rememberActiveSession(null)
+        }
         return
       }
 
@@ -1332,7 +1371,13 @@ export function useAppState() {
       cancelled = true
       unsub()
     }
-  }, [state.activeSessionId, syncActiveSessionDetail])
+  }, [
+    rememberActiveSession,
+    selectAndRememberSession,
+    state.activeSessionId,
+    state.sidebar,
+    syncActiveSessionDetail,
+  ])
 
   useEffect(() => {
     const unsub = window.gemmaDesktopBridge.skills.onChanged((skills) => {
@@ -1683,8 +1728,8 @@ export function useAppState() {
   ])
 
   const selectSession = useCallback(async (sessionId: string) => {
-    await syncActiveSessionDetail(sessionId)
-  }, [syncActiveSessionDetail])
+    await selectAndRememberSession(sessionId)
+  }, [selectAndRememberSession])
 
   const createSession = useCallback(
     async (input: CreateSessionOpts) => {
@@ -1698,9 +1743,10 @@ export function useAppState() {
       })
       dispatch({ type: 'SET_SESSIONS', sessions })
       dispatch({ type: 'SET_ACTIVE_SESSION', session: detail, id: detail.id })
+      void rememberActiveSession(detail.id)
       return detail
     },
-    [refreshEnvironment],
+    [refreshEnvironment, rememberActiveSession],
   )
 
   const ensureGemmaModel = useCallback(
@@ -1912,10 +1958,31 @@ export function useAppState() {
       ) {
         return
       }
+      const replacementSessionId =
+        sessionId === state.activeSessionId
+          ? findReplacementSessionAfterDelete(
+              state.sessions,
+              state.sidebar,
+              sessionId,
+            )
+          : null
       await window.gemmaDesktopBridge.sessions.delete(sessionId)
       dispatch({ type: 'REMOVE_SESSION', sessionId })
+      if (replacementSessionId) {
+        await selectAndRememberSession(replacementSessionId)
+      } else if (sessionId === state.activeSessionId) {
+        void rememberActiveSession(null)
+      }
     },
-    [state.activeSessionId, state.isCompacting, state.isGenerating],
+    [
+      rememberActiveSession,
+      selectAndRememberSession,
+      state.activeSessionId,
+      state.isCompacting,
+      state.isGenerating,
+      state.sessions,
+      state.sidebar,
+    ],
   )
 
   const renameSession = useCallback(

@@ -100,6 +100,7 @@ describe('Sidebar chat actions', () => {
       projectPaths: ['/tmp/alpha'],
       sessionOrderOverrides: {},
       projectOrderOverrides: {},
+      lastActiveSessionId: null,
     }
 
     const markup = renderSidebar(sessions, sidebarState)
@@ -119,6 +120,7 @@ describe('Sidebar chat actions', () => {
       projectPaths: ['/tmp/alpha'],
       sessionOrderOverrides: {},
       projectOrderOverrides: {},
+      lastActiveSessionId: null,
     }
 
     const markup = renderSidebar(sessions, sidebarState)
@@ -139,6 +141,7 @@ describe('Sidebar chat actions', () => {
       projectPaths: ['/tmp/alpha'],
       sessionOrderOverrides: {},
       projectOrderOverrides: {},
+      lastActiveSessionId: null,
     }
 
     const markup = renderSidebar(sessions, sidebarState, 'alpha-chat')
@@ -166,6 +169,7 @@ describe('Sidebar chat actions', () => {
       ],
       sessionOrderOverrides: {},
       projectOrderOverrides: {},
+      lastActiveSessionId: null,
     }
 
     const markup = renderSidebar(sessions, sidebarState)
