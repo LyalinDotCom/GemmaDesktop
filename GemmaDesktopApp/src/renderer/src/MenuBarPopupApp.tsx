@@ -108,6 +108,7 @@ export function MenuBarPopupApp() {
           title={globalChat.title}
           targetKind={globalChat.targetKind}
           sessionId={globalChat.sessionId}
+          workingDirectory={globalChat.session?.workingDirectory}
           messages={globalChat.messages}
           draftText={globalChat.draftText}
           streamingContent={globalChat.streamingContent}

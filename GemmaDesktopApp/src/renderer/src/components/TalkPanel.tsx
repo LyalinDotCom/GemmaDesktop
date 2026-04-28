@@ -21,6 +21,7 @@ interface TalkPanelProps {
   title: string
   targetKind: 'fallback' | 'assigned'
   sessionId: string | null
+  workingDirectory?: string
   messages: ChatMessage[]
   draftText: string
   streamingContent: MessageContent[] | null
@@ -53,6 +54,7 @@ export function TalkPanel({
   title,
   targetKind,
   sessionId,
+  workingDirectory,
   messages,
   draftText,
   streamingContent,
@@ -255,6 +257,7 @@ export function TalkPanel({
                 messages={messages}
                 streamingContent={streamingContent}
                 sessionTitle={title}
+                workingDirectory={workingDirectory}
                 isGenerating={isGenerating}
                 isCompacting={isCompacting}
                 conversationRunDisabledReason={conversationRunDisabledReason}

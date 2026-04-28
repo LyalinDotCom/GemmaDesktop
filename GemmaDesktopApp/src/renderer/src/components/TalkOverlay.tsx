@@ -12,6 +12,7 @@ interface TalkOverlayProps {
   title: string
   targetKind: 'fallback' | 'assigned'
   sessionId: string | null
+  workingDirectory?: string
   messages: ChatMessage[]
   draftText: string
   streamingContent: MessageContent[] | null
@@ -37,6 +38,7 @@ export function TalkOverlay({
   title,
   targetKind,
   sessionId,
+  workingDirectory,
   messages,
   draftText,
   streamingContent,
@@ -92,6 +94,7 @@ export function TalkOverlay({
             title={title}
             targetKind={targetKind}
             sessionId={sessionId}
+            workingDirectory={workingDirectory}
             messages={messages}
             draftText={draftText}
             streamingContent={streamingContent}

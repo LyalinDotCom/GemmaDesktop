@@ -27,6 +27,7 @@ interface TalkInputBarProps {
   messages: ChatMessage[]
   streamingContent: MessageContent[] | null
   sessionTitle: string
+  workingDirectory?: string
   isGenerating: boolean
   isCompacting: boolean
   conversationRunDisabledReason?: string | null
@@ -58,6 +59,7 @@ export function TalkInputBar({
   messages,
   streamingContent,
   sessionTitle,
+  workingDirectory,
   isGenerating,
   isCompacting,
   conversationRunDisabledReason = null,
@@ -203,11 +205,12 @@ export function TalkInputBar({
         debugLogs: [],
         debugSession: null,
         sessionTitle,
+        workingDirectory,
       }),
     )
     setCopiedChat(true)
     window.setTimeout(() => setCopiedChat(false), 1200)
-  }, [messagesForCopy, sessionTitle])
+  }, [messagesForCopy, sessionTitle, workingDirectory])
 
   const handleExportChat = useCallback(async () => {
     if (messagesForCopy.length === 0) {
@@ -228,6 +231,7 @@ export function TalkInputBar({
         debugLogs: [],
         debugSession: null,
         sessionTitle,
+        workingDirectory,
       }),
     })
 
@@ -237,7 +241,7 @@ export function TalkInputBar({
 
     setExportedChat(true)
     window.setTimeout(() => setExportedChat(false), 1200)
-  }, [messagesForCopy, sessionTitle])
+  }, [messagesForCopy, sessionTitle, workingDirectory])
 
   const handleClearSession = useCallback(async () => {
     if (clearingSession) {

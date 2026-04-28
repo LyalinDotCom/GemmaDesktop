@@ -1617,6 +1617,7 @@ export function App() {
           title={globalChatSession.title}
           targetKind={globalChatSession.targetKind}
           sessionId={globalChatSession.sessionId}
+          workingDirectory={globalChatSession.session?.workingDirectory}
           messages={globalChatSession.messages}
           draftText={globalChatSession.draftText}
           streamingContent={globalChatSession.streamingContent}

@@ -1971,11 +1971,12 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         debugLogs,
         debugSession,
         sessionTitle,
+        workingDirectory,
       }),
     )
     setCopiedChat(true)
     window.setTimeout(() => setCopiedChat(false), 1200)
-  }, [debugLogs, debugOpen, debugSession, messagesForCopy, sessionTitle])
+  }, [debugLogs, debugOpen, debugSession, messagesForCopy, sessionTitle, workingDirectory])
 
   const handleExportChat = useCallback(async () => {
     if (messagesForCopy.length === 0) {
@@ -1996,6 +1997,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         debugLogs,
         debugSession,
         sessionTitle,
+        workingDirectory,
       }),
     })
 
@@ -2005,7 +2007,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
     setExportedChat(true)
     window.setTimeout(() => setExportedChat(false), 1200)
-  }, [debugLogs, debugOpen, debugSession, messagesForCopy, sessionTitle])
+  }, [debugLogs, debugOpen, debugSession, messagesForCopy, sessionTitle, workingDirectory])
 
   const composerPlaceholder = isShellMode
     ? shellCommand.length > 0

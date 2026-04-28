@@ -172,6 +172,20 @@ export function serializeChatHistory(messages: ChatMessage[]): string {
   return messages.map((message) => serializeChatMessage(message)).join('\n\n---\n\n')
 }
 
+function serializeSessionMetadata(args: {
+  sessionTitle?: string
+  workingDirectory?: string
+}): string {
+  const rows = [
+    ['Conversation', args.sessionTitle?.trim()],
+    ['Local directory', args.workingDirectory?.trim()],
+  ]
+    .filter(([, value]) => value && value.length > 0)
+    .map(([label, value]) => `${label}: ${value}`)
+
+  return rows.join('\n')
+}
+
 export function serializeAssistantTurn(
   messages: ChatMessage[],
   assistantMessageId: string,
@@ -237,11 +251,23 @@ export function serializeSessionHistory(args: {
   debugLogs: DebugLogEntry[]
   debugSession: DebugSessionSnapshot | null
   sessionTitle?: string
+  workingDirectory?: string
 }): string {
-  const { messages, debugEnabled, debugLogs, debugSession, sessionTitle } = args
+  const {
+    messages,
+    debugEnabled,
+    debugLogs,
+    debugSession,
+    sessionTitle,
+    workingDirectory,
+  } = args
+  const metadata = serializeSessionMetadata({ sessionTitle, workingDirectory })
 
   if (!debugEnabled) {
-    return serializeChatHistory(messages)
+    return [
+      metadata,
+      serializeChatHistory(messages),
+    ].filter((section) => section.length > 0).join('\n\n---\n\n')
   }
 
   const sections: string[] = []
@@ -249,8 +275,8 @@ export function serializeSessionHistory(args: {
   const conversation = splitConversationTurns(messages)
   const bootstrapCard = buildSessionBootstrapCard(debugSession, sessionTitle)
 
-  if (sessionTitle && sessionTitle.trim().length > 0) {
-    sections.push(`# ${sessionTitle.trim()}`)
+  if (metadata.length > 0) {
+    sections.push(metadata)
   }
 
   if (bootstrapCard) {
