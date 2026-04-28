@@ -202,13 +202,7 @@ describe('app tool helpers', () => {
       'chrome_devtools',
     ]))
     expect(selection.withoutTools).not.toContain('search_web')
-    expect(selection.requiredTools).toEqual(expect.arrayContaining([
-      'search_web',
-      'open_project_browser',
-      'search_project_browser_dom',
-      'get_project_browser_errors',
-      'release_project_browser_to_user',
-    ]))
+    expect(selection.requiredTools).toEqual(['ask_gemini'])
     expect(buildCoBrowseToolInstructions()).toContain(
       'search_web opens Google Search in the visible Project Browser',
     )

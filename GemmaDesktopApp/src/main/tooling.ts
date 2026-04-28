@@ -40,7 +40,7 @@ export const COBROWSE_BLOCKED_WEB_TOOL_NAMES = [
   'web_research_agent',
   'chrome_devtools',
 ] as const
-export const COBROWSE_REQUIRED_TOOL_NAMES = [
+export const COBROWSE_TOOL_NAMES = [
   SEARCH_WEB_TOOL,
   ...PROJECT_BROWSER_TOOL_NAMES,
   RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
@@ -319,14 +319,14 @@ export function applyCoBrowseToolRoutingToModeSelection(
         requiredTools: [...(mode.requiredTools ?? [])],
       }
   const blockedToolNames = new Set<string>(COBROWSE_BLOCKED_WEB_TOOL_NAMES)
-  const coBrowseToolNames = new Set<string>(COBROWSE_REQUIRED_TOOL_NAMES)
+  const coBrowseToolNames = new Set<string>(COBROWSE_TOOL_NAMES)
 
   return {
     base: spec.base,
     tools: Array.from(
       new Set([
         ...spec.tools.filter((toolName) => !blockedToolNames.has(toolName)),
-        ...COBROWSE_REQUIRED_TOOL_NAMES,
+        ...COBROWSE_TOOL_NAMES,
       ]),
     ),
     withoutTools: Array.from(
@@ -338,7 +338,6 @@ export function applyCoBrowseToolRoutingToModeSelection(
     requiredTools: Array.from(
       new Set([
         ...spec.requiredTools.filter((toolName) => !blockedToolNames.has(toolName)),
-        ...COBROWSE_REQUIRED_TOOL_NAMES,
       ]),
     ),
   }

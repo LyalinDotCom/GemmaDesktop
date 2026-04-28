@@ -10,7 +10,7 @@ interface ProjectBrowserPanelProps {
   resumeError?: string | null
   controlBusy?: boolean
   takeControlDisabledReason?: string | null
-  onTakeControl?: () => void
+  onTakeControl?: () => Promise<void> | void
   onReleaseControl?: () => void
   surfaceVisible?: boolean
 }
@@ -103,13 +103,36 @@ export function ProjectBrowserPanel({
     }
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (browserReadOnly) {
+    const targetUrl = draftUrl.trim()
+    if (!targetUrl) {
       return
     }
+
+    if (browserReadOnly) {
+      if (takeControlDisabledReason) {
+        setNavigationError(takeControlDisabledReason)
+        return
+      }
+      if (!onTakeControl) {
+        return
+      }
+      const confirmed = window.confirm(
+        `The agent currently controls this browser. Take control and navigate to ${targetUrl}?`,
+      )
+      if (!confirmed) {
+        return
+      }
+      try {
+        await onTakeControl()
+      } catch {
+        return
+      }
+    }
+
     void runBrowserCommand(() =>
-      window.gemmaDesktopBridge.browser.navigate(draftUrl, {
+      window.gemmaDesktopBridge.browser.navigate(targetUrl, {
         sessionId: state.sessionId,
         coBrowseActive,
       }),
@@ -188,30 +211,21 @@ export function ProjectBrowserPanel({
     }
   }, [])
 
+  const headerTitle = state.title?.trim() || (coBrowseActive ? 'CoBrowse' : 'Browser')
+  const errorChip = (
+    <div
+      className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
+      title={buildErrorTooltip(state)}
+    >
+      {state.consoleErrorCount} error{state.consoleErrorCount === 1 ? '' : 's'}
+    </div>
+  )
+
   return (
     <RightDockShell
-      title={coBrowseActive ? 'CoBrowse' : 'Browser'}
+      title={headerTitle}
       scrollBody={false}
       onClose={onClose}
-      meta={(
-        <div className="flex items-center gap-1.5">
-          {coBrowseActive ? (
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-              userHasControl
-                ? 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-100'
-                : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200'
-            }`}>
-              {userHasControl ? 'user control' : 'agent control'}
-            </span>
-          ) : null}
-          <div
-            className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-            title={buildErrorTooltip(state)}
-          >
-            {state.consoleErrorCount} error{state.consoleErrorCount === 1 ? '' : 's'}
-          </div>
-        </div>
-      )}
     >
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         <div className="rounded-xl border border-zinc-200/80 bg-white/90 px-2.5 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/70">
@@ -251,11 +265,10 @@ export function ProjectBrowserPanel({
               aria-label="Project Browser URL"
               className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400 dark:text-zinc-200 dark:placeholder:text-zinc-600"
               placeholder="Address"
-              readOnly={browserReadOnly}
               spellCheck={false}
               title={
                 browserReadOnly
-                  ? 'Take over to edit the address.'
+                  ? 'Press Enter to take control and navigate to this URL.'
                   : navigationError ?? state.lastError ?? state.url ?? undefined
               }
               value={draftUrl}
@@ -311,21 +324,24 @@ export function ProjectBrowserPanel({
         </div>
 
         {coBrowseActive ? (
-          <div className={`rounded-xl border px-3 py-2.5 shadow-sm ${
+          <div className={`rounded-xl border px-2.5 py-1.5 shadow-sm ${
             userHasControl
               ? 'border-amber-200/80 bg-amber-50/80 dark:border-amber-400/25 dark:bg-amber-400/10'
               : 'border-sky-200/70 bg-sky-50/80 dark:border-sky-500/20 dark:bg-sky-500/10'
           }`}>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <p className={`text-[12px] font-medium ${
+                <p className={`text-[11px] font-medium ${
                   userHasControl
                     ? 'text-amber-950 dark:text-amber-100'
                     : 'text-sky-900 dark:text-sky-100'
                 }`}>
+                  <span className="mr-1.5 align-baseline text-[10px] font-semibold uppercase tracking-wide opacity-70">
+                    {userHasControl ? 'user control' : 'agent control'}
+                  </span>
                   {controlSummary}
                 </p>
-                <p className={`mt-0.5 truncate text-[11px] ${
+                <p className={`mt-0.5 truncate text-[10px] ${
                   userHasControl
                     ? 'text-amber-800/75 dark:text-amber-100/70'
                     : 'text-sky-700/75 dark:text-sky-200/70'
@@ -333,19 +349,20 @@ export function ProjectBrowserPanel({
                   {controlDetail}
                 </p>
               </div>
+              {errorChip}
               <button
                 type="button"
                 aria-label={controlLabel}
                 title={controlTitle}
                 disabled={controlDisabled}
                 onClick={userHasControl ? onReleaseControl : onTakeControl}
-                className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border bg-white px-3 text-[11px] font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white dark:bg-zinc-950/60 ${
+                className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-full border bg-white px-2.5 text-[11px] font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white dark:bg-zinc-950/60 ${
                   userHasControl
                     ? 'border-amber-300/80 text-amber-800 hover:bg-amber-100 dark:border-amber-300/30 dark:text-amber-100 dark:hover:bg-amber-300/15'
                     : 'border-sky-300/70 text-sky-700 hover:bg-sky-100 dark:border-sky-300/30 dark:text-sky-100 dark:hover:bg-sky-300/15'
                 }`}
               >
-                <MousePointer2 size={14} />
+                <MousePointer2 size={12} />
                 <span>{controlLabel}</span>
               </button>
             </div>
@@ -355,7 +372,11 @@ export function ProjectBrowserPanel({
               </p>
             ) : null}
           </div>
-        ) : null}
+        ) : (
+          <div className="flex items-center justify-end px-1">
+            {errorChip}
+          </div>
+        )}
       </div>
     </RightDockShell>
   )

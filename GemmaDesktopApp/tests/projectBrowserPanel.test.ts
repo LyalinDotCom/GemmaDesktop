@@ -31,7 +31,7 @@ describe('ProjectBrowserPanel', () => {
       }),
     )
 
-    expect(markup).toContain('Browser')
+    expect(markup).toContain('Gemma Desktop')
     expect(markup).toContain('2 errors')
     expect(markup).toContain('Failed to fetch /api/health')
     expect(markup).toContain('aria-label="Back"')
@@ -98,11 +98,12 @@ describe('ProjectBrowserPanel', () => {
       }),
     )
 
-    expect(markup).toContain('CoBrowse')
+    expect(markup).toContain('Example')
     expect(markup).toContain('agent control')
     expect(markup).toContain('Agent owns browser control')
     expect(markup).toContain('aria-label="Take over"')
-    expect(markup).toContain('readOnly=""')
+    expect(markup).not.toContain('readOnly=""')
+    expect(markup).toContain('Press Enter to take control')
     expect(markup).toContain('lucide-mouse-pointer2')
   })
 
