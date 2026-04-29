@@ -10,6 +10,13 @@ export function filterVisibleWorkspaceEntries<T extends { relativePath: string }
   return entries.filter((entry) => !isHiddenWorkspacePath(entry.relativePath))
 }
 
+export function filterWorkspaceEntriesForHiddenPreference<T extends { relativePath: string }>(
+  entries: readonly T[],
+  showHiddenFiles: boolean,
+): T[] {
+  return showHiddenFiles ? [...entries] : filterVisibleWorkspaceEntries(entries)
+}
+
 export function buildVisibleWorkspaceFilesSnapshot(
   entries: readonly WorkspaceFileTreeEntry[],
 ): Map<string, string> {

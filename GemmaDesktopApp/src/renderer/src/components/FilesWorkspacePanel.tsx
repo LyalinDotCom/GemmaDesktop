@@ -2,13 +2,16 @@ import { useMemo, useState } from 'react'
 import { ChevronRight, File, FileText, Folder, Loader2, Search, X } from 'lucide-react'
 import { RightDockShell } from '@/components/RightDockShell'
 import { useWorkspaceInspection } from '@/hooks/useWorkspaceInspection'
-import { filterVisibleWorkspaceEntries } from '@/lib/workspaceFileVisibility'
+import {
+  filterWorkspaceEntriesForHiddenPreference,
+  isHiddenWorkspacePath,
+} from '@/lib/workspaceFileVisibility'
 import {
   useSessionTouchedFiles,
   type SessionTouchEntry,
   type SessionTouchMap,
 } from '@/hooks/useSessionTouchedFiles'
-import { useSessionFileChanges } from '@/hooks/useSessionFileChanges'
+import { useSessionFileChanges, type SessionFileChanges } from '@/hooks/useSessionFileChanges'
 import type { SessionDetail } from '@/types'
 import type { WorkspaceFileTreeEntry, WorkspaceGitStatus } from '@shared/workspace'
 
@@ -62,10 +65,7 @@ function buildTree(
   const roots: TreeNode[] = []
   const stack: TreeNode[] = []
 
-  // Drop dotfiles/dotdirs entirely — they are visual noise for most users.
-  const visibleEntries = filterVisibleWorkspaceEntries(entries)
-
-  for (const entry of visibleEntries) {
+  for (const entry of entries) {
     const touch = touches.byPath.get(entry.relativePath) ?? null
     const node: TreeNode = {
       key: `${entry.kind}:${entry.relativePath}`,
@@ -113,6 +113,29 @@ function buildTree(
   for (const root of roots) walk(root)
 
   return roots
+}
+
+function filterFileChangesForHiddenPreference(
+  changes: SessionFileChanges,
+  showHiddenFiles: boolean,
+): SessionFileChanges {
+  if (showHiddenFiles) return changes
+
+  const ghostEntries = new Map<string, WorkspaceFileTreeEntry>()
+  for (const entry of changes.ghostEntries.values()) {
+    if (!isHiddenWorkspacePath(entry.relativePath)) {
+      ghostEntries.set(entry.relativePath, entry)
+    }
+  }
+
+  const rebornPaths = new Set<string>()
+  for (const relativePath of changes.rebornPaths) {
+    if (!isHiddenWorkspacePath(relativePath)) {
+      rebornPaths.add(relativePath)
+    }
+  }
+
+  return { ghostEntries, rebornPaths }
 }
 
 /**
@@ -419,21 +442,27 @@ export function FilesWorkspacePanel({
   const rootPath = inspection?.rootPath ?? workingDirectory
   const touches = useSessionTouchedFiles(session, rootPath)
   const files = inspection?.files
-  const visibleEntries = useMemo(
-    () => filterVisibleWorkspaceEntries(files?.entries ?? []),
-    [files?.entries],
-  )
-  const fileChanges = useSessionFileChanges(visibleEntries, rootPath)
+  const allEntries = files?.entries
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState('')
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false)
+  const displayedEntries = useMemo(
+    () => filterWorkspaceEntriesForHiddenPreference(allEntries ?? [], showHiddenFiles),
+    [allEntries, showHiddenFiles],
+  )
+  const allFileChanges = useSessionFileChanges(allEntries, rootPath)
+  const fileChanges = useMemo(
+    () => filterFileChangesForHiddenPreference(allFileChanges, showHiddenFiles),
+    [allFileChanges, showHiddenFiles],
+  )
   const trimmedQuery = query.trim().toLowerCase()
 
   const tree = useMemo(() => {
-    const base = visibleEntries.length > 0
-      ? buildTree(visibleEntries, touches, fileChanges.rebornPaths)
+    const base = displayedEntries.length > 0
+      ? buildTree(displayedEntries, touches, fileChanges.rebornPaths)
       : []
     return attachGhosts(base, fileChanges.ghostEntries)
-  }, [visibleEntries, touches, fileChanges.ghostEntries, fileChanges.rebornPaths])
+  }, [displayedEntries, touches, fileChanges.ghostEntries, fileChanges.rebornPaths])
 
   const filteredTree = useMemo(
     () => (trimmedQuery ? filterTree(tree, buildMatcher(trimmedQuery)) : tree),
@@ -475,7 +504,7 @@ export function FilesWorkspacePanel({
     if (trimmedQuery) {
       metaParts.push(`${matchCount} ${matchCount === 1 ? 'match' : 'matches'}`)
     } else {
-      metaParts.push(`${visibleEntries.length} ${visibleEntries.length === 1 ? 'item' : 'items'}`)
+      metaParts.push(`${displayedEntries.length} ${displayedEntries.length === 1 ? 'item' : 'items'}`)
     }
   }
   if (touchedCount > 0) {
@@ -490,28 +519,40 @@ export function FilesWorkspacePanel({
   const meta = metaParts.length > 0 ? metaParts.join(' · ') : null
 
   const toolbar = inspection?.exists && !files?.error ? (
-    <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-950">
-      <Search size={13} className="shrink-0 text-zinc-400" />
-      <input
-        type="text"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Filter files (supports *.ts, *.md)"
-        aria-label="Filter files"
-        title="Substring match, or glob when pattern contains * or ?"
-        className="min-w-0 flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-200 dark:placeholder:text-zinc-500"
-      />
-      {query.length > 0 ? (
-        <button
-          type="button"
-          onClick={() => setQuery('')}
-          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
-          title="Clear filter"
-          aria-label="Clear filter"
-        >
-          <X size={12} />
-        </button>
-      ) : null}
+    <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-950">
+      <div className="flex items-center gap-2">
+        <Search size={13} className="shrink-0 text-zinc-400" />
+        <input
+          type="text"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Filter files (supports *.ts, *.md)"
+          aria-label="Filter files"
+          title="Substring match, or glob when pattern contains * or ?"
+          className="min-w-0 flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-200 dark:placeholder:text-zinc-500"
+        />
+        {query.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
+            title="Clear filter"
+            aria-label="Clear filter"
+          >
+            <X size={12} />
+          </button>
+        ) : null}
+      </div>
+      <label className="flex cursor-pointer items-center gap-2 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+        <input
+          type="checkbox"
+          checked={showHiddenFiles}
+          onChange={(event) => setShowHiddenFiles(event.target.checked)}
+          aria-label="Show hidden files"
+          className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 text-zinc-800 accent-zinc-800 dark:border-zinc-700 dark:text-zinc-200 dark:accent-zinc-200"
+        />
+        <span>Show hidden files</span>
+      </label>
     </div>
   ) : undefined
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildVisibleWorkspaceFilesSnapshot, filterVisibleWorkspaceEntries } from '../src/renderer/src/lib/workspaceFileVisibility'
+import {
+  buildVisibleWorkspaceFilesSnapshot,
+  filterVisibleWorkspaceEntries,
+  filterWorkspaceEntriesForHiddenPreference,
+} from '../src/renderer/src/lib/workspaceFileVisibility'
 import type { WorkspaceFileTreeEntry } from '../src/shared/workspace'
 
 function createEntry(
@@ -30,6 +34,23 @@ describe('workspaceFileVisibility', () => {
     ])
 
     expect(visibleEntries.map((entry) => entry.relativePath)).toEqual(['src/App.tsx'])
+  })
+
+  it('keeps hidden entries only when the hidden-file preference is enabled', () => {
+    const entries = [
+      createEntry('src/App.tsx'),
+      createEntry('.env'),
+      createEntry('src/.cache/state.json'),
+    ]
+
+    expect(
+      filterWorkspaceEntriesForHiddenPreference(entries, false)
+        .map((entry) => entry.relativePath),
+    ).toEqual(['src/App.tsx'])
+    expect(
+      filterWorkspaceEntriesForHiddenPreference(entries, true)
+        .map((entry) => entry.relativePath),
+    ).toEqual(['src/App.tsx', '.env', 'src/.cache/state.json'])
   })
 
   it('keeps file badge snapshots stable when only hidden files change', () => {
