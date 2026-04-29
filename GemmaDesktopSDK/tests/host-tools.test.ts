@@ -748,4 +748,35 @@ describe("host tools", () => {
     expect(structured.stderr).toContain("warning");
     expect(result.output).toContain("warning");
   });
+
+  it("marks nonzero shell command exits as failed tool results", async () => {
+    const workingDirectory = await createWorkspace();
+
+    const result = await getTool("exec_command").execute(
+      {
+        command: "node -e 'process.stderr.write(\"boom\\n\"); process.exit(7)'",
+      },
+      createContext(workingDirectory),
+    );
+    const structured = result.structuredOutput as {
+      ok: boolean;
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      timedOut: boolean;
+    };
+
+    expect(structured.ok).toBe(false);
+    expect(structured.exitCode).toBe(7);
+    expect(structured.stderr).toContain("boom");
+    expect(structured.timedOut).toBe(false);
+    expect(result.metadata).toMatchObject({
+      toolError: true,
+      errorKind: "nonzero_exit",
+      exitCode: 7,
+      timedOut: false,
+    });
+    expect(result.output).toContain("Command failed with exit code 7.");
+    expect(result.output).toContain("boom");
+  });
 });

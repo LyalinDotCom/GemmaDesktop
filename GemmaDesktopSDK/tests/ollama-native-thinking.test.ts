@@ -126,6 +126,64 @@ describe("Ollama native thinking", () => {
     expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("42");
   });
 
+  it("preserves ordinary streamed text deltas while watching for raw tool syntax", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          text: [
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "Hello ",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "world.",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+              },
+              done: true,
+              done_reason: "stop",
+            }),
+          ].join("\n"),
+          headers: {
+            "content-type": "application/x-ndjson",
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    const events = [];
+
+    for await (const event of adapter.stream({
+      model: "gemma4:26b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Say hello." }], createdAt: new Date().toISOString() }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([
+      { type: "text.delta", delta: "Hello " },
+      { type: "text.delta", delta: "world." },
+    ]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("Hello world.");
+  });
+
   it("recovers inline pseudo tool-call syntax from non-streaming native chat responses", async () => {
     const server = await createMockServer((request) => {
       if (request.path === "/api/chat") {
@@ -158,6 +216,50 @@ describe("Ollama native thinking", () => {
         name: "fetch_url",
         input: {
           url: "https://news.ycombinator.com/",
+        },
+      }),
+    ]);
+  });
+
+  it("recovers wrapped Gemma 4 tool-call syntax and preserves delimited string literals", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          json: {
+            model: "gemma4:26b",
+            message: {
+              role: "assistant",
+              content: [
+                "<|channel>thought\nNeed a command.\n<channel|>",
+                "<|tool_call>call:exec_command{",
+                'command:<|"|>printf "hello, {world}"\n<|"|>,',
+                'cwd:<|"|>/tmp/demo<|"|>',
+                "}<tool_call|><|tool_response>",
+              ].join(""),
+            },
+            done: true,
+            done_reason: "stop",
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    const response = await adapter.generate({
+      model: "gemma4:26b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Run the command." }], createdAt: new Date().toISOString() }],
+    });
+
+    expect(response.text).toBe("");
+    expect(response.toolCalls).toEqual([
+      expect.objectContaining({
+        name: "exec_command",
+        input: {
+          command: 'printf "hello, {world}"\n',
+          cwd: "/tmp/demo",
         },
       }),
     ]);
@@ -220,6 +322,77 @@ describe("Ollama native thinking", () => {
         name: "fetch_url",
         input: {
           url: "https://news.ycombinator.com/",
+        },
+      }),
+    ]);
+  });
+
+  it("withholds streamed wrapped Gemma 4 tool-call text while recovering the final call", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          text: [
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "<|channel>thought\nNeed a command.",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "\n<channel|><|tool_call>call:exec_command{command:<|\"|>printf ",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "\"hello\"\n<|\"|>}<tool_call|><|tool_response>",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+              },
+              done: true,
+              done_reason: "stop",
+            }),
+          ].join("\n"),
+          headers: {
+            "content-type": "application/x-ndjson",
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    const events = [];
+
+    for await (const event of adapter.stream({
+      model: "gemma4:26b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Run the command." }], createdAt: new Date().toISOString() }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("");
+    expect(completed && completed.type === "response.complete" ? completed.response.toolCalls : []).toEqual([
+      expect.objectContaining({
+        name: "exec_command",
+        input: {
+          command: 'printf "hello"\n',
         },
       }),
     ]);

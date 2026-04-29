@@ -33,6 +33,57 @@ function truncate(text: string, limit = DEFAULT_OUTPUT_LIMIT): { output: string;
   };
 }
 
+function formatShellCommandOutput(input: {
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  timeoutMs: number;
+}): {
+  output: string;
+  metadata: Record<string, unknown>;
+  structuredOutput: Record<string, unknown>;
+} {
+  const commandFailed = input.timedOut || input.exitCode !== 0;
+  const merged = [input.stdout.trim(), input.stderr.trim()].filter(Boolean).join("\n");
+  const failureLine = input.timedOut
+    ? `Command timed out after ${input.timeoutMs}ms${input.exitCode == null ? "" : ` with exit code ${input.exitCode}`}.`
+    : input.exitCode !== 0
+    ? `Command failed with exit code ${input.exitCode}.`
+    : undefined;
+  const rawOutput = [
+    failureLine,
+    merged.length > 0 ? merged : "(no output)",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const { output, truncated } = truncate(rawOutput);
+
+  return {
+    output,
+    structuredOutput: {
+      ok: !commandFailed,
+      command: input.command,
+      exitCode: input.exitCode,
+      stdout: input.stdout,
+      stderr: input.stderr,
+      timedOut: input.timedOut,
+    },
+    metadata: {
+      truncated,
+      ...(commandFailed
+        ? {
+            toolError: true,
+            errorKind: input.timedOut ? "command_timed_out" : "nonzero_exit",
+            exitCode: input.exitCode,
+            timedOut: input.timedOut,
+          }
+        : {}),
+    },
+  };
+}
+
 function resolvePath(context: ToolExecutionContext, target = "."): string {
   return path.resolve(context.workingDirectory, target);
 }
@@ -882,17 +933,20 @@ export function createHostTools(): RegisteredTool[] {
         additionalProperties: false,
       },
       async execute(input: { command: string; cwd?: string; timeoutMs?: number }, context) {
+        const timeoutMs = input.timeoutMs ?? 30_000;
         const result = await runShellCommand(input.command, {
           cwd: resolvePath(context, input.cwd),
           signal: context.signal,
-          timeoutMs: input.timeoutMs ?? 30_000,
+          timeoutMs,
         });
-        const merged = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-        const { output, truncated } = truncate(merged.length > 0 ? merged : "(no output)");
+        const formatted = formatShellCommandOutput({
+          ...result,
+          timeoutMs,
+        });
         return {
-          output,
-          structuredOutput: result,
-          metadata: { truncated },
+          output: formatted.output,
+          structuredOutput: formatted.structuredOutput,
+          metadata: formatted.metadata,
         };
       },
     },

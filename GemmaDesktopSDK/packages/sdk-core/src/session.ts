@@ -727,6 +727,7 @@ const FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION = [
 
 const MAX_STEP_FINALIZATION_WARNING =
   "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
+const REPEATED_TOOL_FAILURE_THRESHOLD = 3;
 
 const TOOL_SURFACE_REGISTRATION_ERROR_PATTERN =
   /^Tool "([^"]+)" is not registered in the active tool surface\.$/;
@@ -751,6 +752,22 @@ function buildToolFailureContinuationInstruction(failedTools: readonly string[])
     "Read the tool result error carefully before you continue.",
     "If you can recover, emit a corrected tool call now.",
     "If recovery is not possible, explain the blocker plainly instead of claiming success.",
+  ].join("\n");
+}
+
+function buildRepeatedToolFailureContinuationInstruction(input: {
+  toolName: string;
+  failurePreview: string;
+  count: number;
+}): string {
+  return [
+    "A tool call has repeatedly failed with the same failure pattern.",
+    `Tool: ${input.toolName}.`,
+    `Repeated failure count: ${input.count}.`,
+    `Failure pattern: ${input.failurePreview}.`,
+    "Tool access is disabled for this recovery step.",
+    "Do not retry the same command, tool call, or a trivial variation.",
+    "Using only the evidence already visible in the session, state the concrete blocker or describe a materially different recovery path in the final answer.",
   ].join("\n");
 }
 
@@ -920,6 +937,71 @@ function hasFailedToolResult(toolResults: readonly ToolResult[]): boolean {
         : undefined;
     return structured?.ok === false || typeof structured?.error === "string";
   });
+}
+
+function isFailedToolResult(toolResult: ToolResult): boolean {
+  return hasFailedToolResult([toolResult]);
+}
+
+function normalizeToolFailureLine(value: string): string {
+  return value
+    .replace(/\/[^\s]+/g, "<path>")
+    .replace(/\b\d{4}[-_]\d{2}[-_]\d{2}[Tt_\-:.0-9Zz]*\b/g, "<timestamp>")
+    .replace(/\b[0-9a-f]{16,}\b/gi, "<id>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function buildToolFailureSignature(
+  toolCall: ModelToolCall,
+  toolResult: ToolResult,
+): { key: string; preview: string } {
+  const structured =
+    toolResult.structuredOutput && typeof toolResult.structuredOutput === "object"
+      ? toolResult.structuredOutput as Record<string, unknown>
+      : undefined;
+  const text = [
+    typeof structured?.error === "string" ? structured.error : undefined,
+    toolResult.output,
+  ]
+    .filter((part): part is string => Boolean(part && part.trim().length > 0))
+    .join("\n");
+  const meaningfulLine =
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .find((line) =>
+        !/\bcomplete log\b/i.test(line)
+        && !/^command (?:failed with exit code|timed out)\b/i.test(line)
+      )
+    ?? text.trim()
+    ?? "unknown failure";
+  const normalizedLine = normalizeToolFailureLine(meaningfulLine).slice(0, 320);
+  const metadata =
+    toolResult.metadata && typeof toolResult.metadata === "object"
+      ? toolResult.metadata as Record<string, unknown>
+      : undefined;
+  const structuredExitCode =
+    typeof structured?.exitCode === "number" || structured?.exitCode === null
+      ? String(structured.exitCode)
+      : undefined;
+  const metadataExitCode =
+    typeof metadata?.exitCode === "number" || metadata?.exitCode === null
+      ? String(metadata.exitCode)
+      : undefined;
+  const exitCode = structuredExitCode ?? metadataExitCode ?? "";
+
+  return {
+    key: [
+      toolCall.name,
+      normalizedLine,
+      exitCode,
+      structured?.timedOut === true || metadata?.timedOut === true ? "timed_out" : "",
+    ].join("|"),
+    preview: meaningfulLine.slice(0, 220),
+  };
 }
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
@@ -1608,6 +1690,7 @@ export class SessionEngine {
     continuationInstruction?: string,
     availableTools?: ToolDefinition[],
   ): ChatRequest {
+    const effectiveTools = availableTools ?? this.availableTools;
     const systemPromptSections = resolveSessionSystemInstructions({
       modelId: this.model,
       mode: this.mode,
@@ -1615,7 +1698,7 @@ export class SessionEngine {
       capabilityContext: this.capabilityContext,
       systemInstructions: this.systemInstructions,
       history: this.history,
-      availableTools: this.availableTools.map((tool) => tool.name),
+      availableTools: effectiveTools.map((tool) => tool.name),
     });
     const systemPrompt = composeSystemPrompt(
       systemPromptSections,
@@ -1644,7 +1727,7 @@ export class SessionEngine {
     return {
       model: this.model,
       messages,
-      tools: availableTools ?? this.availableTools,
+      tools: effectiveTools,
       responseFormat,
       signal,
       debug,
@@ -1818,6 +1901,8 @@ export class SessionEngine {
     let latestBuildVerifierResult: BuildCompletionVerifierResult | undefined;
     let latestBuildSummary: BuildTurnSummary | undefined;
     let completedFromFinalizationToolResponse = false;
+    let nextStepAvailableTools: ToolDefinition[] | undefined;
+    const failedToolSignatureCounts = new Map<string, number>();
     const requiredTools = resolveRequiredTools(this.mode).filter((toolName) =>
       this.availableTools.some((tool) => tool.name === toolName),
     );
@@ -1832,6 +1917,9 @@ export class SessionEngine {
     for (let step = 1; step <= maxSteps; step += 1) {
       throwIfCancelled(options.signal);
       executedSteps = step;
+      const stepAvailableTools = nextStepAvailableTools;
+      const toolAccessDisabledForStep = stepAvailableTools?.length === 0;
+      nextStepAvailableTools = undefined;
       this.emit(queue, turnId, "turn.step.started", { step });
 
       const request = this.buildRequest(
@@ -1839,6 +1927,7 @@ export class SessionEngine {
         options.responseFormat,
         options.debug,
         continuationInstruction,
+        stepAvailableTools,
       );
       continuationInstruction = undefined;
       let response: ChatResponse | undefined;
@@ -2291,6 +2380,19 @@ export class SessionEngine {
         break;
       }
 
+      if (toolAccessDisabledForStep) {
+        this.discardAssistantResponse(assistantMessage);
+        throw new GemmaDesktopError(
+          "tool_execution_failed",
+          "Model attempted another tool call after repeated tool failures disabled tool access for the recovery step.",
+          {
+            details: {
+              toolCalls: response.toolCalls,
+            },
+          },
+        );
+      }
+
       continuationAttempts = 0;
 
       if (!this.tools || this.tools.listTools().length === 0) {
@@ -2306,6 +2408,9 @@ export class SessionEngine {
       }
 
       const failedToolNames = new Set<string>();
+      let repeatedFailure:
+        | { toolName: string; failurePreview: string; count: number }
+        | undefined;
 
       for (const toolCall of response.toolCalls) {
         throwIfCancelled(options.signal);
@@ -2361,6 +2466,20 @@ export class SessionEngine {
           });
 
           throwIfCancelled(options.signal);
+          const toolFailed = isFailedToolResult(toolResult);
+          if (toolFailed) {
+            failedToolNames.add(toolCall.name);
+            const signature = buildToolFailureSignature(toolCall, toolResult);
+            const count = (failedToolSignatureCounts.get(signature.key) ?? 0) + 1;
+            failedToolSignatureCounts.set(signature.key, count);
+            if (count >= REPEATED_TOOL_FAILURE_THRESHOLD && !repeatedFailure) {
+              repeatedFailure = {
+                toolName: toolCall.name,
+                failurePreview: signature.preview,
+                count,
+              };
+            }
+          }
           toolResults.push(toolResult);
           recordBuildToolResult(buildTurnState, toolResult);
           if (requiredTools.includes(toolCall.name)) {
@@ -2376,6 +2495,7 @@ export class SessionEngine {
               callId: toolCall.id,
               toolName: toolCall.name,
               output: toolResult.output,
+              ...(toolFailed ? { error: toolResult.output } : {}),
               structuredOutput: toolResult.structuredOutput,
               metadata: toolResult.metadata ?? {},
             },
@@ -2404,6 +2524,16 @@ export class SessionEngine {
 
           const failedToolResult = this.buildFailedToolResult(toolCall, gemmaDesktopError);
           failedToolNames.add(toolCall.name);
+          const signature = buildToolFailureSignature(toolCall, failedToolResult);
+          const count = (failedToolSignatureCounts.get(signature.key) ?? 0) + 1;
+          failedToolSignatureCounts.set(signature.key, count);
+          if (count >= REPEATED_TOOL_FAILURE_THRESHOLD && !repeatedFailure) {
+            repeatedFailure = {
+              toolName: toolCall.name,
+              failurePreview: signature.preview,
+              count,
+            };
+          }
           toolResults.push(failedToolResult);
           recordBuildToolResult(buildTurnState, failedToolResult);
           this.appendToolResult(failedToolResult);
@@ -2423,6 +2553,30 @@ export class SessionEngine {
             toolCall.id,
           );
         }
+      }
+
+      if (repeatedFailure) {
+        if (step >= maxSteps) {
+          throw new GemmaDesktopError(
+            "tool_execution_failed",
+            `Tool "${repeatedFailure.toolName}" failed with the same pattern ${repeatedFailure.count} times and no steps remain for recovery.`,
+            {
+              details: repeatedFailure,
+            },
+          );
+        }
+
+        const warning =
+          `Tool "${repeatedFailure.toolName}" failed with the same pattern ${repeatedFailure.count} times. `
+          + "Disabling tools for one recovery step so the assistant must state the blocker instead of retrying.";
+        warnings.push(warning);
+        this.emit(queue, turnId, "warning.raised", {
+          step,
+          warning,
+        });
+        continuationInstruction = buildRepeatedToolFailureContinuationInstruction(repeatedFailure);
+        nextStepAvailableTools = [];
+        continue;
       }
 
       if (failedToolNames.size > 0) {

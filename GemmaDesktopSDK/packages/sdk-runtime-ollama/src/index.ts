@@ -319,12 +319,59 @@ function extractBalancedSection(
   return undefined;
 }
 
+const GEMMA_STRING_DELIMITER = `<|"|>`;
+const GEMMA_RAW_TOOL_CONTROL_TOKEN_PATTERN =
+  /<\|tool_call\|?>|<tool_call\|>|<\|tool_response\|?>|<tool_response\|>/gi;
+const GEMMA_RAW_THOUGHT_CHANNEL_PATTERN = /<\|channel>thought\s*[\s\S]*?<channel\|>/gi;
+const GEMMA_INCOMPLETE_RAW_THOUGHT_CHANNEL_PATTERN = /<\|channel>thought\s*[\s\S]*$/gi;
+const GEMMA_POTENTIAL_INLINE_TOOL_PATTERN =
+  /<\|tool_call\|?>|<tool_call\|>|<\|tool_response\|?>|\bcall:[a-z0-9_.:-]+\s*(?:[{(]|$)/i;
+
+function replaceGemmaDelimitedStrings(raw: string): string {
+  let normalized = "";
+  let cursor = 0;
+
+  while (cursor < raw.length) {
+    const start = raw.indexOf(GEMMA_STRING_DELIMITER, cursor);
+    if (start === -1) {
+      normalized += raw.slice(cursor);
+      break;
+    }
+
+    normalized += raw.slice(cursor, start);
+    const valueStart = start + GEMMA_STRING_DELIMITER.length;
+    const end = raw.indexOf(GEMMA_STRING_DELIMITER, valueStart);
+    if (end === -1) {
+      normalized += raw.slice(start);
+      break;
+    }
+
+    normalized += JSON.stringify(raw.slice(valueStart, end));
+    cursor = end + GEMMA_STRING_DELIMITER.length;
+  }
+
+  return normalized;
+}
+
+function stripGemmaRawThoughtChannels(text: string): string {
+  return text
+    .replace(GEMMA_RAW_THOUGHT_CHANNEL_PATTERN, "")
+    .replace(GEMMA_INCOMPLETE_RAW_THOUGHT_CHANNEL_PATTERN, "");
+}
+
+function cleanInlineToolTextFragment(text: string): string {
+  return stripGemmaRawThoughtChannels(text)
+    .replace(GEMMA_RAW_TOOL_CONTROL_TOKEN_PATTERN, "");
+}
+
+function shouldWithholdInlineToolText(text: string): boolean {
+  return GEMMA_POTENTIAL_INLINE_TOOL_PATTERN.test(text) || /<\|channel>thought/i.test(text);
+}
+
 function normalizeInlineToolArguments(raw: string): string {
-  return raw
+  return replaceGemmaDelimitedStrings(raw)
     .trim()
-    .replace(/<\|"\|>/g, "\"")
-    .replace(/<\|tool_call\|>/gi, "")
-    .replace(/<tool_call\|>/gi, "")
+    .replace(GEMMA_RAW_TOOL_CONTROL_TOKEN_PATTERN, "")
     .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_-]*)(\s*:)/g, "$1\"$2\"$3")
     .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, value: string) => `: ${JSON.stringify(value.replace(/\\'/g, "'"))}`);
 }
@@ -335,7 +382,7 @@ function parseInlineToolCallsFromText(text: string): {
 } {
   if (!/\bcall:[a-z0-9_.:-]+\s*[{(]/i.test(text)) {
     return {
-      cleanedText: text,
+      cleanedText: stripGemmaRawThoughtChannels(text),
       toolCalls: [],
     };
   }
@@ -348,7 +395,7 @@ function parseInlineToolCallsFromText(text: string): {
   while (true) {
     const match = pattern.exec(text);
     if (!match || match.index == null) {
-      cleaned += text.slice(cursor);
+      cleaned += cleanInlineToolTextFragment(text.slice(cursor));
       break;
     }
 
@@ -363,7 +410,7 @@ function parseInlineToolCallsFromText(text: string): {
     );
 
     if (!section) {
-      cleaned += text.slice(cursor);
+      cleaned += cleanInlineToolTextFragment(text.slice(cursor));
       break;
     }
 
@@ -374,12 +421,12 @@ function parseInlineToolCallsFromText(text: string): {
     const parsedInput = parseToolCallInput(normalizedArgs);
 
     if (typeof parsedInput === "string") {
-      cleaned += text.slice(cursor, section.end);
+      cleaned += cleanInlineToolTextFragment(text.slice(cursor, section.end));
       cursor = section.end;
       continue;
     }
 
-    cleaned += text.slice(cursor, match.index);
+    cleaned += cleanInlineToolTextFragment(text.slice(cursor, match.index));
     toolCalls.push({
       id: `tool_${Math.random().toString(16).slice(2)}`,
       name,
@@ -387,7 +434,8 @@ function parseInlineToolCallsFromText(text: string): {
     });
     cursor = section.end;
 
-    const trailingMarker = /^(\s*<\|tool_call\|>|\s*<tool_call\|>)/i.exec(text.slice(cursor));
+    const trailingMarker =
+      /^(\s*(?:<\|tool_call\|?>|<tool_call\|>|<\|tool_response\|?>|<tool_response\|>))+/i.exec(text.slice(cursor));
     if (trailingMarker) {
       cursor += trailingMarker[0].length;
     }
@@ -399,9 +447,14 @@ function parseInlineToolCallsFromText(text: string): {
   };
 }
 
+function nativeMessageRawText(raw: unknown): string {
+  const message = typeof raw === "object" && raw ? (raw as Record<string, unknown>) : {};
+  return typeof message.content === "string" ? message.content : "";
+}
+
 function parseNativeMessage(raw: unknown): Pick<ChatResponse, "text" | "content" | "reasoning" | "toolCalls"> {
   const message = typeof raw === "object" && raw ? (raw as Record<string, unknown>) : {};
-  const rawText = typeof message.content === "string" ? message.content : "";
+  const rawText = nativeMessageRawText(message);
   const reasoning = typeof message.thinking === "string" ? message.thinking : undefined;
   const nativeToolCalls = parseNativeToolCalls(message.tool_calls);
   const inlineFallback =
@@ -828,6 +881,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         throw new Error(`Ollama stream failed: ${response.status}`);
       }
       let text = "";
+      let emittedText = "";
       let reasoning = "";
       let toolCalls: ChatResponse["toolCalls"] = [];
       let finalChunk: Record<string, unknown> | undefined;
@@ -841,6 +895,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         })) {
           finalChunk = chunk;
           const parsed = parseNativeMessage(chunk.message);
+          const rawText = nativeMessageRawText(chunk.message);
           if (parsed.reasoning) {
             reasoning += parsed.reasoning;
             yield {
@@ -848,12 +903,18 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
               delta: parsed.reasoning,
             };
           }
-          if (parsed.text.length > 0) {
-            text += parsed.text;
-            yield {
-              type: "text.delta" as const,
-              delta: parsed.text,
-            };
+          if (rawText.length > 0) {
+            text += rawText;
+            const visibleText = parseInlineToolCallsFromText(rawText).cleanedText;
+            if (!shouldWithholdInlineToolText(text)) {
+              emittedText += visibleText;
+              if (visibleText.length > 0) {
+                yield {
+                  type: "text.delta" as const,
+                  delta: visibleText,
+                };
+              }
+            }
           }
           if (parsed.toolCalls.length > 0) {
             toolCalls = parsed.toolCalls;
@@ -883,6 +944,15 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
       const finalText = inlineFallback.cleanedText;
       if (toolCalls.length === 0 && inlineFallback.toolCalls.length > 0) {
         toolCalls = inlineFallback.toolCalls;
+      }
+      if (finalText.length > emittedText.length && finalText.startsWith(emittedText)) {
+        const delta = finalText.slice(emittedText.length);
+        if (delta.length > 0) {
+          yield {
+            type: "text.delta" as const,
+            delta,
+          };
+        }
       }
 
       yield {

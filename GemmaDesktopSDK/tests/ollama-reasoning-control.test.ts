@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
 import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
 import { createMockServer } from "./helpers/mock-server.js";
 
@@ -77,6 +78,70 @@ describe("ollama reasoning control", () => {
     });
 
     expect(requests[0]?.think).toBe(false);
+  });
+
+  it("keeps Gemma 4 thinking control in the Ollama request instead of raw system prompt tokens", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      switch (request.path) {
+        case "/api/version":
+          return { json: { version: "0.6.0" } };
+        case "/api/tags":
+          return {
+            json: {
+              models: [{
+                name: "gemma4:31b",
+                details: {
+                  family: "gemma",
+                },
+              }],
+            },
+          };
+        case "/api/ps":
+          return { json: { models: [] } };
+        case "/api/show":
+          return { json: { capabilities: ["completion"] } };
+        case "/api/chat":
+          capturedBody = request.bodyJson as Record<string, unknown>;
+          return {
+            json: {
+              message: {
+                role: "assistant",
+                content: "Hello.",
+              },
+            },
+          };
+        default:
+          throw new Error(`Unhandled route: ${request.path}`);
+      }
+    });
+    cleanup.push(server.close);
+
+    const gemmaDesktop = await createGemmaDesktop({
+      adapters: [createOllamaNativeAdapter({ baseUrl: server.url })],
+    });
+    const session = await gemmaDesktop.sessions.create({
+      runtime: "ollama-native",
+      model: "gemma4:31b",
+      mode: "cowork",
+      metadata: {
+        requestPreferences: {
+          reasoningMode: "on",
+        },
+      },
+    });
+
+    await session.run("Hello.");
+
+    expect(capturedBody?.think).toBe(true);
+    const systemText = ((capturedBody?.messages as Array<Record<string, unknown>> | undefined) ?? [])
+      .filter((message) => message.role === "system")
+      .map((message) => String(message.content ?? ""))
+      .join("\n");
+    expect(systemText).toContain("<gemma_desktop_system_prompt>");
+    expect(systemText).not.toContain("<|think|>");
+    expect(systemText).not.toContain("<|turn>system");
+    expect(systemText).not.toContain("<turn|>");
   });
 
   it("omits think when reasoningMode is auto", async () => {

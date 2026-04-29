@@ -100,6 +100,167 @@ function collectSystemText(messages: readonly ChatRequest["messages"][number][])
 }
 
 describe("tool failure recovery", () => {
+  it("continues the turn after a tool returns structured failure metadata", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will initialize the project.",
+        toolName: "exec_command",
+        toolInput: {
+          command: "cd .tmp && npm init -y",
+        },
+      }),
+      createTextResponse(
+        "The npm init command failed because .tmp is not a valid package name. I would recover by writing package.json directly with a valid name.",
+      ),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "exec_command",
+      description: "Run a shell command.",
+      inputSchema: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute() {
+        return {
+          output: "Command failed with exit code 1.\nnpm error Invalid name: \".tmp\"",
+          structuredOutput: {
+            ok: false,
+            command: "cd .tmp && npm init -y",
+            exitCode: 1,
+            stdout: "",
+            stderr: "npm error Invalid name: \".tmp\"",
+            timedOut: false,
+          },
+          metadata: {
+            toolError: true,
+            errorKind: "nonzero_exit",
+          },
+        };
+      },
+    });
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 4,
+    });
+
+    const result = await engine.run("Create a web project in .tmp.");
+
+    expect(result.text).toContain("writing package.json directly");
+    expect(result.toolResults[0]?.metadata).toMatchObject({
+      toolError: true,
+      errorKind: "nonzero_exit",
+    });
+    expect(adapter.requests).toHaveLength(2);
+    expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
+      "One or more tool calls in your previous step failed.",
+    );
+    expect(result.events.find((event) =>
+      event.type === "tool.result"
+      && (event.payload as Record<string, unknown>).error === result.toolResults[0]?.output
+    )).toBeDefined();
+  });
+
+  it("forces a no-tool recovery step after repeated same-pattern tool failures", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will initialize the project.",
+        toolName: "exec_command",
+        toolInput: {
+          command: "mkdir -p .tmp && cd .tmp && npm init -y",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will retry with a package name.",
+        toolName: "exec_command",
+        toolInput: {
+          command: "cd .tmp && npm init --name \"black-hole-sim\" -y",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will retry with the flag at the end.",
+        toolName: "exec_command",
+        toolInput: {
+          command: "mkdir -p .tmp && cd .tmp && npm init -y --name \"black-hole-sim\"",
+        },
+      }),
+      createTextResponse(
+        "The repeated blocker is npm deriving an invalid package name from .tmp. The recovery is to create package.json directly with a valid name instead of retrying npm init.",
+      ),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "exec_command",
+      description: "Run a shell command.",
+      inputSchema: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute(input: { command: string }) {
+        return {
+          output: [
+            "Command failed with exit code 1.",
+            "npm error Invalid name: \".tmp\"",
+            `npm error A complete log of this run can be found in: /tmp/${input.command.length}/npm-debug.log`,
+          ].join("\n"),
+          structuredOutput: {
+            ok: false,
+            command: input.command,
+            exitCode: 1,
+            stdout: "",
+            stderr: "npm error Invalid name: \".tmp\"",
+            timedOut: false,
+          },
+          metadata: {
+            toolError: true,
+            errorKind: "nonzero_exit",
+          },
+        };
+      },
+    });
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 6,
+    });
+
+    const result = await engine.run("Create a web project in .tmp.");
+
+    expect(result.text).toContain("create package.json directly");
+    expect(result.toolResults).toHaveLength(3);
+    expect(adapter.requests).toHaveLength(4);
+    expect(adapter.requests[3]?.tools).toEqual([]);
+    expect(collectSystemText(adapter.requests[3]?.messages ?? [])).toContain(
+      "A tool call has repeatedly failed with the same failure pattern.",
+    );
+    expect(result.warnings.some((warning) =>
+      warning.includes("failed with the same pattern 3 times")
+    )).toBe(true);
+  });
+
   it("continues the turn after a recoverable tool failure and persists only the tool-call structure", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({
