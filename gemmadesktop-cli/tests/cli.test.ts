@@ -903,6 +903,198 @@ describe("headless CLI", () => {
     }
   });
 
+  it("runs the ACT compaction checkpoint scenario and forces SDK compaction between turns", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-compaction-scenario-"));
+    const calls = {
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+      compactOptions: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: () => {
+        const snapshot = makeSnapshot({
+          mode: "build",
+          workingDirectory: tempDirectory,
+          maxSteps: 30,
+        });
+        let turnIndex = 0;
+        const session: SessionLike & {
+          compact(options?: unknown): Promise<unknown>;
+        } = {
+          id: snapshot.sessionId,
+          snapshot: () => ({
+            ...snapshot,
+            compaction: calls.compactOptions.length > 0
+              ? { count: calls.compactOptions.length, lastCompactedAt: "2026-04-29T00:00:00.000Z" }
+              : undefined,
+          }),
+          compact: (options) => {
+            calls.compactOptions.push(options);
+            return Promise.resolve({
+              sessionId: "session-1",
+              runtimeId: "ollama-native",
+              modelId: "gemma4:e2b",
+              compactedAt: "2026-04-29T00:00:00.000Z",
+              summary: "AURORA-17 on port 4173 with north-star checksum: 918273.",
+              previousHistoryCount: 4,
+              retainedMessageCount: 0,
+              historyCount: 1,
+            });
+          },
+          runStreamed: async (input) => {
+            calls.inputs.push(input);
+            const labDirectory = path.join(tempDirectory, "compaction-lab");
+            await mkdir(labDirectory, { recursive: true });
+            if (turnIndex === 0) {
+              await writeFile(
+                path.join(labDirectory, "checkpoint.json"),
+                JSON.stringify({
+                  codename: "AURORA-17",
+                  targetPort: 4173,
+                  checksum: "north-star checksum: 918273",
+                  milestones: ["ingest", "design", "verify"],
+                }, null, 2),
+                "utf8",
+              );
+              await writeFile(
+                path.join(labDirectory, "notes.md"),
+                [
+                  "# AURORA-17",
+                  "",
+                  "target port: 4173",
+                  "north-star checksum: 918273",
+                  "- ingest",
+                  "- design",
+                  "- verify",
+                  "",
+                ].join("\n"),
+                "utf8",
+              );
+              await writeFile(
+                path.join(labDirectory, "package.json"),
+                JSON.stringify({
+                  type: "module",
+                  scripts: {
+                    test: "node -e \"console.log('checkpoint ready')\"",
+                  },
+                }, null, 2),
+                "utf8",
+              );
+            } else {
+              await writeFile(
+                path.join(labDirectory, "verify.js"),
+                [
+                  "import { readFileSync } from 'node:fs';",
+                  "const checkpoint = JSON.parse(readFileSync('checkpoint.json', 'utf8'));",
+                  "const notes = readFileSync('notes.md', 'utf8');",
+                  "const required = ['AURORA-17', '4173', 'north-star checksum: 918273', 'ingest', 'design', 'verify'];",
+                  "for (const value of required) {",
+                  "  if (!notes.includes(value) && !JSON.stringify(checkpoint).includes(value)) throw new Error(`missing ${value}`);",
+                  "}",
+                  "console.log('compaction checkpoint verified');",
+                  "",
+                ].join("\n"),
+                "utf8",
+              );
+              await writeFile(
+                path.join(labDirectory, "package.json"),
+                JSON.stringify({
+                  type: "module",
+                  scripts: {
+                    test: "node verify.js",
+                  },
+                }, null, 2),
+                "utf8",
+              );
+            }
+            turnIndex += 1;
+            return {
+              turnId: `turn-compaction-${turnIndex}`,
+              events: (async function* () {})(),
+              completed: Promise.resolve(makeTurnResult({
+                turnId: `turn-compaction-${turnIndex}`,
+                text: turnIndex === 1
+                  ? "Created checkpoint and ran npm test."
+                  : "Continued after compaction and ran npm test.",
+                steps: 1,
+                toolResults: [{
+                  callId: `call-compaction-${turnIndex}`,
+                  toolName: "exec_command",
+                  output: "npm test passed",
+                  structuredOutput: {
+                    command: "npm test",
+                    exitCode: 0,
+                    stdout: "compaction checkpoint verified\n",
+                    stderr: "",
+                    timedOut: false,
+                  },
+                }],
+              })),
+            };
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "scenario",
+          "run",
+          "act-compaction-checkpoint",
+          "--model",
+          "gemma4:31b",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          tempDirectory,
+          "--json",
+        ],
+        cwd: "/tmp/gemma-project",
+        env: {},
+        stdin: new MemoryStream(),
+        stdout,
+        stderr: new MemoryStream(),
+        dependencies,
+      });
+
+      expect(code).toBe(0);
+      expect(calls.inputs).toHaveLength(2);
+      expect(calls.compactOptions).toHaveLength(1);
+      const output = JSON.parse(stdout.text()) as {
+        turns: Array<{ compaction?: { status?: string } }>;
+      };
+      expect(output.turns[0]?.compaction).toMatchObject({
+        status: "completed",
+      });
+      expect(output).toMatchObject({
+        scenarioId: "act-compaction-checkpoint",
+        artifactDirectory: path.join(tempDirectory, "compaction-lab"),
+        evaluation: {
+          success: true,
+          checks: {
+            compactionCompleted: true,
+            validationPassed: true,
+          },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("runs multimodal fixture scenarios with structured session inputs", async () => {
     const originalFetch = globalThis.fetch;
     const fixtureBytes = new Uint8Array([1, 2, 3, 4]);

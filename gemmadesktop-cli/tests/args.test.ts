@@ -131,6 +131,7 @@ describe("CLI argument parsing", () => {
     const scenarioIds = [
       "act-webapp-black-hole",
       "act-fix-broken-tests",
+      "act-compaction-checkpoint",
       "act-multilang-python-go",
       "browser-rest-is-history-lyndon",
       "pdf-attention-authors",

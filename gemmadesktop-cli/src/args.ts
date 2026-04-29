@@ -23,6 +23,7 @@ export type CliCommandName = "help" | "inspect" | "preview" | "run" | "scenario"
 export type ScenarioId =
   | "act-webapp-black-hole"
   | "act-fix-broken-tests"
+  | "act-compaction-checkpoint"
   | "act-multilang-python-go"
   | "browser-rest-is-history-lyndon"
   | "pdf-attention-authors"
@@ -125,6 +126,7 @@ const BUILD_VERIFIER_MODES = new Set<BuildVerifierMode>(["hybrid", "deterministi
 const SCENARIOS = new Set<ScenarioId>([
   "act-webapp-black-hole",
   "act-fix-broken-tests",
+  "act-compaction-checkpoint",
   "act-multilang-python-go",
   "browser-rest-is-history-lyndon",
   "pdf-attention-authors",
@@ -189,6 +191,7 @@ export function usage(): string {
     "On-demand scenario IDs:",
     "  act-webapp-black-hole          Multi-turn build/edit/validate web app scenario.",
     "  act-fix-broken-tests           Repair a broken npm fixture and validate it.",
+    "  act-compaction-checkpoint      Continue a build after forced SDK session compaction.",
     "  act-multilang-python-go        Build and validate a Python CLI plus Go HTTP backend.",
     "  browser-rest-is-history-lyndon  Use browser navigation to search podcast episodes.",
     "  pdf-attention-authors          Locate Attention Is All You Need, extract text, list authors.",

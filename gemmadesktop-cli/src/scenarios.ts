@@ -6,6 +6,8 @@ import {
   runShellCommand,
   type GemmaDesktopEvent,
   type RuntimeDebugEvent,
+  type SessionCompactionOptions,
+  type SessionCompactionResult,
   type SessionInput,
   type SessionSnapshot,
   type SessionTurnOptions,
@@ -26,6 +28,7 @@ interface WritableTextStream {
 interface ScenarioSession {
   id: string;
   runStreamed(input: SessionInput, options?: SessionTurnOptions): Promise<StreamedTurnResult>;
+  compact?(options?: SessionCompactionOptions): Promise<SessionCompactionResult>;
   snapshot(): SessionSnapshot;
 }
 
@@ -49,6 +52,15 @@ interface ScenarioTurnRecord {
   warnings?: string[];
   toolNames?: string[];
   build?: TurnResult["build"];
+  compaction?: {
+    status: "completed" | "unavailable" | "error";
+    compactedAt?: string;
+    summaryLength?: number;
+    previousHistoryCount?: number;
+    retainedMessageCount?: number;
+    historyCount?: number;
+    error?: string;
+  };
   eventCounts?: Record<string, number>;
   error?: string;
 }
@@ -209,6 +221,22 @@ const ACT_MULTILANG_PYTHON_GO_PROMPTS = [
   ].join(" "),
 ] as const;
 
+const ACT_COMPACTION_CHECKPOINT_PROMPTS = [
+  [
+    "Run this as a headless CLI compaction-survival build scenario.",
+    "Create a small npm project in the compaction-lab folder.",
+    "Write checkpoint.json and notes.md with these exact durable details: codename AURORA-17, target port 4173, checksum phrase \"north-star checksum: 918273\", and milestones ingest, design, verify.",
+    "Add a package.json with an npm test script placeholder that succeeds for now.",
+    "Run npm test inside compaction-lab, then call finalize_build immediately.",
+  ].join(" "),
+  [
+    "Continue the compaction-lab project after the session context may have been compacted.",
+    "Do not ask me to repeat the codename, port, checksum, or milestone details; recover them from compacted context or workspace files.",
+    "Add verify.js and update package.json so npm test verifies checkpoint.json and notes.md contain codename AURORA-17, target port 4173, checksum phrase \"north-star checksum: 918273\", and milestones ingest, design, verify.",
+    "Run npm test inside compaction-lab, then call finalize_build immediately.",
+  ].join(" "),
+] as const;
+
 const SCENARIO_SYSTEM_INSTRUCTIONS = [
   "You are running an on-demand Gemma Desktop CLI acceptance scenario.",
   "Use the available tools to gather evidence or mutate files; do not answer from memory when the scenario asks you to fetch, research, extract, build, edit, or validate.",
@@ -231,6 +259,7 @@ interface ScenarioDefinition {
   artifactDirectoryName: string;
   prompts: readonly ScenarioPrompt[];
   kind: string;
+  compactAfterTurns?: Array<{ afterTurn: number; options?: SessionCompactionOptions }>;
   prepare?(context: ScenarioFixtureContext): Promise<void>;
   evaluator(input: {
     command: ScenarioCliOptions;
@@ -679,7 +708,8 @@ async function evaluateBlackHoleScenario(
     typeof scripts.dev === "string"
     || typeof scripts.start === "string"
     || typeof scripts.build === "string"
-    || typeof scripts.test === "string";
+    || typeof scripts.test === "string"
+    || typeof scripts.validate === "string";
   const projectText = blackFolderExists ? await collectProjectText(artifactDirectory) : "";
   const haystack = buildScenarioHaystack(turns, rawResults, projectText).toLowerCase();
   const commandText = rawResults
@@ -1126,6 +1156,65 @@ async function evaluateMultilangPythonGoScenario(input: {
   };
 }
 
+async function evaluateCompactionCheckpointScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const packagePath = path.join(input.artifactDirectory, "package.json");
+  const checkpointPath = path.join(input.artifactDirectory, "checkpoint.json");
+  const notesPath = path.join(input.artifactDirectory, "notes.md");
+  const verifyPath = path.join(input.artifactDirectory, "verify.js");
+  const projectText = await collectProjectText(input.artifactDirectory, 80_000);
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults, projectText).toLowerCase();
+  const validationCommand = await pathExists(packagePath)
+    ? await runShellCommand("npm test", {
+        cwd: input.artifactDirectory,
+        timeoutMs: 120_000,
+      })
+    : undefined;
+  const exactValuesPresent =
+    /aurora-17/i.test(projectText)
+    && /4173/.test(projectText)
+    && /north-star checksum:\s*918273/i.test(projectText)
+    && /ingest/i.test(projectText)
+    && /design/i.test(projectText)
+    && /verify/i.test(projectText);
+  const compactionCompleted = input.turns.some((turn) => turn.compaction?.status === "completed");
+  const checks = {
+    compactionCompleted,
+    packageJsonExists: await pathExists(packagePath),
+    checkpointJsonExists: await pathExists(checkpointPath),
+    notesExist: await pathExists(notesPath),
+    verifierExists: await pathExists(verifyPath),
+    exactValuesPresent,
+    continuedAfterCompaction:
+      /compacted|compaction|continue/.test(haystack)
+      || compactionCompleted,
+    validationPassed:
+      validationCommand?.exitCode === 0
+      && validationCommand.timedOut === false,
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+    ...(validationCommand
+      ? {
+          validationCommand: {
+            command: validationCommand.command,
+            exitCode: validationCommand.exitCode,
+            timedOut: validationCommand.timedOut,
+            stdout: validationCommand.stdout.slice(0, 4_000),
+            stderr: validationCommand.stderr.slice(0, 4_000),
+          },
+        }
+      : {}),
+  };
+}
+
 async function runScenarioTurn(input: {
   session: ScenarioSession;
   prompt: SessionInput;
@@ -1283,6 +1372,26 @@ const SCENARIO_DEFINITIONS: Record<ScenarioCliOptions["scenarioId"], ScenarioDef
     prepare: prepareFixBrokenTestsScenario,
     evaluator: evaluateFixBrokenTestsScenario,
   },
+  "act-compaction-checkpoint": {
+    id: "act-compaction-checkpoint",
+    mode: "build",
+    artifactDirectoryName: "compaction-lab",
+    prompts: ACT_COMPACTION_CHECKPOINT_PROMPTS,
+    kind: "act-compaction-survival",
+    compactAfterTurns: [
+      {
+        afterTurn: 1,
+        options: {
+          keepLastMessages: 0,
+          instructions: [
+            "Preserve the exact durable project facts needed for the next turn.",
+            "Keep exact strings, numeric ports, file paths, and validation requirements.",
+          ].join(" "),
+        },
+      },
+    ],
+    evaluator: evaluateCompactionCheckpointScenario,
+  },
   "act-multilang-python-go": {
     id: "act-multilang-python-go",
     mode: "build",
@@ -1355,6 +1464,37 @@ export async function runHeadlessScenario(
       turns.push(turn.record);
       if (turn.result) {
         rawResults.push(turn.result);
+      }
+      const compaction = definition.compactAfterTurns?.find((entry) => entry.afterTurn === index + 1);
+      if (compaction) {
+        const record = turns[turns.length - 1];
+        if (!record) {
+          continue;
+        }
+        if (!session.compact) {
+          record.compaction = {
+            status: "unavailable",
+            error: "Scenario requested SDK session compaction, but the session does not expose compact().",
+          };
+        } else {
+          writeLine(runtime.stderr, `scenario: ${definition.id} compacting after turn ${index + 1}`);
+          try {
+            const result = await session.compact(compaction.options ?? {});
+            record.compaction = {
+              status: "completed",
+              compactedAt: result.compactedAt,
+              summaryLength: result.summary.length,
+              previousHistoryCount: result.previousHistoryCount,
+              retainedMessageCount: result.retainedMessageCount,
+              historyCount: result.historyCount,
+            };
+          } catch (error) {
+            record.compaction = {
+              status: "error",
+              error: formatError(error),
+            };
+          }
+        }
       }
     } catch (error) {
       turns.push({
