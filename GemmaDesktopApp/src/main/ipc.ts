@@ -378,8 +378,10 @@ import {
 } from './chromeMcp'
 import {
   LocalRuntimeUnavailableError,
+  getLocalRuntimeDisplayName,
   getLocalRuntimeUnavailableError,
   isLocalRuntimeConnectionFailure,
+  isModelNotLoadedError,
   toLocalRuntimeUnavailableError,
 } from './localRuntimeErrors'
 import {
@@ -1326,6 +1328,16 @@ interface PrimaryModelTarget {
   loadedInstanceId?: string
 }
 
+interface PrimaryModelAvailabilityIssue {
+  modelId: string
+  runtimeId: string
+  message: string
+  detectedAt: number
+  source: 'startup' | 'selected-session' | 'send' | 'global-default'
+  fallbackModelId?: string
+  fallbackRuntimeId?: string
+}
+
 interface BootstrapStateRecord {
   status: 'idle' | 'checking' | 'starting_ollama' | 'pulling_models' | 'loading_helper' | 'ready' | 'warning' | 'error'
   ready: boolean
@@ -1333,6 +1345,7 @@ interface BootstrapStateRecord {
   helperModelId: string
   helperRuntimeId: string
   requiredPrimaryModelIds: string[]
+  modelAvailabilityIssues: PrimaryModelAvailabilityIssue[]
   error?: string
   updatedAt: number
 }
@@ -1474,6 +1487,7 @@ function resolveBootstrapTargets(
 
 const primaryModelHoldCounts = new Map<string, number>()
 const helperModelHoldCounts = new Map<string, number>()
+const primaryModelAvailabilityIssues = new Map<string, PrimaryModelAvailabilityIssue>()
 let activePrimaryModelTarget: PrimaryModelTarget | null = null
 let primaryWarmupPromise: Promise<void> | null = null
 let lastOptionalPrimaryWarmupWarningKey: string | null = null
@@ -1484,6 +1498,31 @@ let primaryModelLoadTarget: PrimaryModelTarget | null = null
 
 function modelTargetKey(target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>): string {
   return `${target.runtimeId}::${target.modelId}`
+}
+
+class PrimaryModelUnavailableError extends Error {
+  public readonly issue: PrimaryModelAvailabilityIssue
+
+  public constructor(issue: PrimaryModelAvailabilityIssue) {
+    super(issue.message)
+    this.name = 'PrimaryModelUnavailableError'
+    this.issue = issue
+  }
+}
+
+function getPrimaryModelAvailabilityIssues(): PrimaryModelAvailabilityIssue[] {
+  return [...primaryModelAvailabilityIssues.values()]
+    .sort((left, right) => left.detectedAt - right.detectedAt)
+}
+
+function findPrimaryModelAvailabilityIssue(
+  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
+): PrimaryModelAvailabilityIssue | null {
+  return primaryModelAvailabilityIssues.get(modelTargetKey(target)) ?? null
+}
+
+function isPrimaryModelUnavailableError(error: unknown): error is PrimaryModelUnavailableError {
+  return error instanceof PrimaryModelUnavailableError
 }
 
 function listPendingModelLoadTargets(): PrimaryModelTarget[] {
@@ -1596,6 +1635,7 @@ let bootstrapState: BootstrapStateRecord = {
   ready: false,
   message: 'Preparing local models…',
   ...resolveBootstrapTargets(),
+  modelAvailabilityIssues: [],
   updatedAt: Date.now(),
 }
 let bootstrapPromise: Promise<BootstrapStateRecord> | null = null
@@ -2152,6 +2192,138 @@ function describeOptionalPrimaryWarmupUnavailable(
   return `${error.runtimeLabel} is offline, so Gemma Desktop skipped warming ${target.modelId}. Start the provider before using sessions that target ${target.runtimeId}.`
 }
 
+function getErrorDisplayMessage(error: unknown): string {
+  const rawMessage =
+    error instanceof Error && error.message.trim().length > 0
+      ? error.message.trim()
+      : String(error).trim()
+
+  if (rawMessage.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(rawMessage) as Record<string, unknown>
+      const nestedError =
+        parsed.error && typeof parsed.error === 'object'
+          ? parsed.error as Record<string, unknown>
+          : null
+      const nestedMessage = nestedError?.message
+      if (typeof nestedMessage === 'string' && nestedMessage.trim().length > 0) {
+        return nestedMessage.trim()
+      }
+    } catch {
+      // Fall through to the raw message.
+    }
+  }
+
+  return rawMessage
+}
+
+function describePrimaryModelLoadFailure(
+  target: PrimaryModelTarget,
+  error: unknown,
+): string {
+  const unavailable = getLocalRuntimeUnavailableError(error)
+  if (unavailable) {
+    return `${unavailable.runtimeLabel} is not reachable at ${unavailable.endpoint}, so Gemma Desktop cannot load ${target.modelId}. Chats using ${target.runtimeId} / ${target.modelId} are paused until you switch them to another model or restart after the model is available.`
+  }
+
+  const runtimeLabel = getLocalRuntimeDisplayName(target.runtimeId)
+  const rawMessage = getErrorDisplayMessage(error)
+  const reason = rawMessage.length > 0
+    ? ` Reason: ${rawMessage}.`
+    : ''
+  return `${runtimeLabel} could not load ${target.modelId}.${reason} Chats using ${target.runtimeId} / ${target.modelId} are paused until you switch them to another model or restart after the model is available.`
+}
+
+function getBuiltInDefaultPrimaryTarget(): PrimaryModelTarget {
+  const defaultSelection = createDefaultModelSelectionSettings(os.totalmem())
+  return {
+    modelId: defaultSelection.mainModel.modelId,
+    runtimeId: defaultSelection.mainModel.runtimeId,
+  }
+}
+
+function isSavedDefaultPrimaryTarget(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): boolean {
+  return primaryTargetsMatch(
+    target,
+    resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
+  )
+}
+
+async function fallBackDefaultPrimaryModelIfNeeded(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): Promise<AppSettingsRecord | null> {
+  if (!isSavedDefaultPrimaryTarget(target, currentSettings)) {
+    return null
+  }
+
+  const fallbackTarget = getBuiltInDefaultPrimaryTarget()
+  if (primaryTargetsMatch(target, fallbackTarget)) {
+    return null
+  }
+
+  const nextSettings = await saveSettings({
+    modelSelection: {
+      ...currentSettings.modelSelection,
+      mainModel: fallbackTarget,
+    },
+  })
+  broadcastSettingsChanged(nextSettings)
+  broadcastEnvironmentModelsChanged()
+
+  return nextSettings
+}
+
+async function recordPrimaryModelLoadFailure(
+  target: PrimaryModelTarget,
+  error: unknown,
+  source: PrimaryModelAvailabilityIssue['source'],
+  currentSettingsInput?: AppSettingsRecord,
+): Promise<PrimaryModelAvailabilityIssue> {
+  const currentSettings = currentSettingsInput ?? await getSettingsState()
+  const fallbackSettings = await fallBackDefaultPrimaryModelIfNeeded(
+    target,
+    currentSettings,
+  )
+  const fallbackTarget = fallbackSettings
+    ? resolveSavedDefaultSessionPrimaryTarget(fallbackSettings.modelSelection)
+    : null
+  const baseMessage = describePrimaryModelLoadFailure(target, error)
+  const message = fallbackTarget
+    ? `${baseMessage} The saved default model was reset to ${fallbackTarget.runtimeId} / ${fallbackTarget.modelId} for new chats.`
+    : baseMessage
+  const issue: PrimaryModelAvailabilityIssue = {
+    modelId: target.modelId,
+    runtimeId: target.runtimeId,
+    message,
+    detectedAt: Date.now(),
+    source: fallbackTarget ? 'global-default' : source,
+    ...(fallbackTarget
+      ? {
+          fallbackModelId: fallbackTarget.modelId,
+          fallbackRuntimeId: fallbackTarget.runtimeId,
+        }
+      : {}),
+  }
+  primaryModelAvailabilityIssues.set(modelTargetKey(target), issue)
+  activePrimaryModelTarget = primaryTargetsMatch(activePrimaryModelTarget, target)
+    ? null
+    : activePrimaryModelTarget
+
+  const stateSettings = fallbackSettings ?? currentSettings
+  setBootstrapState({
+    status: 'warning',
+    ready: true,
+    message,
+    error: undefined,
+  }, stateSettings)
+  await broadcastSessionsChanged()
+  return issue
+}
+
 async function handleOptionalPrimaryWarmupFailure(
   target: PrimaryModelTarget,
   error: unknown,
@@ -2165,24 +2337,17 @@ async function handleOptionalPrimaryWarmupFailure(
       console.warn(`[gemma-desktop] ${message}`)
       lastOptionalPrimaryWarmupWarningKey = warningKey
     }
-    const currentSettings = await getSettingsState()
-    if (bootstrapState.ready) {
-      setBootstrapState({
-        status: 'warning',
-        ready: true,
-        message,
-        error: undefined,
-      }, currentSettings)
-    }
-    return
+  } else {
+    console.warn(
+      context === 'startup'
+        ? '[gemma-desktop] Startup primary model is unavailable:'
+        : '[gemma-desktop] Selected session primary model is unavailable:',
+      getErrorDisplayMessage(error),
+    )
   }
 
-  console.warn(
-    context === 'startup'
-      ? '[gemma-desktop] Failed to warm the startup primary model:'
-      : '[gemma-desktop] Failed to warm selected session primary model:',
-    error,
-  )
+  const source = context === 'startup' ? 'startup' : 'selected-session'
+  await recordPrimaryModelLoadFailure(target, error, source)
 }
 
 async function isTrackedModelTargetResident(
@@ -2486,6 +2651,7 @@ function setBootstrapState(
     ...bootstrapState,
     ...patch,
     ...resolveBootstrapTargets(currentSettings ?? settings),
+    modelAvailabilityIssues: getPrimaryModelAvailabilityIssues(),
     updatedAt: Date.now(),
   }
   broadcastBootstrapStateChanged()
@@ -2913,6 +3079,12 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
 
   if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
     await unloadOllamaModel(currentSettings.runtimes.ollama.endpoint, target.modelId)
+      .catch((error) => {
+        if (isModelNotLoadedError(error)) {
+          return
+        }
+        throw error
+      })
     return
   }
 
@@ -2932,6 +3104,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({
         instance_id: loadedInstanceId,
       }),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
     return
   }
@@ -2945,6 +3122,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({
         model: target.modelId,
       }),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
     return
   }
@@ -2958,6 +3140,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       },
       body: JSON.stringify({}),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
   }
 }
@@ -2972,7 +3159,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
     }
   }
 
-  bootstrapPromise = (async () => {
+  const promise: Promise<BootstrapStateRecord> = (async (): Promise<BootstrapStateRecord> => {
     const currentSettings = await getSettingsState()
     const ollamaEndpoint = currentSettings.runtimes.ollama.endpoint
     const helperTarget = resolveHelperRouterTarget(currentSettings)
@@ -3011,7 +3198,19 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
           message: `Downloading ${modelId}…`,
           error: undefined,
         }, currentSettings)
-        await pullOllamaModel(ollamaEndpoint, modelId)
+        try {
+          await pullOllamaModel(ollamaEndpoint, modelId)
+        } catch (error) {
+          const target = resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection)
+          if (
+            target.modelId === modelId
+            && isOllamaModelRuntime(target.runtimeId)
+          ) {
+            return await recordPrimaryModelLoadFailure(target, error, 'global-default', currentSettings)
+              .then(() => bootstrapState)
+          }
+          throw error
+        }
         availableTags.add(modelId)
       }
 
@@ -3069,14 +3268,20 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
       bootstrapPromise = null
     }
   })()
+  bootstrapPromise = promise
 
-  return await bootstrapPromise
+  return await promise
 }
 
 async function acquirePrimaryModelLease(
   ownerId: string,
   target: PrimaryModelTarget,
 ): Promise<() => void> {
+  const existingIssue = findPrimaryModelAvailabilityIssue(target)
+  if (existingIssue) {
+    throw new PrimaryModelUnavailableError(existingIssue)
+  }
+
   if (isOllamaModelRuntime(target.runtimeId)) {
     const bootstrap = await ensureBootstrapReady()
     if (!bootstrap.ready) {
@@ -3094,7 +3299,12 @@ async function acquirePrimaryModelLease(
     )
   }
 
-  await ensurePrimaryModelTargetLoaded(target)
+  try {
+    await ensurePrimaryModelTargetLoaded(target)
+  } catch (error) {
+    const issue = await recordPrimaryModelLoadFailure(target, error, 'send')
+    throw new PrimaryModelUnavailableError(issue)
+  }
 
   primaryModelHoldCounts.set(ownerId, (primaryModelHoldCounts.get(ownerId) ?? 0) + 1)
 
@@ -12987,6 +13197,7 @@ async function getSystemStats() {
 export async function initializeGemmaDesktop(): Promise<void> {
   const currentSettings = await loadSettings()
   primaryModelHoldCounts.clear()
+  primaryModelAvailabilityIssues.clear()
   activePrimaryModelTarget = null
   primaryWarmupPromise = null
   primaryModelLoadPromise = null
@@ -12997,6 +13208,7 @@ export async function initializeGemmaDesktop(): Promise<void> {
     ready: false,
     message: 'Preparing local models…',
     ...resolveBootstrapTargets(currentSettings),
+    modelAvailabilityIssues: [],
     updatedAt: Date.now(),
   }
   notificationManager.setPermissionStatus(undefined)
@@ -14430,8 +14642,26 @@ async function sendSessionMessageInternal(
         },
       })
     } else {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(`[gemma-desktop] Session ${sessionId} turn failed:`, err)
+      let errMsg = err instanceof Error ? err.message : String(err)
+      const modelAvailabilityError = isModelNotLoadedError(err)
+        ? err
+        : wrapLocalRuntimeLoadError(err, currentSettings, primaryTarget, 'running')
+      const modelAvailabilityIssue =
+        isModelNotLoadedError(modelAvailabilityError)
+        || getLocalRuntimeUnavailableError(modelAvailabilityError)
+          ? await recordPrimaryModelLoadFailure(
+              primaryTarget,
+              modelAvailabilityError,
+              'send',
+              currentSettings,
+            )
+          : null
+      if (modelAvailabilityIssue) {
+        errMsg = modelAvailabilityIssue.message
+        console.warn(`[gemma-desktop] Session ${sessionId} is paused because its primary model is unavailable: ${errMsg}`)
+      } else {
+        console.error(`[gemma-desktop] Session ${sessionId} turn failed:`, err)
+      }
       store.clearPendingTurn(sessionId)
       sendToSession(sessionId, { type: 'live_activity', activity: null })
 
@@ -14608,7 +14838,11 @@ async function sendSessionMessageInternal(
     }
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
+    if (isPrimaryModelUnavailableError(err)) {
+      console.warn(`[gemma-desktop] Session ${sessionId} is paused because its primary model is unavailable: ${errMsg}`)
+    } else {
+      console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
+    }
 
     const errorMessage: AppMessage = {
       id: `err-${Date.now()}`,
@@ -17553,8 +17787,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'settings:update',
     async (_, patch: Record<string, unknown>) => {
-      const nextSettings = await saveSettings(patch as Partial<AppSettingsRecord>)
+      let nextSettings = await saveSettings(patch as Partial<AppSettingsRecord>)
       await refreshBootstrapModelSelection(nextSettings, patch)
+      nextSettings = await getSettingsState()
       if (
         Object.prototype.hasOwnProperty.call(patch, 'toolPolicy')
         || Object.prototype.hasOwnProperty.call(patch, 'skills')

@@ -77,6 +77,16 @@ export type SessionMode = WorkMode
 export type AppView = NotificationAttentionContext['currentView']
 export type SessionTitleSource = 'auto' | 'user'
 
+export interface PrimaryModelAvailabilityIssue {
+  modelId: string
+  runtimeId: string
+  message: string
+  detectedAt: number
+  source: 'startup' | 'selected-session' | 'send' | 'global-default'
+  fallbackModelId?: string
+  fallbackRuntimeId?: string
+}
+
 export interface BootstrapState {
   status: 'idle' | 'checking' | 'starting_ollama' | 'pulling_models' | 'loading_helper' | 'ready' | 'warning' | 'error'
   ready: boolean
@@ -84,6 +94,7 @@ export interface BootstrapState {
   helperModelId: string
   helperRuntimeId: string
   requiredPrimaryModelIds: string[]
+  modelAvailabilityIssues: PrimaryModelAvailabilityIssue[]
   error?: string
   updatedAt: number
 }

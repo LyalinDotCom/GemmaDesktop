@@ -463,6 +463,7 @@ const initialState: AppState = {
     helperModelId: DEFAULT_HELPER_GEMMA_TAG,
     helperRuntimeId: 'ollama-native',
     requiredPrimaryModelIds: [DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.modelId],
+    modelAvailabilityIssues: [],
     updatedAt: 0,
   },
   systemStats: defaultStats,

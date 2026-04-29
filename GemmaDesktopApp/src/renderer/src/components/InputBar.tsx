@@ -131,6 +131,7 @@ export interface InputBarProps {
     runtimeId: string
   }) => void | Promise<void>
   modeChangeDisabled?: boolean
+  modelSelectionDisabled?: boolean
   conversationRunDisabledReason?: string | null
   busyQueueDisabledReason?: string | null
   messages: ChatMessage[]
@@ -302,6 +303,7 @@ export function InputBar({
   onSelectApprovalMode,
   onSelectModel,
   modeChangeDisabled = false,
+  modelSelectionDisabled,
   conversationRunDisabledReason = null,
   busyQueueDisabledReason = null,
   messages,
@@ -477,6 +479,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
+  const modelSelectionControlDisabled =
+    modelSelectionDisabled == null
+      ? conversationModeControlDisabled
+      : modelSelectionDisabled || isCompacting || speechLocked || sessionBusy
 
   const attachmentAccept = useMemo(() => {
     const accepted = [
@@ -2124,7 +2130,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           selectedRuntimeId={selectedRuntimeId}
           mode={selectedMode}
           hasMessages={messages.length > 0}
-          disabled={conversationModeControlDisabled}
+          disabled={modelSelectionControlDisabled}
           onSelect={onSelectModel}
         />
         {!isResearchConversation && (

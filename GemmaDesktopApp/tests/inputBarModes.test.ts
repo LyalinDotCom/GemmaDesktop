@@ -456,4 +456,22 @@ describe('InputBar mode rendering', () => {
     expect(markup).toContain('Gemma Desktop is already answering in &quot;Other&quot;.')
     expect(markup).toContain('disabled=""')
   })
+
+  it('can keep model switching available when only sending is blocked', () => {
+    const reason =
+      'oMLX could not load gemma-4-26b-a4b-it-nvfp4. Chats using omlx-openai / gemma-4-26b-a4b-it-nvfp4 are paused until you switch them to another model or restart after the model is available.'
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        initialDraftText: 'hello',
+        conversationRunDisabledReason: reason,
+        modelSelectionDisabled: false,
+      })),
+    )
+
+    expect(markup.match(/<button[^>]*aria-label="Session model size"[^>]*>/)?.[0] ?? '')
+      .not.toMatch(/\sdisabled(?=[\s=>])/)
+    expect(markup).toContain(reason)
+    expect(markup.match(/<button[^>]*disabled=""[^>]*title="oMLX could not load[^"]*"[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+  })
 })

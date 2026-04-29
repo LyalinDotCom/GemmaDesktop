@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   LocalRuntimeUnavailableError,
   isLocalRuntimeConnectionFailure,
+  isModelNotLoadedError,
   toLocalRuntimeUnavailableError,
 } from '../src/main/localRuntimeErrors'
 
@@ -41,5 +42,16 @@ describe('local runtime errors', () => {
         modelId: 'gemma4:26b',
       }),
     ).toBeNull()
+  })
+
+  it('recognizes benign unload misses from model lifecycle endpoints', () => {
+    const error = new Error(JSON.stringify({
+      error: {
+        message: 'Model not loaded: gemma-4-26b-a4b-it-nvfp4',
+        type: 'invalid_request_error',
+      },
+    }))
+
+    expect(isModelNotLoadedError(error)).toBe(true)
   })
 })

@@ -33,6 +33,7 @@ import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
+  BootstrapState,
   FileAttachment,
   MessageContent,
   ProjectBrowserState,
@@ -280,6 +281,21 @@ function findLatestNewAssistantText(
   return null
 }
 
+function findBootstrapModelAvailabilityIssue(
+  bootstrap: BootstrapState,
+  target: { modelId: string; runtimeId: string } | null | undefined,
+): string | null {
+  if (!target) {
+    return null
+  }
+
+  return bootstrap.modelAvailabilityIssues.find(
+    (issue) =>
+      issue.modelId === target.modelId
+      && issue.runtimeId === target.runtimeId,
+  )?.message ?? null
+}
+
 export function App() {
   const [startupRiskAccepted, setStartupRiskAccepted] = useState(false)
   const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(false)
@@ -332,6 +348,7 @@ export function App() {
   const projectBrowserOpenRef = useRef(false)
   const projectBrowserCoBrowseActiveRef = useRef(false)
   const drainingGlobalQueuedMessagesRef = useRef(new Set<string>())
+  const startupAttentionKeyRef = useRef<string | null>(null)
   const {
     state,
     dispatch,
@@ -515,20 +532,56 @@ export function App() {
     return () => window.clearInterval(interval)
   }, [globalChatBusy])
 
+  useEffect(() => {
+    const bootstrap = state.bootstrapState
+    const attentionKey =
+      bootstrap.status === 'warning' || bootstrap.status === 'error'
+        ? `${bootstrap.status}:${bootstrap.message}:${bootstrap.error ?? ''}`
+        : null
+
+    if (!attentionKey) {
+      startupAttentionKeyRef.current = null
+      return
+    }
+
+    if (startupAttentionKeyRef.current !== attentionKey) {
+      startupAttentionKeyRef.current = attentionKey
+      setStartupOverlayDismissed(false)
+    }
+  }, [
+    state.bootstrapState.error,
+    state.bootstrapState.message,
+    state.bootstrapState.status,
+  ])
+
   const newConversationRunDisabledReason = activeConversationRuns[0]
     ? formatConversationExecutionBlockedReason(activeConversationRuns[0])
     : null
+  const activeModelUnavailableReason = findBootstrapModelAvailabilityIssue(
+    state.bootstrapState,
+    state.activeSession,
+  )
+  const globalModelUnavailableReason = findBootstrapModelAvailabilityIssue(
+    state.bootstrapState,
+    globalChatDetail,
+  )
   const primaryConversationBlocker = state.activeSessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
       state.activeSessionId,
     )
     : null
+  const primaryConversationBlockerReason = primaryConversationBlocker
+    ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
+    : null
   const globalConversationBlocker = globalChatSession.sessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
       globalChatSession.sessionId,
     )
+    : null
+  const globalConversationBlockerReason = globalConversationBlocker
+    ? formatConversationExecutionBlockedReason(globalConversationBlocker)
     : null
   const primaryCoBrowseUserControlDisabledReason =
     getCoBrowseUserControlComposerLockReason({
@@ -539,9 +592,12 @@ export function App() {
       targetSessionId: state.activeSessionId,
     })
   const primaryConversationRunDisabledReason = primaryCoBrowseUserControlDisabledReason
-    ?? (primaryConversationBlocker
-      ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
-      : null)
+    ?? activeModelUnavailableReason
+    ?? primaryConversationBlockerReason
+  const primaryModelSelectionDisabled =
+    isBusy
+    || Boolean(primaryCoBrowseUserControlDisabledReason)
+    || Boolean(primaryConversationBlockerReason)
   const globalCoBrowseUserControlDisabledReason =
     getCoBrowseUserControlComposerLockReason({
       coBrowseActive,
@@ -551,9 +607,12 @@ export function App() {
       targetSessionId: globalChatSession.sessionId,
     })
   const globalConversationRunDisabledReason = globalCoBrowseUserControlDisabledReason
-    ?? (globalConversationBlocker
-      ? formatConversationExecutionBlockedReason(globalConversationBlocker)
-      : null)
+    ?? globalModelUnavailableReason
+    ?? globalConversationBlockerReason
+  const globalModelSelectionDisabled =
+    globalChatBusy
+    || Boolean(globalCoBrowseUserControlDisabledReason)
+    || Boolean(globalConversationBlockerReason)
   const primaryCoBrowseBusyQueueDisabledReason =
     coBrowseActive
     && state.activeSessionId != null
@@ -1163,8 +1222,7 @@ export function App() {
   }) => {
     const sessionId = globalChatSession.sessionId
     if (
-      globalChatBusy
-      || globalConversationRunDisabledReason
+      globalModelSelectionDisabled
       || !sessionId
       || !globalChatDetail
       || globalChatDetail.conversationKind !== 'normal'
@@ -1192,8 +1250,7 @@ export function App() {
       console.error('Failed to update Assistant Chat model:', error)
     })
   }, [
-    globalChatBusy,
-    globalConversationRunDisabledReason,
+    globalModelSelectionDisabled,
     globalChatDetail,
     globalChatSession,
     refreshSessionSummaries,
@@ -1293,8 +1350,7 @@ export function App() {
     const activeSession = state.activeSession
 
     if (
-      isBusy
-      || primaryConversationRunDisabledReason
+      primaryModelSelectionDisabled
       || !sessionId
       || !activeSession
       || activeConversationKind !== 'normal'
@@ -2240,6 +2296,7 @@ export function App() {
       onSelectApprovalMode={handleSelectConversationApprovalMode}
       onSelectModel={handleSelectConversationModel}
       modeChangeDisabled={isBusy || !state.activeSessionId}
+      modelSelectionDisabled={primaryModelSelectionDisabled}
       conversationRunDisabledReason={primaryConversationRunDisabledReason}
       busyQueueDisabledReason={primaryCoBrowseBusyQueueDisabledReason}
       messages={state.activeSession.messages}
@@ -2362,6 +2419,7 @@ export function App() {
       onSelectApprovalMode={handleSelectGlobalChatApprovalMode}
       onSelectModel={handleSelectGlobalChatModel}
       modeChangeDisabled={globalChatBusy || !globalChatSession.sessionId}
+      modelSelectionDisabled={globalModelSelectionDisabled}
       conversationRunDisabledReason={globalConversationRunDisabledReason}
       busyQueueDisabledReason={globalCoBrowseBusyQueueDisabledReason}
       messages={globalChatDetail.messages}

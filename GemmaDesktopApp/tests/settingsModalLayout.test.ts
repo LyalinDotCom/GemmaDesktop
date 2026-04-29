@@ -123,6 +123,7 @@ const bootstrapState: BootstrapState = {
   helperModelId: 'gemma4:e2b',
   helperRuntimeId: 'ollama-native',
   requiredPrimaryModelIds: ['gemma4:26b'],
+  modelAvailabilityIssues: [],
   updatedAt: 0,
 }
 
