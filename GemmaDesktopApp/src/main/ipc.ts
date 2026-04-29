@@ -16995,50 +16995,46 @@ export function registerIpcHandlers(): void {
     },
   )
 
-  ipcMain.handle('media:request-camera-access', async () => {
+  const requestMacOSMediaAccess = async (kind: 'camera' | 'microphone') => {
     if (process.platform !== 'darwin') {
       return {
         granted: true,
         status: 'granted',
+        previousStatus: 'granted',
+        prompted: false,
+        requiresSettings: false,
       }
     }
 
-    const currentStatus = systemPreferences.getMediaAccessStatus('camera')
+    const currentStatus = systemPreferences.getMediaAccessStatus(kind)
     if (currentStatus === 'granted') {
       return {
         granted: true,
         status: currentStatus,
+        previousStatus: currentStatus,
+        prompted: false,
+        requiresSettings: false,
       }
     }
 
-    const granted = await systemPreferences.askForMediaAccess('camera')
+    const granted = await systemPreferences.askForMediaAccess(kind)
+    const nextStatus = systemPreferences.getMediaAccessStatus(kind)
+
     return {
       granted,
-      status: systemPreferences.getMediaAccessStatus('camera'),
+      status: nextStatus,
+      previousStatus: currentStatus,
+      prompted: currentStatus === 'not-determined',
+      requiresSettings: nextStatus === 'denied' || nextStatus === 'restricted',
     }
+  }
+
+  ipcMain.handle('media:request-camera-access', async () => {
+    return await requestMacOSMediaAccess('camera')
   })
 
   ipcMain.handle('media:request-microphone-access', async () => {
-    if (process.platform !== 'darwin') {
-      return {
-        granted: true,
-        status: 'granted',
-      }
-    }
-
-    const currentStatus = systemPreferences.getMediaAccessStatus('microphone')
-    if (currentStatus === 'granted') {
-      return {
-        granted: true,
-        status: currentStatus,
-      }
-    }
-
-    const granted = await systemPreferences.askForMediaAccess('microphone')
-    return {
-      granted,
-      status: systemPreferences.getMediaAccessStatus('microphone'),
-    }
+    return await requestMacOSMediaAccess('microphone')
   })
 
   // ── Speech ──

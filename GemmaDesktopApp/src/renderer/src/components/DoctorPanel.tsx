@@ -22,6 +22,7 @@ import type {
   DoctorCommandCheck,
   DoctorIntegrationCheck,
   DoctorIssue,
+  MediaPermissionRequestResult,
   DoctorPermissionCheck,
   DoctorReport,
   DoctorRuntimeCheck,
@@ -140,6 +141,72 @@ function formatPermissionStatus(status: DoctorPermissionCheck['status']): string
     unsupported: 'N/A',
   }
   return map[status] ?? status
+}
+
+type MediaPermissionKind = 'camera' | 'microphone'
+
+function formatMediaPermissionLabel(kind: MediaPermissionKind): string {
+  return kind === 'camera' ? 'Camera' : 'Microphone'
+}
+
+export function describeMediaPermissionRequest(
+  kind: MediaPermissionKind,
+  result: MediaPermissionRequestResult,
+  browserError?: string,
+): string | null {
+  if (result.granted || result.status === 'granted') {
+    return null
+  }
+
+  const label = formatMediaPermissionLabel(kind)
+  const settingsTarget = `System Settings > Privacy & Security > ${label}`
+
+  if (
+    result.requiresSettings
+    || result.status === 'denied'
+    || result.status === 'restricted'
+  ) {
+    return `${label} access is blocked. Open ${settingsTarget} and enable Gemma Desktop, then try again.`
+  }
+
+  if (browserError) {
+    return `${label} access was not granted (${browserError}). If no macOS prompt appeared, open ${settingsTarget} and check whether Gemma Desktop is listed.`
+  }
+
+  if (result.status === 'not-determined') {
+    return `macOS has not granted ${label.toLowerCase()} access yet. Try the request again; if Gemma Desktop is already listed in ${settingsTarget}, enable it there.`
+  }
+
+  return `${label} access is not available yet. Open ${settingsTarget} and verify Gemma Desktop.`
+}
+
+export async function requestBrowserMediaPermission(
+  kind: MediaPermissionKind,
+): Promise<{ granted: boolean; error?: string }> {
+  const mediaDevices = navigator.mediaDevices
+  if (!mediaDevices?.getUserMedia) {
+    return {
+      granted: false,
+      error: 'media devices are unavailable in this window',
+    }
+  }
+
+  try {
+    const stream = await mediaDevices.getUserMedia(
+      kind === 'camera'
+        ? { video: true, audio: false }
+        : { audio: true, video: false },
+    )
+    for (const track of stream.getTracks()) {
+      track.stop()
+    }
+    return { granted: true }
+  } catch (err) {
+    return {
+      granted: false,
+      error: err instanceof Error ? err.message : 'request failed',
+    }
+  }
 }
 
 function Section({
@@ -349,29 +416,52 @@ export function DoctorPanel({
 
   if (!open) return null
 
-  const handleRequestCameraAccess = async () => {
-    setRequestingCamera(true)
+  const handleRequestMediaAccess = async (kind: MediaPermissionKind) => {
+    if (kind === 'camera') setRequestingCamera(true)
+    else setRequestingMicrophone(true)
+
     try {
-      await window.gemmaDesktopBridge.media.requestCameraAccess()
+      const request = () => kind === 'camera'
+        ? window.gemmaDesktopBridge.media.requestCameraAccess()
+        : window.gemmaDesktopBridge.media.requestMicrophoneAccess()
+      let result = await request()
+      let browserError: string | undefined
+
+      if (
+        !result.granted
+        && (result.status === 'not-determined' || result.status === 'unknown')
+      ) {
+        const browserResult = await requestBrowserMediaPermission(kind)
+        browserError = browserResult.error
+        if (browserResult.granted) {
+          result = {
+            ...result,
+            granted: true,
+            status: 'granted',
+          }
+        }
+      }
+
       await loadReport(false)
+      setError(describeMediaPermissionRequest(kind, result, browserError))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not request camera access.')
+      setError(
+        err instanceof Error
+          ? err.message
+          : `Could not request ${kind} access.`,
+      )
     } finally {
-      setRequestingCamera(false)
+      if (kind === 'camera') setRequestingCamera(false)
+      else setRequestingMicrophone(false)
     }
   }
 
-  const handleRequestMicrophoneAccess = async () => {
-    setRequestingMicrophone(true)
+  const handleRequestCameraAccess = async () => {
+    await handleRequestMediaAccess('camera')
+  }
 
-    try {
-      await window.gemmaDesktopBridge.media.requestMicrophoneAccess()
-      await loadReport(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not request microphone access.')
-    } finally {
-      setRequestingMicrophone(false)
-    }
+  const handleRequestMicrophoneAccess = async () => {
+    await handleRequestMediaAccess('microphone')
   }
 
   const handleRunReadAloudTest = async () => {
