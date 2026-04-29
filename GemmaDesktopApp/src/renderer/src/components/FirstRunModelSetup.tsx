@@ -10,6 +10,7 @@ type ModelTarget = {
 
 type RuntimeChoice = {
   id: string
+  runtimeIds: string[]
   label: string
   description: string
   status: RuntimeSummary['status'] | 'unknown'
@@ -18,23 +19,34 @@ type RuntimeChoice = {
 const DEFAULT_RUNTIME_CHOICES: RuntimeChoice[] = [
   {
     id: 'ollama-native',
+    runtimeIds: ['ollama-native', 'ollama-openai'],
     label: 'Ollama',
     description: 'Use locally installed Ollama models, or explicitly download a guided Gemma model.',
     status: 'unknown',
   },
   {
     id: 'omlx-openai',
+    runtimeIds: ['omlx-openai'],
     label: 'oMLX',
     description: 'Use a running oMLX OpenAI-compatible endpoint.',
     status: 'unknown',
   },
   {
     id: 'lmstudio-openai',
+    runtimeIds: ['lmstudio-native', 'lmstudio-openai'],
     label: 'LM Studio',
     description: 'Use models already loaded or visible through LM Studio.',
     status: 'unknown',
   },
 ]
+
+function runtimeProviderKey(runtimeId: string): string {
+  if (runtimeId.startsWith('ollama')) return 'ollama'
+  if (runtimeId.startsWith('omlx')) return 'omlx'
+  if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
+  if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
+  return runtimeId
+}
 
 function runtimeLabel(runtimeId: string, runtimeName?: string): string {
   if (runtimeId.startsWith('ollama')) return 'Ollama'
@@ -60,16 +72,54 @@ function runtimeDescription(runtimeId: string): string {
   return 'Use a model from this detected local runtime.'
 }
 
+function strongerRuntimeStatus(
+  left: RuntimeChoice['status'],
+  right: RuntimeChoice['status'],
+): RuntimeChoice['status'] {
+  const score: Record<RuntimeChoice['status'], number> = {
+    running: 4,
+    stopped: 3,
+    unknown: 2,
+    not_installed: 1,
+  }
+  return score[right] > score[left] ? right : left
+}
+
+function mergeRuntimeChoice(
+  byProvider: Map<string, RuntimeChoice>,
+  runtimeId: string,
+  input: Omit<RuntimeChoice, 'runtimeIds'> & { runtimeIds?: string[] },
+) {
+  const providerKey = runtimeProviderKey(runtimeId)
+  const existing = byProvider.get(providerKey)
+  const runtimeIds = input.runtimeIds ?? [runtimeId]
+  if (!existing) {
+    byProvider.set(providerKey, {
+      ...input,
+      runtimeIds: [...runtimeIds],
+    })
+    return
+  }
+
+  byProvider.set(providerKey, {
+    ...existing,
+    label: existing.label || input.label,
+    description: existing.description || input.description,
+    status: strongerRuntimeStatus(existing.status, input.status),
+    runtimeIds: Array.from(new Set([...existing.runtimeIds, ...runtimeIds])),
+  })
+}
+
 function buildRuntimeChoices(
   runtimes: RuntimeSummary[],
   models: ModelSummary[],
 ): RuntimeChoice[] {
-  const byId = new Map<string, RuntimeChoice>()
+  const byProvider = new Map<string, RuntimeChoice>()
   for (const choice of DEFAULT_RUNTIME_CHOICES) {
-    byId.set(choice.id, choice)
+    mergeRuntimeChoice(byProvider, choice.id, choice)
   }
   for (const runtime of runtimes) {
-    byId.set(runtime.id, {
+    mergeRuntimeChoice(byProvider, runtime.id, {
       id: runtime.id,
       label: runtimeLabel(runtime.id, runtime.name),
       description: runtimeDescription(runtime.id),
@@ -77,17 +127,15 @@ function buildRuntimeChoices(
     })
   }
   for (const model of models) {
-    if (!byId.has(model.runtimeId)) {
-      byId.set(model.runtimeId, {
-        id: model.runtimeId,
-        label: runtimeLabel(model.runtimeId, model.runtimeName),
-        description: runtimeDescription(model.runtimeId),
-        status: 'running',
-      })
-    }
+    mergeRuntimeChoice(byProvider, model.runtimeId, {
+      id: model.runtimeId,
+      label: runtimeLabel(model.runtimeId, model.runtimeName),
+      description: runtimeDescription(model.runtimeId),
+      status: 'running',
+    })
   }
 
-  return [...byId.values()].sort((left, right) => {
+  return [...byProvider.values()].sort((left, right) => {
     const order = ['ollama-native', 'omlx-openai', 'lmstudio-openai']
     const leftOrder = order.indexOf(left.id)
     const rightOrder = order.indexOf(right.id)
@@ -154,30 +202,46 @@ export function FirstRunModelSetup({
     [models, runtimes],
   )
   const [runtimeId, setRuntimeId] = useState(runtimeChoices[0]?.id ?? 'ollama-native')
-  const [selectedModelId, setSelectedModelId] = useState('')
+  const [selectedModel, setSelectedModel] = useState<ModelTarget | null>(null)
   const [manualModelId, setManualModelId] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const selectedRuntime = runtimeChoices.find((runtime) => runtime.id === runtimeId)
     ?? runtimeChoices[0]
-  const runtimeModels = models
-    .filter((model) => model.runtimeId === runtimeId)
+  const runtimeModels = Array.from(models
+    .filter((model) =>
+      selectedRuntime?.runtimeIds.includes(model.runtimeId) ?? model.runtimeId === runtimeId)
+    .reduce((byModelId, model) => {
+      const existing = byModelId.get(model.id)
+      if (!existing || model.runtimeId === runtimeId) {
+        byModelId.set(model.id, model)
+      }
+      return byModelId
+    }, new Map<string, ModelSummary>())
+    .values())
     .sort((left, right) => left.name.localeCompare(right.name))
-  const targetModelId = (selectedModelId || manualModelId).trim()
-  const canContinue = targetModelId.length > 0 && !busy
+  const manualTarget = {
+    runtimeId,
+    modelId: manualModelId.trim(),
+  }
+  const target = selectedModel ?? (manualTarget.modelId ? manualTarget : null)
+  const canContinue = Boolean(target) && !busy
 
-  const chooseTarget = async (modelId: string) => {
-    const normalized = modelId.trim()
-    if (!normalized) {
+  const chooseTarget = async (targetInput: ModelTarget | null) => {
+    if (!targetInput?.modelId.trim()) {
       setError('Choose an installed model or enter a model id first.')
       return
     }
+    const normalized = {
+      runtimeId: targetInput.runtimeId,
+      modelId: targetInput.modelId.trim(),
+    }
 
-    setBusy(`choose:${normalized}`)
+    setBusy(`choose:${normalized.runtimeId}:${normalized.modelId}`)
     setError(null)
     try {
-      await onChoose({ runtimeId, modelId: normalized })
+      await onChoose(normalized)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save the model choice.')
     } finally {
@@ -235,7 +299,7 @@ export function FirstRunModelSetup({
                   type="button"
                   onClick={() => {
                     setRuntimeId(runtime.id)
-                    setSelectedModelId('')
+                    setSelectedModel(null)
                     setManualModelId('')
                     setError(null)
                   }}
@@ -281,13 +345,17 @@ export function FirstRunModelSetup({
                   <button
                     key={`${model.runtimeId}:${model.id}`}
                     type="button"
-                    onClick={() => {
-                      setSelectedModelId(model.id)
+                  onClick={() => {
+                      setSelectedModel({
+                        runtimeId: model.runtimeId,
+                        modelId: model.id,
+                      })
                       setManualModelId('')
                       setError(null)
                     }}
                     className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                      selectedModelId === model.id
+                      selectedModel?.runtimeId === model.runtimeId
+                        && selectedModel.modelId === model.id
                         ? 'border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-950/40'
                         : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
                     }`}
@@ -314,7 +382,7 @@ export function FirstRunModelSetup({
               value={manualModelId}
               onChange={(event) => {
                 setManualModelId(event.target.value)
-                setSelectedModelId('')
+                setSelectedModel(null)
                 setError(null)
               }}
               placeholder={runtimeId.startsWith('ollama') ? 'gemma4:26b' : 'model id'}
@@ -378,7 +446,7 @@ export function FirstRunModelSetup({
           </button>
           <button
             type="button"
-            onClick={() => { void chooseTarget(targetModelId) }}
+            onClick={() => { void chooseTarget(target) }}
             disabled={!canContinue}
             className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
