@@ -1,12 +1,15 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import {
   Bell,
+  Check,
+  ChevronDown,
   ExternalLink,
   Eye,
   EyeOff,
   FolderOpen,
   Loader2,
   RotateCcw,
+  Search,
   X,
 } from 'lucide-react'
 import {
@@ -108,6 +111,14 @@ const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['tools', 'Tools'],
   ['about', 'About'],
 ] as const
+
+export interface DefaultModelOption {
+  modelId: string
+  runtimeId: string
+  label: string
+  providerLabel: string
+  apiTypeLabel: string
+}
 
 const TOOL_POLICY_SECTIONS = [
   {
@@ -262,6 +273,241 @@ function formatNotificationPermissionLabel(
     case 'denied': return 'Blocked'
     case 'unsupported': return 'Unsupported'
   }
+}
+
+function compareModelOptionText(left: string, right: string): number {
+  return left.localeCompare(right, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
+function providerLabelForRuntime(runtimeId: string, runtimeName?: string): string {
+  if (runtimeId.startsWith('ollama')) return 'Ollama'
+  if (runtimeId.startsWith('lmstudio')) return 'LM Studio'
+  if (runtimeId.startsWith('llamacpp')) return 'llama.cpp'
+  return runtimeName?.trim() || runtimeId
+}
+
+function apiTypeLabelForRuntime(runtimeId: string): string {
+  if (runtimeId.endsWith('-openai')) return 'OpenAI-compatible API'
+  if (runtimeId.endsWith('-native')) return 'Native API'
+  if (runtimeId.endsWith('-server')) return 'Server API'
+  return runtimeId
+}
+
+function modelTargetValue(target: {
+  modelId: string
+  runtimeId: string
+}): string {
+  return JSON.stringify([target.runtimeId, target.modelId])
+}
+
+function sameModelTarget(
+  left: { modelId: string; runtimeId: string },
+  right: { modelId: string; runtimeId: string },
+): boolean {
+  return left.modelId === right.modelId && left.runtimeId === right.runtimeId
+}
+
+function optionSearchText(option: DefaultModelOption): string {
+  return [
+    option.label,
+    option.providerLabel,
+    option.apiTypeLabel,
+    option.runtimeId,
+    option.modelId,
+  ].join(' ').toLowerCase()
+}
+
+export function formatDefaultModelOptionLabel(option: DefaultModelOption): string {
+  return `${option.label} - ${option.providerLabel} - ${option.apiTypeLabel}`
+}
+
+function compareDefaultModelOptions(
+  left: DefaultModelOption,
+  right: DefaultModelOption,
+): number {
+  return (
+    compareModelOptionText(left.label, right.label)
+    || compareModelOptionText(left.providerLabel, right.providerLabel)
+    || compareModelOptionText(left.apiTypeLabel, right.apiTypeLabel)
+    || compareModelOptionText(left.runtimeId, right.runtimeId)
+    || compareModelOptionText(left.modelId, right.modelId)
+  )
+}
+
+export function groupDefaultModelOptions(options: DefaultModelOption[]): Array<{
+  providerLabel: string
+  options: DefaultModelOption[]
+}> {
+  const byProvider = new Map<string, DefaultModelOption[]>()
+  for (const option of options) {
+    const providerOptions = byProvider.get(option.providerLabel) ?? []
+    providerOptions.push(option)
+    byProvider.set(option.providerLabel, providerOptions)
+  }
+
+  return [...byProvider.entries()]
+    .sort(([left], [right]) => compareModelOptionText(left, right))
+    .map(([providerLabel, providerOptions]) => ({
+      providerLabel,
+      options: [...providerOptions].sort(compareDefaultModelOptions),
+    }))
+}
+
+export function DefaultModelTargetPicker({
+  ariaLabel,
+  value,
+  groups,
+  onSelect,
+  initialOpen = false,
+}: {
+  ariaLabel: string
+  value: { modelId: string; runtimeId: string }
+  groups: Array<{ providerLabel: string; options: DefaultModelOption[] }>
+  onSelect: (target: { modelId: string; runtimeId: string }) => void
+  initialOpen?: boolean
+}) {
+  const [open, setOpen] = useState(initialOpen)
+  const [query, setQuery] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const selectedOption = groups
+    .flatMap((group) => group.options)
+    .find((option) => sameModelTarget(option, value))
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleGroups = normalizedQuery
+    ? groups
+      .map((group) => ({
+        ...group,
+        options: group.options.filter((option) =>
+          optionSearchText(option).includes(normalizedQuery),
+        ),
+      }))
+      .filter((group) => group.options.length > 0)
+    : groups
+
+  useEffect(() => {
+    const handler = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      setQuery('')
+      return
+    }
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [open])
+
+  return (
+    <div ref={rootRef} className={`relative ${open ? 'z-30' : 'z-0'}`}>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-sm text-zinc-700 outline-none transition-colors hover:border-zinc-300 focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-700 dark:focus:border-indigo-700"
+      >
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-zinc-800 dark:text-zinc-100">
+            {selectedOption?.label ?? value.modelId}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+            {selectedOption
+              ? `${selectedOption.providerLabel} · ${selectedOption.apiTypeLabel}`
+              : value.runtimeId}
+          </span>
+        </span>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-1.5 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="border-b border-zinc-100 p-2 dark:border-zinc-800">
+            <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-950">
+              <Search size={13} className="shrink-0 text-zinc-400" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Filter by model, provider, or API..."
+                className="min-w-0 flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-200 dark:placeholder:text-zinc-500"
+              />
+            </div>
+          </div>
+          <div
+            role="listbox"
+            aria-label={ariaLabel}
+            className="max-h-64 overflow-y-auto overscroll-contain py-1"
+            onWheel={(event) => event.stopPropagation()}
+          >
+            {visibleGroups.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400">
+                No models match this filter.
+              </div>
+            ) : visibleGroups.map((group) => (
+              <div key={group.providerLabel}>
+                <div className="bg-zinc-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:bg-zinc-950 dark:text-zinc-500">
+                  {group.providerLabel}
+                </div>
+                {group.options.map((option) => {
+                  const selected = sameModelTarget(option, value)
+                  return (
+                    <button
+                      key={modelTargetValue(option)}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        onSelect({
+                          modelId: option.modelId,
+                          runtimeId: option.runtimeId,
+                        })
+                        setOpen(false)
+                      }}
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
+                        selected
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800'
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">
+                          {option.label}
+                        </span>
+                        <span
+                          className={`mt-0.5 block truncate text-[11px] ${
+                            selected ? 'text-indigo-200' : 'text-zinc-400'
+                          }`}
+                        >
+                          {option.apiTypeLabel} · {option.runtimeId}
+                        </span>
+                      </span>
+                      {selected && (
+                        <Check size={13} className="shrink-0" />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function SettingsModal({
@@ -476,87 +722,53 @@ export function SettingsModal({
 
   const readAloudProgressLabel = buildReadAloudProgressLabel(readAloudStatus)
 
-  // Codex helpers (preserved verbatim — see hey.md). Encodes target as JSON tuple
-  // [runtimeId, modelId] inside option values; deduped option list seeded with
-  // current selection, built-in defaults, and live runtime models.
-  const describeTargetLabel = (target: {
+  const findTargetModel = (target: {
     modelId: string
     runtimeId: string
-  }): string =>
+  }): ModelSummary | undefined =>
     models.find(
       (model) =>
         model.id === target.modelId
         && model.runtimeId === target.runtimeId,
-    )?.name ?? target.modelId
-  const modelTargetValue = (target: {
-    modelId: string
-    runtimeId: string
-  }): string => JSON.stringify([target.runtimeId, target.modelId])
-  const parseModelTargetValue = (value: string): {
-    modelId: string
-    runtimeId: string
-  } | null => {
-    try {
-      const parsed = JSON.parse(value) as unknown
-      if (
-        Array.isArray(parsed)
-        && typeof parsed[0] === 'string'
-        && typeof parsed[1] === 'string'
-        && parsed[0].trim().length > 0
-        && parsed[1].trim().length > 0
-      ) {
-        return {
-          runtimeId: parsed[0],
-          modelId: parsed[1],
-        }
-      }
-    } catch {
-      // Ignore malformed option values.
-    }
-    return null
-  }
-  const defaultModelOptions = (() => {
-    const byValue = new Map<string, {
-      modelId: string
-      runtimeId: string
-      label: string
-      detail: string
-    }>()
+    )
+  const defaultModelOptions = ((): DefaultModelOption[] => {
+    const byValue = new Map<string, DefaultModelOption>()
     const addTarget = (
       target: { modelId: string; runtimeId: string },
-      detail: string,
     ) => {
       const value = modelTargetValue(target)
       if (byValue.has(value)) {
         return
       }
+      const targetModel = findTargetModel(target)
       byValue.set(value, {
         ...target,
-        label: describeTargetLabel(target),
-        detail,
+        label: targetModel?.name ?? target.modelId,
+        providerLabel: providerLabelForRuntime(
+          target.runtimeId,
+          targetModel?.runtimeName,
+        ),
+        apiTypeLabel: apiTypeLabelForRuntime(target.runtimeId),
       })
     }
 
-    addTarget(local.modelSelection.mainModel, 'Current main default')
-    addTarget(local.modelSelection.helperModel, 'Current helper default')
-    addTarget(defaultModelSelection.mainModel, 'Built-in main default')
-    addTarget(defaultModelSelection.helperModel, 'Built-in helper default')
+    addTarget(local.modelSelection.mainModel)
+    addTarget(local.modelSelection.helperModel)
+    addTarget(defaultModelSelection.mainModel)
+    addTarget(defaultModelSelection.helperModel)
     for (const model of models) {
       addTarget({
         modelId: model.id,
         runtimeId: model.runtimeId,
-      }, model.runtimeName)
+      })
     }
     return [...byValue.values()]
   })()
+  const defaultModelOptionGroups = groupDefaultModelOptions(defaultModelOptions)
   const updateModelSelectionTarget = (
     key: 'mainModel' | 'helperModel',
-    value: string,
+    target: { modelId: string; runtimeId: string },
   ) => {
-    const target = parseModelTargetValue(value)
-    if (!target) {
-      return
-    }
     const modelSelection = {
       ...local.modelSelection,
       [key]: target,
@@ -713,21 +925,13 @@ export function SettingsModal({
                         label="Main Model"
                         hint="Used for new conversations, research, and automations. The conversation model picker can override per-session."
                       >
-                        <Select
-                          aria-label="Default main model"
-                          value={modelTargetValue(local.modelSelection.mainModel)}
-                          onChange={(event) =>
-                            updateModelSelectionTarget('mainModel', event.target.value)}
-                        >
-                          {defaultModelOptions.map((option) => (
-                            <option
-                              key={modelTargetValue(option)}
-                              value={modelTargetValue(option)}
-                            >
-                              {option.label} - {option.runtimeId}
-                            </option>
-                          ))}
-                        </Select>
+                        <DefaultModelTargetPicker
+                          ariaLabel="Default main model"
+                          value={local.modelSelection.mainModel}
+                          groups={defaultModelOptionGroups}
+                          onSelect={(target) =>
+                            updateModelSelectionTarget('mainModel', target)}
+                        />
                       </SettingsField>
 
                       <SettingsField
@@ -740,21 +944,13 @@ export function SettingsModal({
                           </>
                         }
                       >
-                        <Select
-                          aria-label="Default helper model"
-                          value={modelTargetValue(local.modelSelection.helperModel)}
-                          onChange={(event) =>
-                            updateModelSelectionTarget('helperModel', event.target.value)}
-                        >
-                          {defaultModelOptions.map((option) => (
-                            <option
-                              key={modelTargetValue(option)}
-                              value={modelTargetValue(option)}
-                            >
-                              {option.label} - {option.runtimeId}
-                            </option>
-                          ))}
-                        </Select>
+                        <DefaultModelTargetPicker
+                          ariaLabel="Default helper model"
+                          value={local.modelSelection.helperModel}
+                          groups={defaultModelOptionGroups}
+                          onSelect={(target) =>
+                            updateModelSelectionTarget('helperModel', target)}
+                        />
                       </SettingsField>
                     </div>
                   </SettingsSection>

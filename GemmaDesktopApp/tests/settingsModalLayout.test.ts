@@ -1,7 +1,14 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { SettingsModal, type SettingsTab } from '../src/renderer/src/components/SettingsModal'
+import {
+  DefaultModelTargetPicker,
+  SettingsModal,
+  formatDefaultModelOptionLabel,
+  groupDefaultModelOptions,
+  type DefaultModelOption,
+  type SettingsTab,
+} from '../src/renderer/src/components/SettingsModal'
 import type { AppSettings, BootstrapState, ModelSummary } from '../src/renderer/src/types'
 import { getDefaultLmStudioSettings } from '../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../src/shared/ollamaRuntimeConfig'
@@ -153,6 +160,22 @@ function renderSettingsModal(
   )
 }
 
+function modelOption(
+  modelId: string,
+  label: string,
+  runtimeId: string,
+  providerLabel: string,
+  apiTypeLabel: string,
+): DefaultModelOption {
+  return {
+    modelId,
+    runtimeId,
+    label,
+    providerLabel,
+    apiTypeLabel,
+  }
+}
+
 describe('SettingsModal layout', () => {
   it('renders settings sections as a vertical sidebar', () => {
     const markup = renderSettingsModal()
@@ -165,7 +188,7 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('border-b-2 pb-2.5 pt-3')
   })
 
-  it('renders saved default model dropdowns in general settings', () => {
+  it('renders searchable saved default model pickers in general settings', () => {
     const markup = renderSettingsModal('general', [
       {
         id: 'qwen3:8b',
@@ -178,7 +201,56 @@ describe('SettingsModal layout', () => {
 
     expect(markup).toContain('aria-label="Default main model"')
     expect(markup).toContain('aria-label="Default helper model"')
-    expect(markup).toContain('Qwen3 8B - lmstudio-openai')
+    expect(markup).toContain('aria-haspopup="listbox"')
+    expect(markup).toContain('gemma4:26b')
+    expect(markup).toContain('Ollama · Native API')
+    expect(markup).not.toContain('<optgroup')
+  })
+
+  it('groups saved default model options by provider and sorts inside each group', () => {
+    const groups = groupDefaultModelOptions([
+      modelOption('zeta:7b', 'Zeta 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-native', 'LM Studio', 'Native API'),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
+    ])
+
+    expect(groups.map((group) => group.providerLabel)).toEqual([
+      'LM Studio',
+      'Ollama',
+    ])
+    expect(groups[0]?.options.map(formatDefaultModelOptionLabel)).toEqual([
+      'Alpha 7B - LM Studio - OpenAI-compatible API',
+      'Qwen3 8B - LM Studio - Native API',
+      'Qwen3 8B - LM Studio - OpenAI-compatible API',
+      'Zeta 7B - LM Studio - OpenAI-compatible API',
+    ])
+  })
+
+  it('opens default model pickers as bounded searchable lists', () => {
+    const groups = groupDefaultModelOptions([
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
+    ])
+    const markup = renderToStaticMarkup(
+      createElement(DefaultModelTargetPicker, {
+        ariaLabel: 'Default main model',
+        value: {
+          modelId: 'gemma4:26b',
+          runtimeId: 'ollama-native',
+        },
+        groups,
+        onSelect: () => {},
+        initialOpen: true,
+      }),
+    )
+
+    expect(markup).toContain('Filter by model, provider, or API...')
+    expect(markup).toContain('role="listbox"')
+    expect(markup).toContain('max-h-64 overflow-y-auto overscroll-contain')
+    expect(markup).toContain('LM Studio')
+    expect(markup).toContain('Alpha 7B')
   })
 
   it('surfaces reasoning preferences on Ollama model cards', () => {
