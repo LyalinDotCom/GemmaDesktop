@@ -12857,6 +12857,67 @@ function computeApproxGpuResidencyPercent(
   return Math.max(0, Math.min(100, Math.round((sizeVram / size) * 100)))
 }
 
+const MLX_OPTIMIZATION_TOKEN = /(?:^|[^a-z0-9])mlx(?:[^a-z0-9]|$)/i
+
+function valueHasMlxOptimizationHint(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return MLX_OPTIMIZATION_TOKEN.test(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(valueHasMlxOptimizationHint)
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(valueHasMlxOptimizationHint)
+  }
+
+  return false
+}
+
+function deriveOptimizationTags(input: {
+  runtimeId: string
+  modelId: string
+  displayName: string
+  metadata: Record<string, unknown>
+}): string[] | undefined {
+  const tags = new Set<string>()
+
+  if (input.runtimeId === 'omlx-openai') {
+    tags.add('MLX')
+  }
+
+  const metadata = input.metadata
+  const candidates = [
+    input.modelId,
+    input.displayName,
+    metadata.format,
+    metadata.modelFormat,
+    metadata.model_format,
+    metadata.optimizedFor,
+    metadata.optimized_for,
+    metadata.optimization,
+    metadata.optimizations,
+    metadata.accelerator,
+    metadata.accelerators,
+    metadata.engineType,
+    metadata.engine_type,
+    metadata.modelType,
+    metadata.model_type,
+    metadata.modelPath,
+    metadata.model_path,
+    metadata.sourceId,
+    metadata.publisher,
+    metadata.description,
+  ]
+
+  if (candidates.some(valueHasMlxOptimizationHint)) {
+    tags.add('MLX')
+  }
+
+  return tags.size > 0 ? [...tags] : undefined
+}
+
 function createConfiguredRuntimeAdapters(currentSettings: AppSettingsRecord) {
   return [
     createOllamaNativeAdapter({
@@ -12900,6 +12961,7 @@ type MappedModelSummary = {
   parameterCount?: string
   quantization?: string
   contextLength?: number
+  optimizationTags?: string[]
   status: 'loaded' | 'available' | 'loading'
   attachmentSupport: ReturnType<typeof deriveAttachmentSupport>
   runtimeConfig?: MappedModelRuntimeConfig
@@ -13075,6 +13137,12 @@ function mapModels(
                     loadedContextLength,
                   }
           : undefined
+      const optimizationTags = deriveOptimizationTags({
+        runtimeId: m.runtimeId,
+        modelId: m.id,
+        displayName,
+        metadata: meta,
+      })
 
       const modelKey = modelTargetKey({
         runtimeId: rt.runtime.id,
@@ -13090,6 +13158,7 @@ function mapModels(
         parameterCount,
         quantization,
         contextLength,
+        optimizationTags,
         status: pendingLoadKeys.has(modelKey) || loadingIds.has(m.id)
           ? 'loading'
           : loadedIds.has(m.id)

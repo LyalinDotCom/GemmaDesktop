@@ -7,6 +7,7 @@ import type {
   SessionMode,
 } from '@/types'
 import { ModelPickerList } from '@/components/ModelPickerList'
+import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
   describeGuidedGemmaMeta,
@@ -192,16 +193,28 @@ export function ModelSelector({
           ) : selection.otherModel ? (
             compact ? (
               <>
-                <span className="truncate font-medium">
-                  {selection.otherModel.name}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-medium">
+                    {selection.otherModel.name}
+                  </span>
+                  <ModelOptimizationBadges
+                    tags={selection.otherModel.optimizationTags}
+                    compact
+                  />
                 </span>
                 <ChevronDown size={12} className="text-zinc-400" />
               </>
             ) : (
               <>
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
-                    {selection.otherModel.name}
+                  <div className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                    <span className="truncate">
+                      {selection.otherModel.name}
+                    </span>
+                    <ModelOptimizationBadges
+                      tags={selection.otherModel.optimizationTags}
+                      compact
+                    />
                   </div>
                   <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
                     {[selection.otherModel.runtimeLabel, selection.otherModel.quantization]

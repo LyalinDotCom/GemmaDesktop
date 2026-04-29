@@ -26,6 +26,7 @@ const models: ModelSummary[] = [
     parameterCount: '35B',
     quantization: 'NVFP4',
     contextLength: 262_144,
+    optimizationTags: ['MLX'],
     status: 'loaded',
   }),
   makeModel({
@@ -52,6 +53,7 @@ describe('ModelPickerList', () => {
 
     expect(markup).toContain('Selected model')
     expect(markup).toContain('Qwen 3.5 Coding 35B')
+    expect(markup).toContain('MLX optimized')
     expect(markup.match(/Qwen 3\.5 Coding 35B/g)).toHaveLength(1)
     expect(markup.indexOf('Selected model')).toBeLessThan(
       markup.indexOf('Llama 3.3 70B'),
@@ -73,5 +75,21 @@ describe('ModelPickerList', () => {
     expect(markup).toContain('Selected model')
     expect(markup).toContain('Qwen 3.5 Coding 35B')
     expect(markup).toContain('No other models match the current filter.')
+  })
+
+  it('renders and filters by optimization tags', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ModelPickerList, {
+        models,
+        selectedModelId: 'llama3.3:70b',
+        selectedRuntimeId: 'ollama-native',
+        mode: 'build',
+        searchQuery: 'mlx',
+      }),
+    )
+
+    expect(markup).toContain('Qwen 3.5 Coding 35B')
+    expect(markup).toContain('MLX optimized')
+    expect(markup).not.toContain('Llama 3.3 70B')
   })
 })

@@ -364,6 +364,7 @@ export interface ModelSummary {
   parameterCount?: string
   quantization?: string
   contextLength?: number
+  optimizationTags?: string[]
   status: 'loaded' | 'available' | 'loading'
   attachmentSupport?: AttachmentSupport
   runtimeConfig?: {

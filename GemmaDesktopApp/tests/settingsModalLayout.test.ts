@@ -173,6 +173,7 @@ function modelOption(
   runtimeId: string,
   providerLabel: string,
   apiTypeLabel: string,
+  optimizationTags?: string[],
 ): DefaultModelOption {
   return {
     modelId,
@@ -180,6 +181,7 @@ function modelOption(
     label,
     providerLabel,
     apiTypeLabel,
+    optimizationTags,
   }
 }
 
@@ -243,7 +245,7 @@ describe('SettingsModal layout', () => {
 
   it('opens default model pickers as bounded searchable lists', () => {
     const groups = groupDefaultModelOptions([
-      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API', ['MLX']),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
     ])
     const markup = renderToStaticMarkup(
@@ -264,6 +266,7 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('max-h-64 overflow-y-auto overscroll-contain')
     expect(markup).toContain('LM Studio')
     expect(markup).toContain('Alpha 7B')
+    expect(markup).toContain('MLX optimized')
   })
 
   it('does not expose reasoning-off controls on Ollama model cards', () => {

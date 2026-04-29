@@ -3,6 +3,7 @@ import { Circle, Loader2, MessageSquarePlus } from 'lucide-react'
 import type { ModelSummary, SessionMode } from '@/types'
 import { runtimeFamilyFromId } from '@/lib/sessionModels'
 import { buildOtherSelectableModels } from '@/lib/guidedModels'
+import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 
 interface ModelPickerListProps {
   models: ModelSummary[]
@@ -42,6 +43,7 @@ export function ModelPickerList({
     || model.runtimeLabel.toLowerCase().includes(normalizedQuery)
     || (model.parameterCount?.toLowerCase().includes(normalizedQuery))
     || (model.quantization?.toLowerCase().includes(normalizedQuery))
+    || model.optimizationTags?.some((tag) => tag.toLowerCase().includes(normalizedQuery))
   const selectableModels = normalizedQuery
     ? allSelectableModels.filter(modelMatchesSearch)
     : allSelectableModels
@@ -115,8 +117,15 @@ export function ModelPickerList({
             className="flex w-full items-center gap-3 rounded-lg bg-indigo-600 px-3 py-2 text-left text-white shadow-sm dark:bg-indigo-600"
           >
             <div className="min-w-0 flex-1">
-              <span className="text-xs font-medium">
-                {pinnedSelectedModel.name}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-xs font-medium">
+                  {pinnedSelectedModel.name}
+                </span>
+                <ModelOptimizationBadges
+                  tags={pinnedSelectedModel.optimizationTags}
+                  selected
+                  compact
+                />
               </span>
               <div className="mt-0.5 text-[11px] text-indigo-200">
                 {[
@@ -192,13 +201,18 @@ export function ModelPickerList({
               >
                 <div className="min-w-0 flex-1">
                   <span
-                    className={`text-xs font-medium ${
+                    className={`flex min-w-0 items-center gap-1.5 text-xs font-medium ${
                       isSelected
                         ? 'text-white'
                         : 'text-zinc-800 dark:text-zinc-200'
                     }`}
                   >
-                    {model.name}
+                    <span className="truncate">{model.name}</span>
+                    <ModelOptimizationBadges
+                      tags={model.optimizationTags}
+                      selected={isSelected}
+                      compact
+                    />
                   </span>
                   {details && (
                     <div

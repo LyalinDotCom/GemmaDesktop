@@ -11,6 +11,7 @@ export interface SelectableModel {
   parameterCount?: string
   quantization?: string
   contextLength?: number
+  optimizationTags?: string[]
 }
 
 const RUNTIME_PREFERENCE: Record<string, string[]> = {
@@ -115,6 +116,22 @@ function pickMetadata(
   return undefined
 }
 
+function mergeOptimizationTags(models: ModelSummary[]): string[] | undefined {
+  const tags = new Set<string>()
+  const ranked = [...models].sort((left, right) => displayRank(right) - displayRank(left))
+
+  for (const model of ranked) {
+    for (const tag of model.optimizationTags ?? []) {
+      const normalized = tag.trim()
+      if (normalized) {
+        tags.add(normalized)
+      }
+    }
+  }
+
+  return tags.size > 0 ? [...tags] : undefined
+}
+
 function modelContextLength(model: ModelSummary | undefined): number | undefined {
   if (!model) {
     return undefined
@@ -217,6 +234,7 @@ export function buildSelectableModels(
           candidates,
           (model) => model.contextLength,
         ) as number | undefined,
+        optimizationTags: mergeOptimizationTags(candidates),
       }]
     })
     .sort((left, right) => {
