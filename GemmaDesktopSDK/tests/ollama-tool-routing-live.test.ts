@@ -4,31 +4,56 @@ import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
 import {
+  createLiveRuntimeAdapters,
   isOllamaLiveEnabled,
-  withLoadedLiveOllamaModel,
+  withLiveRuntimeModel,
 } from "./helpers/ollama-live.js";
 
 const itIfLive = isOllamaLiveEnabled() ? it : it.skip;
 
-function resolveConfiguredModel(): string {
-  return process.env.GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID?.trim() || "gemma4:26b";
+function configuredEnvValue(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
-describe.sequential("ollama live tool routing", () => {
+function resolveConfiguredRuntime(): string {
+  return configuredEnvValue(
+    "GEMMA_DESKTOP_TOOL_ROUTING_RUNTIME_ID",
+    "GEMMA_DESKTOP_LIVE_RUNTIME_ID",
+  ) ?? "ollama-native";
+}
+
+function resolveConfiguredModel(): string {
+  return configuredEnvValue(
+    "GEMMA_DESKTOP_TOOL_ROUTING_MODEL_ID",
+    "GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID",
+    "GEMMA_DESKTOP_LIVE_MODEL_ID",
+  ) ?? "gemma4:26b";
+}
+
+describe.sequential("live tool routing", () => {
   itIfLive(
     "executes fetch_url end to end in a direct-tool-only turn",
     async () => {
+      const runtimeId = resolveConfiguredRuntime();
       const modelId = resolveConfiguredModel();
+      const adapters = createLiveRuntimeAdapters();
 
-      await withLoadedLiveOllamaModel({ modelId }, async () => {
+      await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const workingDirectory = await mkdtemp(
           path.join(os.tmpdir(), "gemma-desktop-live-ollama-direct-tool-"),
         );
         const gemmaDesktop = await createGemmaDesktop({
           workingDirectory,
+          adapters,
         });
         const session = await gemmaDesktop.sessions.create({
-          runtime: "ollama-native",
+          runtime: runtimeId,
           model: modelId,
           mode: {
             base: "minimal",
@@ -82,17 +107,20 @@ describe.sequential("ollama live tool routing", () => {
   itIfLive(
     "prefers fetch_url over web_research_agent for one known page in cowork mode",
     async () => {
+      const runtimeId = resolveConfiguredRuntime();
       const modelId = resolveConfiguredModel();
+      const adapters = createLiveRuntimeAdapters();
 
-      await withLoadedLiveOllamaModel({ modelId }, async () => {
+      await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const workingDirectory = await mkdtemp(
           path.join(os.tmpdir(), "gemma-desktop-live-ollama-cowork-routing-"),
         );
         const gemmaDesktop = await createGemmaDesktop({
           workingDirectory,
+          adapters,
         });
         const session = await gemmaDesktop.sessions.create({
-          runtime: "ollama-native",
+          runtime: runtimeId,
           model: modelId,
           mode: "cowork",
           workingDirectory,
@@ -123,17 +151,20 @@ describe.sequential("ollama live tool routing", () => {
   itIfLive(
     "completes the MSNBC Fox News CNN comparison prompt through web_research_agent",
     async () => {
+      const runtimeId = resolveConfiguredRuntime();
       const modelId = resolveConfiguredModel();
+      const adapters = createLiveRuntimeAdapters();
 
-      await withLoadedLiveOllamaModel({ modelId }, async () => {
+      await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const workingDirectory = await mkdtemp(
           path.join(os.tmpdir(), "gemma-desktop-live-ollama-web-research-"),
         );
         const gemmaDesktop = await createGemmaDesktop({
           workingDirectory,
+          adapters,
         });
         const session = await gemmaDesktop.sessions.create({
-          runtime: "ollama-native",
+          runtime: runtimeId,
           model: modelId,
           mode: {
             base: "cowork",

@@ -6,7 +6,8 @@ import type { ScenarioId } from "../src/args.js";
 import { runCli } from "../src/cli.js";
 import {
   isOllamaLiveEnabled,
-  withLoadedLiveOllamaModel,
+  liveRuntimeCliEndpointArgs,
+  withLiveRuntimeModel,
 } from "./helpers/ollama-live.js";
 
 class MemoryStream implements AsyncIterable<unknown> {
@@ -84,6 +85,16 @@ const DEFAULT_LIVE_SCENARIOS: ScenarioId[] = [
 
 const itIfLive = isOllamaLiveEnabled() ? it : it.skip;
 
+function configuredEnvValue(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function parseScenarioSelection(): ScenarioId[] {
   const raw = process.env.GEMMA_DESKTOP_CLI_SCENARIOS?.trim();
   if (!raw) {
@@ -110,6 +121,7 @@ function resolveModelForScenario(scenarioId: ScenarioId): string {
       process.env.GEMMA_DESKTOP_CLI_AUDIO_MODEL_ID?.trim()
       || process.env.GEMMA_DESKTOP_CLI_MULTIMODAL_MODEL_ID?.trim()
       || process.env.GEMMA_DESKTOP_CLI_SCENARIO_MODEL_ID?.trim()
+      || process.env.GEMMA_DESKTOP_LIVE_MODEL_ID?.trim()
       || "gemma4:26b"
     );
   }
@@ -118,11 +130,15 @@ function resolveModelForScenario(scenarioId: ScenarioId): string {
     return (
       process.env.GEMMA_DESKTOP_CLI_MULTIMODAL_MODEL_ID?.trim()
       || process.env.GEMMA_DESKTOP_CLI_SCENARIO_MODEL_ID?.trim()
+      || process.env.GEMMA_DESKTOP_LIVE_MODEL_ID?.trim()
       || "gemma4:26b"
     );
   }
 
-  return process.env.GEMMA_DESKTOP_CLI_SCENARIO_MODEL_ID?.trim() || "gemma4:26b";
+  return configuredEnvValue(
+    "GEMMA_DESKTOP_CLI_SCENARIO_MODEL_ID",
+    "GEMMA_DESKTOP_LIVE_MODEL_ID",
+  ) ?? "gemma4:26b";
 }
 
 function groupScenariosByModel(scenarios: ScenarioId[]): Map<string, ScenarioId[]> {
@@ -301,6 +317,7 @@ async function runScenario(input: {
     input.runtimeId,
     "--model",
     input.modelId,
+    ...liveRuntimeCliEndpointArgs(),
     "--cwd",
     workingDirectory,
     "--turn-timeout-ms",
@@ -402,7 +419,10 @@ describe.sequential("CLI live headless scenarios", () => {
   itIfLive(
     "runs selected real-world scenarios and writes agent-reviewable diagnostics",
     async () => {
-      const runtimeId = process.env.GEMMA_DESKTOP_CLI_SCENARIO_RUNTIME_ID?.trim() || "ollama-native";
+      const runtimeId = configuredEnvValue(
+        "GEMMA_DESKTOP_CLI_SCENARIO_RUNTIME_ID",
+        "GEMMA_DESKTOP_LIVE_RUNTIME_ID",
+      ) ?? "ollama-native";
       const scenarios = parseScenarioSelection();
       const grouped = groupScenariosByModel(scenarios);
       const harnessRoot = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-live-scenarios-"));
@@ -413,10 +433,6 @@ describe.sequential("CLI live headless scenarios", () => {
       const startedAt = currentIsoTime();
 
       expect(scenarios.length).toBeGreaterThan(0);
-      expect(
-        runtimeId.startsWith("ollama"),
-        `CLI live scenarios only support Ollama runtimes so model cleanup can be enforced. Received "${runtimeId}".`,
-      ).toBe(true);
       await appendRunEvent(logRoot, "run_started", {
         runtimeId,
         harnessRoot,
@@ -433,7 +449,7 @@ describe.sequential("CLI live headless scenarios", () => {
       });
 
       for (const [modelId, scenarioIds] of grouped.entries()) {
-        await withLoadedLiveOllamaModel({ modelId }, async () => {
+        await withLiveRuntimeModel({ runtimeId, modelId }, async () => {
           for (const scenarioId of scenarioIds) {
             console.log(`[cli-live-scenarios] starting ${scenarioId} with ${modelId}`);
             const runningDiagnostic: ScenarioDiagnostic = {
