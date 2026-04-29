@@ -89,6 +89,9 @@ describe('preload bridge', () => {
     const environment = bridge.environment as {
       onModelsChanged: (callback: () => void) => () => void
     }
+    const system = bridge.system as {
+      openEmojiPanel: () => Promise<unknown>
+    }
     const clipboard = bridge.clipboard as {
       writeText: (text: string) => Promise<void>
     }
@@ -105,6 +108,7 @@ describe('preload bridge', () => {
     await browser.takeControl('Need a login step.')
     await browser.releaseControl()
     await browser.close()
+    await system.openEmojiPanel()
     await clipboard.writeText('copied text')
 
     expect(exposeInMainWorld).toHaveBeenCalledWith('gemmaDesktopBridge', expect.anything())
@@ -130,6 +134,7 @@ describe('preload bridge', () => {
     expect(invoke).toHaveBeenCalledWith('browser:take-control', 'Need a login step.')
     expect(invoke).toHaveBeenCalledWith('browser:release-control')
     expect(invoke).toHaveBeenCalledWith('browser:close')
+    expect(invoke).toHaveBeenCalledWith('system:open-emoji-panel')
     expect(clipboardWriteText).toHaveBeenCalledWith('copied text')
 
     const unsubscribeTerminal = terminalDrawer.onStateChanged(() => {})

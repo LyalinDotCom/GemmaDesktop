@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
 
   system: {
     getStats: () => ipcRenderer.invoke('system:stats'),
+    openEmojiPanel: () => ipcRenderer.invoke('system:open-emoji-panel'),
     onStatsUpdate: (callback: (stats: unknown) => void) => {
       const handler = (_: unknown, stats: unknown) => callback(stats)
       ipcRenderer.on('system:stats-update', handler)

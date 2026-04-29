@@ -12,6 +12,7 @@ import {
   PinOff,
   Plus,
   Search,
+  SmilePlus,
   SquareTerminal,
   Sparkles,
   Stethoscope,
@@ -41,6 +42,12 @@ import type {
   SystemStats,
   TerminalAppInfo,
 } from '@/types'
+import { clampToFirstGrapheme } from '@shared/emoji'
+import {
+  DEFAULT_PINNED_AREA_ID,
+  getPinnedAreaDestinations,
+  isDefaultPinnedArea,
+} from '@shared/sidebar'
 
 type SidebarSearchStatus = 'idle' | 'searching' | 'ready' | 'error'
 
@@ -63,8 +70,7 @@ const PINNED_AREA_EMOJIS = [
 ]
 
 function clampPinnedAreaIcon(input: string): string {
-  const [first] = Array.from(input.trim())
-  return first ?? '⭐'
+  return clampToFirstGrapheme(input)
 }
 
 interface SidebarInitialSearchState {
@@ -288,6 +294,7 @@ export function Sidebar({
     initialSearchState?.errorMessage ?? null,
   )
   const renameRef = useRef<HTMLInputElement>(null)
+  const pinnedAreaIconInputRef = useRef<HTMLInputElement>(null)
   const searchTimeoutRef = useRef<number | null>(null)
   const searchRequestRef = useRef(0)
 
@@ -297,6 +304,10 @@ export function Sidebar({
   )
   const pinnedSessionIds = useMemo(
     () => new Set((sidebarState.pinnedAreas ?? []).flatMap((area) => area.sessionIds)),
+    [sidebarState.pinnedAreas],
+  )
+  const pinnedAreaDestinations = useMemo(
+    () => getPinnedAreaDestinations(sidebarState.pinnedAreas ?? []),
     [sidebarState.pinnedAreas],
   )
   const followUpSessionIds = useMemo(
@@ -468,6 +479,18 @@ export function Sidebar({
     )
   }, [pinnedAreaIconSearch])
 
+  const updatePinnedAreaIconDraft = (value: string) => {
+    setPinnedAreaIcon(clampPinnedAreaIcon(value))
+  }
+
+  const openSystemEmojiPanel = () => {
+    pinnedAreaIconInputRef.current?.focus()
+    pinnedAreaIconInputRef.current?.select()
+    void window.gemmaDesktopBridge.system.openEmojiPanel().catch((error) => {
+      console.error('Failed to open emoji picker:', error)
+    })
+  }
+
   const openCreatePinnedAreaDialog = (sessionId: string | null = null) => {
     setPinnedAreaDialog({ mode: 'create', sessionId })
     setPinnedAreaIcon('⭐')
@@ -478,7 +501,7 @@ export function Sidebar({
 
   const openEditPinnedAreaDialog = (areaId: string, icon: string) => {
     setPinnedAreaDialog({ mode: 'edit', areaId })
-    setPinnedAreaIcon(icon)
+    setPinnedAreaIcon(clampPinnedAreaIcon(icon))
     setPinnedAreaIconSearch('')
     setPinAreaMenu(null)
     setContextMenu(null)
@@ -491,8 +514,11 @@ export function Sidebar({
   }
 
   const requestPinSession = (sessionId: string, x: number, y: number) => {
-    if ((sidebarState.pinnedAreas ?? []).length === 0) {
-      openCreatePinnedAreaDialog(sessionId)
+    if (pinnedAreaDestinations.length <= 1) {
+      pinSessionToArea(
+        sessionId,
+        pinnedAreaDestinations[0]?.id ?? DEFAULT_PINNED_AREA_ID,
+      )
       return
     }
     setPinAreaMenu({ sessionId, x, y })
@@ -1084,8 +1110,15 @@ export function Sidebar({
         <div className="space-y-2">
           {sidebarModel.pinnedAreas.map((area, index) => {
             const ChevronIcon = area.collapsed ? ChevronRight : ChevronDown
-            const canMoveUp = index > 0
-            const canMoveDown = index < sidebarModel.pinnedAreas.length - 1
+            const defaultArea = isDefaultPinnedArea(area.id)
+            const previousArea = sidebarModel.pinnedAreas[index - 1]
+            const canMoveUp =
+              !defaultArea
+              && index > 0
+              && !isDefaultPinnedArea(previousArea?.id ?? '')
+            const canMoveDown =
+              !defaultArea
+              && index < sidebarModel.pinnedAreas.length - 1
 
             return (
               <div
@@ -1102,49 +1135,62 @@ export function Sidebar({
                   >
                     <ChevronIcon size={13} />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openEditPinnedAreaDialog(area.id, area.icon)}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-base transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
-                    title="Change pinned area icon"
-                    aria-label="Change pinned area icon"
-                  >
-                    {area.icon}
-                  </button>
+                  {defaultArea ? (
+                    <span
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-base"
+                      title="Default pinned area"
+                      role="img"
+                      aria-label="Default pinned area"
+                    >
+                      {area.icon}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openEditPinnedAreaDialog(area.id, area.icon)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-base transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Change pinned area icon"
+                      aria-label="Change pinned area icon"
+                    >
+                      {area.icon}
+                    </button>
+                  )}
                   <span className="min-w-0 flex-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
                     {area.sessions.length}
                   </span>
-                  <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/area:opacity-100 group-focus-within/area:opacity-100">
-                    <button
-                      type="button"
-                      onClick={() => onMovePinnedArea(area.id, 'up')}
-                      disabled={!canMoveUp}
-                      className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                      title="Move pinned area up"
-                      aria-label="Move pinned area up"
-                    >
-                      <ChevronDown size={12} className="rotate-180" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onMovePinnedArea(area.id, 'down')}
-                      disabled={!canMoveDown}
-                      className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                      title="Move pinned area down"
-                      aria-label="Move pinned area down"
-                    >
-                      <ChevronDown size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeletePinnedAreaId(area.id)}
-                      className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-300"
-                      title="Delete pinned area"
-                      aria-label="Delete pinned area"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
+                  {!defaultArea && (
+                    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/area:opacity-100 group-focus-within/area:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => onMovePinnedArea(area.id, 'up')}
+                        disabled={!canMoveUp}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        title="Move pinned area up"
+                        aria-label="Move pinned area up"
+                      >
+                        <ChevronDown size={12} className="rotate-180" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onMovePinnedArea(area.id, 'down')}
+                        disabled={!canMoveDown}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        title="Move pinned area down"
+                        aria-label="Move pinned area down"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePinnedAreaId(area.id)}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                        title="Delete pinned area"
+                        aria-label="Delete pinned area"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {!area.collapsed && (
                   <div className="mt-0.5 space-y-0.5">
@@ -1892,7 +1938,7 @@ export function Sidebar({
           aria-label="Pin conversation to area"
           onClick={(event) => event.stopPropagation()}
         >
-          {(sidebarState.pinnedAreas ?? []).map((area) => (
+          {pinnedAreaDestinations.map((area) => (
             <button
               key={area.id}
               type="button"
@@ -1901,7 +1947,9 @@ export function Sidebar({
               role="menuitem"
             >
               <span className="w-5 text-center leading-none">{area.icon}</span>
-              <span className="flex-1">Pin here</span>
+              <span className="flex-1">
+                {isDefaultPinnedArea(area.id) ? 'Default' : 'Pin here'}
+              </span>
             </button>
           ))}
           <button
@@ -1923,18 +1971,41 @@ export function Sidebar({
               {pinnedAreaDialog.mode === 'create' ? 'Create pinned area' : 'Change pinned area icon'}
             </h3>
             <div className="mt-4">
-              <label htmlFor="pinned-area-icon-search" className="sr-only">
-                Search icons
-              </label>
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
-                <span className="text-lg leading-none">{pinnedAreaIcon}</span>
+              <div className="flex items-center gap-2">
+                <label htmlFor="pinned-area-icon-value" className="sr-only">
+                  Pinned area icon
+                </label>
                 <input
-                  id="pinned-area-icon-search"
-                  value={pinnedAreaIconSearch}
-                  onChange={(event) => setPinnedAreaIconSearch(event.target.value)}
-                  placeholder="Search icons"
-                  className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  ref={pinnedAreaIconInputRef}
+                  id="pinned-area-icon-value"
+                  value={pinnedAreaIcon}
+                  onChange={(event) => updatePinnedAreaIconDraft(event.target.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="h-10 w-12 rounded-lg border border-zinc-200 bg-zinc-50 text-center text-xl leading-none text-zinc-900 outline-none focus:border-sky-300 focus:ring-1 focus:ring-sky-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-sky-500/60 dark:focus:ring-sky-500/30"
+                  aria-label="Pinned area icon"
                 />
+                <button
+                  type="button"
+                  onClick={openSystemEmojiPanel}
+                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:border-sky-500/35 dark:hover:bg-sky-500/15 dark:hover:text-sky-300"
+                  title="Open macOS emoji picker"
+                  aria-label="Open macOS emoji picker"
+                >
+                  <SmilePlus size={16} />
+                </button>
+                <label htmlFor="pinned-area-icon-search" className="sr-only">
+                  Search quick picks
+                </label>
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                  <Search size={14} className="flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+                  <input
+                    id="pinned-area-icon-search"
+                    value={pinnedAreaIconSearch}
+                    onChange={(event) => setPinnedAreaIconSearch(event.target.value)}
+                    placeholder="Search quick picks"
+                    className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  />
+                </div>
               </div>
               <div className="mt-3 grid grid-cols-8 gap-1">
                 {filteredPinnedAreaEmojis.map((entry) => (

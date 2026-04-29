@@ -6,7 +6,12 @@ import {
   SidebarStateStore,
   normalizeStoredSidebarProjectPath,
 } from '../src/main/sidebarState'
-import type { SidebarSessionReference } from '../src/shared/sidebar'
+import {
+  DEFAULT_PINNED_AREA_ICON,
+  DEFAULT_PINNED_AREA_ID,
+  getPinnedAreaDestinations,
+  type SidebarSessionReference,
+} from '../src/shared/sidebar'
 
 describe('sidebar state store', () => {
   let tempDir = ''
@@ -75,6 +80,56 @@ describe('sidebar state store', () => {
     ])
   })
 
+  it('pins directly into the generic default area when requested', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    const result = await store.pinSession('session-a', DEFAULT_PINNED_AREA_ID, refs)
+
+    expect(result.state.pinnedAreas?.map((area) => ({
+      id: area.id,
+      icon: area.icon,
+      sessionIds: area.sessionIds,
+    }))).toEqual([
+      {
+        id: DEFAULT_PINNED_AREA_ID,
+        icon: DEFAULT_PINNED_AREA_ICON,
+        sessionIds: ['session-a'],
+      },
+    ])
+  })
+
+  it('uses a synthetic generic destination until the default area is persisted', () => {
+    expect(getPinnedAreaDestinations([]).map((area) => area.id)).toEqual([
+      DEFAULT_PINNED_AREA_ID,
+    ])
+    expect(getPinnedAreaDestinations([
+      {
+        id: 'custom-area',
+        icon: '🚀',
+        collapsed: false,
+        sessionIds: [],
+      },
+    ]).map((area) => area.id)).toEqual([
+      DEFAULT_PINNED_AREA_ID,
+      'custom-area',
+    ])
+  })
+
+  it('keeps the generic default area stable', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', DEFAULT_PINNED_AREA_ID, refs)
+    const updated = await store.updatePinnedAreaIcon(DEFAULT_PINNED_AREA_ID, '🔥', refs)
+    const deleted = await store.deletePinnedArea(DEFAULT_PINNED_AREA_ID, refs)
+
+    expect(updated.state.pinnedAreas?.[0]?.icon).toBe(DEFAULT_PINNED_AREA_ICON)
+    expect(deleted.state.pinnedAreas?.[0]?.id).toBe(DEFAULT_PINNED_AREA_ID)
+  })
+
   it('persists reordered pinned areas and icon changes across store reloads', async () => {
     const { refs } = buildSessionRefs()
     const store = new SidebarStateStore(sidebarStatePath)
@@ -98,6 +153,23 @@ describe('sidebar state store', () => {
     const reloaded = new SidebarStateStore(sidebarStatePath)
     const reloadedState = await reloaded.init(refs)
     expect(reloadedState.state.pinnedAreas?.map((area) => area.icon)).toEqual(['🧪', '🔥'])
+  })
+
+  it('preserves compound emoji graphemes for pinned area icons', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    const created = await store.createPinnedArea('👩🏽‍💻 research', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    expect(created.state.pinnedAreas?.[0]?.icon).toBe('👩🏽‍💻')
+
+    const updated = await store.updatePinnedAreaIcon(areaId, '🏳️‍🌈 release', refs)
+    expect(updated.state.pinnedAreas?.[0]?.icon).toBe('🏳️‍🌈')
+
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.pinnedAreas?.[0]?.icon).toBe('🏳️‍🌈')
   })
 
   it('prunes deleted pinned sessions from pinned areas after session cleanup', async () => {

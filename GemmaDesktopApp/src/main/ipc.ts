@@ -16917,6 +16917,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('system:stats', () => getSystemStats())
 
+  ipcMain.handle('system:open-emoji-panel', () => {
+    app.showEmojiPanel()
+    return { ok: true }
+  })
+
   ipcMain.handle('system:model-token-usage', () => getModelTokenUsageReport())
 
   setInterval(() => {

@@ -3,13 +3,16 @@ import fsSync from 'fs'
 import path from 'path'
 import {
   cloneSidebarState,
+  createDefaultPinnedArea,
   dedupePreserveOrder,
   EMPTY_SIDEBAR_STATE,
+  isDefaultPinnedArea,
   normalizeSidebarProjectPath,
   sanitizeSidebarState,
   type SidebarSessionReference,
   type SidebarState,
 } from '../shared/sidebar'
+import { clampToFirstGrapheme } from '../shared/emoji'
 
 export interface SidebarStateUpdateResult {
   state: SidebarState
@@ -26,9 +29,7 @@ export function normalizeStoredSidebarProjectPath(targetPath: string): string {
 }
 
 function normalizePinnedAreaIcon(icon: string): string {
-  const trimmed = icon.trim()
-  const [first] = Array.from(trimmed)
-  return first ?? '⭐'
+  return clampToFirstGrapheme(icon)
 }
 
 function orderRecordsEqual(
@@ -120,10 +121,19 @@ export class SidebarStateStore {
   ): Promise<SidebarStateUpdateResult> {
     const validSessionIds = new Set(sessionRefs.map((session) => session.id))
     const nextState = this.pruneState(this.state, sessionRefs)
-    const pinnedAreas = nextState.pinnedAreas ?? []
-    const targetArea = pinnedAreas.find((area) => area.id === areaId)
+    if (!validSessionIds.has(sessionId)) {
+      return await this.commit(nextState)
+    }
 
-    if (!validSessionIds.has(sessionId) || !targetArea) {
+    let pinnedAreas = nextState.pinnedAreas ?? []
+    if (
+      isDefaultPinnedArea(areaId)
+      && !pinnedAreas.some((area) => isDefaultPinnedArea(area.id))
+    ) {
+      pinnedAreas = [createDefaultPinnedArea(), ...pinnedAreas]
+    }
+    const targetArea = pinnedAreas.find((area) => area.id === areaId)
+    if (!targetArea) {
       return await this.commit(nextState)
     }
 
@@ -247,6 +257,10 @@ export class SidebarStateStore {
     sessionRefs: SidebarSessionReference[],
   ): Promise<SidebarStateUpdateResult> {
     const nextState = this.pruneState(this.state, sessionRefs)
+    if (isDefaultPinnedArea(areaId)) {
+      return await this.commit(nextState)
+    }
+
     return await this.commit({
       ...nextState,
       pinnedAreas: (nextState.pinnedAreas ?? []).filter((area) => area.id !== areaId),
@@ -259,6 +273,10 @@ export class SidebarStateStore {
     sessionRefs: SidebarSessionReference[],
   ): Promise<SidebarStateUpdateResult> {
     const nextState = this.pruneState(this.state, sessionRefs)
+    if (isDefaultPinnedArea(areaId)) {
+      return await this.commit(nextState)
+    }
+
     return await this.commit({
       ...nextState,
       pinnedAreas: (nextState.pinnedAreas ?? []).map((area) =>
@@ -291,12 +309,17 @@ export class SidebarStateStore {
     const nextState = this.pruneState(this.state, sessionRefs)
     const currentPinnedAreas = nextState.pinnedAreas ?? []
     const index = currentPinnedAreas.findIndex((area) => area.id === areaId)
-    if (index === -1) {
+    if (index === -1 || isDefaultPinnedArea(areaId)) {
       return await this.commit(nextState)
     }
 
     const toIndex = direction === 'up' ? index - 1 : index + 1
-    if (toIndex < 0 || toIndex >= currentPinnedAreas.length) {
+    const targetArea = currentPinnedAreas[toIndex]
+    if (
+      toIndex < 0
+      || toIndex >= currentPinnedAreas.length
+      || (targetArea && isDefaultPinnedArea(targetArea.id))
+    ) {
       return await this.commit(nextState)
     }
 

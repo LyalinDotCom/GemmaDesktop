@@ -1,9 +1,14 @@
+import { clampToFirstGrapheme } from './emoji'
+
 export interface PinnedArea {
   id: string
   icon: string
   collapsed: boolean
   sessionIds: string[]
 }
+
+export const DEFAULT_PINNED_AREA_ID = 'pinned-area-default'
+export const DEFAULT_PINNED_AREA_ICON = '📌'
 
 export interface SidebarState {
   pinnedSessionIds: string[]
@@ -30,6 +35,38 @@ export const EMPTY_SIDEBAR_STATE: SidebarState = {
   sessionOrderOverrides: {},
   projectOrderOverrides: {},
   lastActiveSessionId: null,
+}
+
+export function isDefaultPinnedArea(areaId: string): boolean {
+  return areaId === DEFAULT_PINNED_AREA_ID
+}
+
+export function createDefaultPinnedArea(
+  sessionIds: readonly string[] = [],
+): PinnedArea {
+  return {
+    id: DEFAULT_PINNED_AREA_ID,
+    icon: DEFAULT_PINNED_AREA_ICON,
+    collapsed: false,
+    sessionIds: [...sessionIds],
+  }
+}
+
+export function getPinnedAreaDestinations(
+  pinnedAreas: readonly PinnedArea[],
+): PinnedArea[] {
+  if (pinnedAreas.length === 0) {
+    return [createDefaultPinnedArea()]
+  }
+
+  if (pinnedAreas.some((area) => isDefaultPinnedArea(area.id))) {
+    return [...pinnedAreas]
+  }
+
+  return [
+    createDefaultPinnedArea(),
+    ...pinnedAreas,
+  ]
 }
 
 export function normalizeSidebarProjectPath(targetPath: string): string {
@@ -77,17 +114,7 @@ export function cloneSidebarState(state: SidebarState): SidebarState {
 }
 
 function sanitizeEmojiIcon(input: unknown): string {
-  if (typeof input !== 'string') {
-    return '⭐'
-  }
-
-  const trimmed = input.trim()
-  if (!trimmed) {
-    return '⭐'
-  }
-
-  const [first] = Array.from(trimmed)
-  return first ?? '⭐'
+  return clampToFirstGrapheme(input)
 }
 
 function sanitizePinnedAreas(input: unknown): PinnedArea[] {
@@ -119,7 +146,9 @@ function sanitizePinnedAreas(input: unknown): PinnedArea[] {
     seenAreaIds.add(id)
     areas.push({
       id,
-      icon: sanitizeEmojiIcon(record['icon']),
+      icon: isDefaultPinnedArea(id)
+        ? DEFAULT_PINNED_AREA_ICON
+        : sanitizeEmojiIcon(record['icon']),
       collapsed: record['collapsed'] === true,
       sessionIds: dedupePreserveOrder(rawSessionIds),
     })

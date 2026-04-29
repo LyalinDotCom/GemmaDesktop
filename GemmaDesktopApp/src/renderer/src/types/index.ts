@@ -1027,6 +1027,7 @@ export interface GemmaDesktopBridge {
   }
   system: {
     getStats(): Promise<SystemStats>
+    openEmojiPanel(): Promise<{ ok: true }>
     onStatsUpdate(callback: (stats: SystemStats) => void): () => void
     getModelTokenUsage(): Promise<ModelTokenUsageReport>
     onModelTokenUsageUpdate(
