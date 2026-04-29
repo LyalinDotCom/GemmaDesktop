@@ -2,6 +2,12 @@ const RAW_CHANNEL_PAIR_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>\s*(?:thought|assistant|analysis|commentary|final)?\s*<channel\|[^>\r\n]*>/gi
 const RAW_CHANNEL_MARKER_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>|<channel\|[^>\r\n]*>/g
+const RAW_XML_THOUGHT_COMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*?<\/thought\s*>(?:[ \t]*\r?\n)?/gi
+const RAW_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*$/gi
+const RAW_XML_THOUGHT_CLOSE_PATTERN =
+  /(^|\r?\n)[ \t]*<\/thought\s*>[ \t]*/gi
 const CHANNEL_LABEL_ONLY_PATTERN =
   /^\s*(?:thought|assistant|analysis|commentary|final)\s*$/i
 const LEADING_CHANNEL_LABEL_PATTERN =
@@ -38,7 +44,18 @@ export function stripAssistantTransportArtifacts(text: string): string {
     (match, offset: number, source: string) =>
       isInlineCodeWrapped(source, offset, match.length) ? match : '',
   )
-  const withoutLeadingLabel = withoutMarkers.replace(LEADING_CHANNEL_LABEL_PATTERN, '')
+  let sawIncompleteXmlThought = false
+  const withoutXmlThoughtBlocks = withoutMarkers
+    .replace(RAW_XML_THOUGHT_COMPLETE_BLOCK_PATTERN, (_match, prefix: string) => prefix)
+    .replace(RAW_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN, () => {
+      sawIncompleteXmlThought = true
+      return ''
+    })
+    .replace(RAW_XML_THOUGHT_CLOSE_PATTERN, (_match, prefix: string) => prefix)
+  const withoutIncompleteThoughtTrailingWhitespace = sawIncompleteXmlThought
+    ? withoutXmlThoughtBlocks.replace(/[ \t]*(?:\r?\n)+$/g, '')
+    : withoutXmlThoughtBlocks
+  const withoutLeadingLabel = withoutIncompleteThoughtTrailingWhitespace.replace(LEADING_CHANNEL_LABEL_PATTERN, '')
   const trimmed = withoutLeadingLabel.trim()
 
   if (CHANNEL_LABEL_ONLY_PATTERN.test(trimmed)) {

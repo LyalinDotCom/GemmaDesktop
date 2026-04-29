@@ -203,6 +203,7 @@ export interface SessionMessage {
   name?: string;
   toolCallId?: string;
   toolCalls?: ModelToolCall[];
+  reasoning?: string;
   metadata?: Record<string, unknown>;
 }
 

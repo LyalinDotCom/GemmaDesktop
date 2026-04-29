@@ -36,6 +36,12 @@ const LMSTUDIO_TRANSPORT_CHANNEL_PAIR_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>\s*(?:thought|assistant|analysis|commentary|final)?\s*<channel\|[^>\r\n]*>/gi;
 const LMSTUDIO_TRANSPORT_CHANNEL_MARKER_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>|<channel\|[^>\r\n]*>/gi;
+const LMSTUDIO_XML_THOUGHT_COMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*?<\/thought\s*>(?:[ \t]*\r?\n)?/gi;
+const LMSTUDIO_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*$/gi;
+const LMSTUDIO_XML_THOUGHT_CLOSE_PATTERN =
+  /(^|\r?\n)[ \t]*<\/thought\s*>[ \t]*/gi;
 const LMSTUDIO_CHANNEL_LABEL_ONLY_PATTERN =
   /^\s*(?:thought|assistant|analysis|commentary|final)\s*$/i;
 const LMSTUDIO_LEADING_CHANNEL_LABEL_PATTERN =
@@ -449,13 +455,13 @@ function parseNativeOutput(output: unknown): Pick<ChatResponse, "text" | "conten
     return { text: "", content: [], toolCalls: [] };
   }
 
-  let text = "";
+  let rawText = "";
   let reasoning = "";
   const toolCalls: ChatResponse["toolCalls"] = [];
 
   for (const value of output as Array<Record<string, unknown>>) {
     if (value.type === "message" && typeof value.content === "string") {
-      text += value.content;
+      rawText += value.content;
     }
     if (value.type === "reasoning" && typeof value.content === "string") {
       reasoning += value.content;
@@ -468,6 +474,8 @@ function parseNativeOutput(output: unknown): Pick<ChatResponse, "text" | "conten
       });
     }
   }
+
+  const text = sanitizeLmStudioOpenAIText(rawText);
 
   return {
     text,
@@ -484,7 +492,18 @@ function sanitizeLmStudioOpenAIText(text: string): string {
 
   const withoutWrappedArtifacts = text.replace(LMSTUDIO_TRANSPORT_CHANNEL_PAIR_PATTERN, "");
   const withoutMarkers = withoutWrappedArtifacts.replace(LMSTUDIO_TRANSPORT_CHANNEL_MARKER_PATTERN, "");
-  const withoutLeadingLabel = withoutMarkers.replace(LMSTUDIO_LEADING_CHANNEL_LABEL_PATTERN, "");
+  let sawIncompleteXmlThought = false;
+  const withoutXmlThoughtBlocks = withoutMarkers
+    .replace(LMSTUDIO_XML_THOUGHT_COMPLETE_BLOCK_PATTERN, (_match, prefix: string) => prefix)
+    .replace(LMSTUDIO_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN, () => {
+      sawIncompleteXmlThought = true;
+      return "";
+    })
+    .replace(LMSTUDIO_XML_THOUGHT_CLOSE_PATTERN, (_match, prefix: string) => prefix);
+  const withoutIncompleteThoughtTrailingWhitespace = sawIncompleteXmlThought
+    ? withoutXmlThoughtBlocks.replace(/[ \t]*(?:\r?\n)+$/g, "")
+    : withoutXmlThoughtBlocks;
+  const withoutLeadingLabel = withoutIncompleteThoughtTrailingWhitespace.replace(LMSTUDIO_LEADING_CHANNEL_LABEL_PATTERN, "");
 
   if (LMSTUDIO_CHANNEL_LABEL_ONLY_PATTERN.test(withoutLeadingLabel.trim())) {
     return "";
@@ -700,6 +719,8 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
         status: response.status,
         headers: headersToObject(response.headers),
       });
+      let rawMessageText = "";
+      let emittedMessageText = "";
       for await (const message of parseSse(response.body, request.signal)) {
         request.debug?.({
           stage: "stream",
@@ -717,7 +738,15 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
             break;
           case "message.delta":
             if (typeof data.content === "string") {
-              yield { type: "text.delta" as const, delta: data.content };
+              rawMessageText += data.content;
+              const sanitizedText = sanitizeLmStudioOpenAIText(rawMessageText);
+              if (sanitizedText.startsWith(emittedMessageText)) {
+                const delta = sanitizedText.slice(emittedMessageText.length);
+                emittedMessageText = sanitizedText;
+                if (delta.length > 0) {
+                  yield { type: "text.delta" as const, delta };
+                }
+              }
             }
             break;
           case "reasoning.delta":

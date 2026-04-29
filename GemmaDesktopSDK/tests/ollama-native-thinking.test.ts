@@ -398,6 +398,102 @@ describe("Ollama native thinking", () => {
     ]);
   });
 
+  it("strips leaked XML-style thought tags from non-streaming native chat responses", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          json: {
+            model: "gemma4:26b",
+            message: {
+              role: "assistant",
+              content: "First, I'll create the directory.\n\n<thought I'll use exec_command to create the folder.",
+            },
+            done: true,
+            done_reason: "stop",
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    const response = await adapter.generate({
+      model: "gemma4:26b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Create a project." }], createdAt: new Date().toISOString() }],
+    });
+
+    expect(response.text).toBe("First, I'll create the directory.");
+    expect(response.content).toEqual([{ type: "text", text: "First, I'll create the directory." }]);
+  });
+
+  it("withholds streamed XML-style thought leakage while preserving later visible text", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          text: [
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "First, I'll create the directory.",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "\n\n<thought I'll use exec_command to create the folder.",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+                content: "\n</thought>\nDone.",
+              },
+              done: false,
+            }),
+            JSON.stringify({
+              model: "gemma4:26b",
+              message: {
+                role: "assistant",
+              },
+              done: true,
+              done_reason: "stop",
+            }),
+          ].join("\n"),
+          headers: {
+            "content-type": "application/x-ndjson",
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    const events = [];
+
+    for await (const event of adapter.stream({
+      model: "gemma4:26b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Create a project." }], createdAt: new Date().toISOString() }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([
+      { type: "text.delta", delta: "First, I'll create the directory." },
+      { type: "text.delta", delta: "\n\nDone." },
+    ]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("First, I'll create the directory.\n\nDone.");
+  });
+
   it("does not misclassify ordinary prose as an inline tool call", async () => {
     const server = await createMockServer((request) => {
       if (request.path === "/api/chat") {

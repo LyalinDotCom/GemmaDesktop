@@ -70,10 +70,12 @@ function createToolCallResponse(input: {
   text: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  reasoning?: string;
 }): ChatResponse {
   return {
     text: input.text,
     content: [{ type: "text", text: input.text }],
+    reasoning: input.reasoning,
     toolCalls: [
       {
         id: `call_${input.toolName}`,
@@ -173,6 +175,76 @@ describe("tool failure recovery", () => {
     )).toBeDefined();
   });
 
+  it("preserves assistant reasoning on tool-call history during the same tool loop", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will inspect the file.",
+        reasoning: "I need the file contents before I can answer.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createTextResponse("The file is a package manifest."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute() {
+        return {
+          output: "{\"name\":\"example\"}",
+        };
+      },
+    });
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "gemma4:31b",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 4,
+    });
+
+    const result = await engine.run("What kind of file is package.json?");
+
+    expect(result.text).toContain("package manifest");
+    expect(adapter.requests).toHaveLength(2);
+
+    const assistantToolMessage = adapter.requests[1]?.messages.find(
+      (message) =>
+        message.role === "assistant"
+        && Array.isArray(message.toolCalls)
+        && message.toolCalls.length === 1,
+    );
+    expect(assistantToolMessage?.reasoning).toBe(
+      "I need the file contents before I can answer.",
+    );
+    expect(contentPartsToText(assistantToolMessage?.content ?? [])).toBe("");
+
+    const persistedAssistantToolMessage = engine.snapshot().history.find(
+      (message) =>
+        message.role === "assistant"
+        && Array.isArray(message.toolCalls)
+        && message.toolCalls.length === 1,
+    );
+    expect(persistedAssistantToolMessage?.reasoning).toBe(
+      "I need the file contents before I can answer.",
+    );
+  });
+
   it("forces a no-tool recovery step after repeated same-pattern tool failures", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({
@@ -258,6 +330,79 @@ describe("tool failure recovery", () => {
     );
     expect(result.warnings.some((warning) =>
       warning.includes("failed with the same pattern 3 times")
+    )).toBe(true);
+  });
+
+  it("forces a no-tool recovery step after repeated identical tool calls", async () => {
+    const repeatedRead = {
+      path: "package.json",
+    };
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will read the file.",
+        toolName: "read_file",
+        toolInput: repeatedRead,
+      }),
+      createToolCallResponse({
+        text: "I will read it again.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will read it once more.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createTextResponse(
+        "The same read_file call repeated without new information, so I am stopping the loop and using the existing package.json evidence.",
+      ),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute() {
+        return {
+          output: "{\"name\":\"example\"}",
+        };
+      },
+    });
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 6,
+    });
+
+    const result = await engine.run("Inspect package.json.");
+
+    expect(result.text).toContain("stopping the loop");
+    expect(result.toolResults).toHaveLength(2);
+    expect(adapter.requests).toHaveLength(4);
+    expect(adapter.requests[3]?.tools).toEqual([]);
+    expect(collectSystemText(adapter.requests[3]?.messages ?? [])).toContain(
+      "A tool call has repeated unchanged in this turn.",
+    );
+    expect(result.warnings.some((warning) =>
+      warning.includes("repeated the same input 3 times")
     )).toBe(true);
   });
 

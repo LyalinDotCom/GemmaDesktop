@@ -228,6 +228,9 @@ async function toNativeMessages(messages: ChatRequest["messages"]): Promise<Arra
           arguments: toolCall.input,
         },
       }));
+      if (message.role === "assistant" && message.reasoning?.trim()) {
+        nativeMessage.thinking = message.reasoning;
+      }
     }
 
     if (message.role === "tool" && message.name) {
@@ -325,6 +328,12 @@ const GEMMA_RAW_TOOL_CONTROL_TOKEN_PATTERN =
   /<\|tool_call\|?>|<tool_call\|>|<\|tool_response\|?>|<tool_response\|>/gi;
 const GEMMA_RAW_THOUGHT_CHANNEL_PATTERN = /<\|channel>thought\s*[\s\S]*?<channel\|>/gi;
 const GEMMA_INCOMPLETE_RAW_THOUGHT_CHANNEL_PATTERN = /<\|channel>thought\s*[\s\S]*$/gi;
+const GEMMA_RAW_XML_THOUGHT_COMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*?<\/thought\s*>(?:[ \t]*\r?\n)?/gi;
+const GEMMA_RAW_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN =
+  /(^|\r?\n)[ \t]*<thought\b[\s\S]*$/gi;
+const GEMMA_RAW_XML_THOUGHT_CLOSE_PATTERN =
+  /(^|\r?\n)[ \t]*<\/thought\s*>[ \t]*/gi;
 const GEMMA_POTENTIAL_INLINE_TOOL_PATTERN =
   /<\|tool_call\|?>|<tool_call\|>|<\|tool_response\|?>|\bcall:[a-z0-9_.:-]+\s*(?:[{(]|$)/i;
 
@@ -355,9 +364,19 @@ function replaceGemmaDelimitedStrings(raw: string): string {
 }
 
 function stripGemmaRawThoughtChannels(text: string): string {
-  return text
+  let sawIncompleteXmlThought = false;
+  const withoutThoughtArtifacts = text
     .replace(GEMMA_RAW_THOUGHT_CHANNEL_PATTERN, "")
-    .replace(GEMMA_INCOMPLETE_RAW_THOUGHT_CHANNEL_PATTERN, "");
+    .replace(GEMMA_INCOMPLETE_RAW_THOUGHT_CHANNEL_PATTERN, "")
+    .replace(GEMMA_RAW_XML_THOUGHT_COMPLETE_BLOCK_PATTERN, (_match, prefix: string) => prefix)
+    .replace(GEMMA_RAW_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN, () => {
+      sawIncompleteXmlThought = true;
+      return "";
+    })
+    .replace(GEMMA_RAW_XML_THOUGHT_CLOSE_PATTERN, (_match, prefix: string) => prefix);
+  return sawIncompleteXmlThought
+    ? withoutThoughtArtifacts.replace(/[ \t]*(?:\r?\n)+$/g, "")
+    : withoutThoughtArtifacts;
 }
 
 function cleanInlineToolTextFragment(text: string): string {
@@ -366,7 +385,11 @@ function cleanInlineToolTextFragment(text: string): string {
 }
 
 function shouldWithholdInlineToolText(text: string): boolean {
-  return GEMMA_POTENTIAL_INLINE_TOOL_PATTERN.test(text) || /<\|channel>thought/i.test(text);
+  return (
+    GEMMA_POTENTIAL_INLINE_TOOL_PATTERN.test(text)
+    || /<\|channel>thought/i.test(text)
+    || /(^|\r?\n)[ \t]*<thought\b/i.test(text)
+  );
 }
 
 function normalizeInlineToolArguments(raw: string): string {

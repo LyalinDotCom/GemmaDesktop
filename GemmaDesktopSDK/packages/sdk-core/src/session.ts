@@ -742,6 +742,7 @@ const FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION = [
 const MAX_STEP_FINALIZATION_WARNING =
   "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
 const REPEATED_TOOL_FAILURE_THRESHOLD = 3;
+const REPEATED_TOOL_CALL_THRESHOLD = 3;
 
 const TOOL_SURFACE_REGISTRATION_ERROR_PATTERN =
   /^Tool "([^"]+)" is not registered in the active tool surface\.$/;
@@ -781,6 +782,22 @@ function buildRepeatedToolFailureContinuationInstruction(input: {
     `Failure pattern: ${input.failurePreview}.`,
     "Tool access is disabled for this recovery step.",
     "Do not retry the same command, tool call, or a trivial variation.",
+    "Using only the evidence already visible in the session, state the concrete blocker or describe a materially different recovery path in the final answer.",
+  ].join("\n");
+}
+
+function buildRepeatedToolCallContinuationInstruction(input: {
+  toolName: string;
+  inputPreview: string;
+  count: number;
+}): string {
+  return [
+    "A tool call has repeated unchanged in this turn.",
+    `Tool: ${input.toolName}.`,
+    `Repeated call count: ${input.count}.`,
+    `Repeated input: ${input.inputPreview}.`,
+    "Tool access is disabled for this recovery step.",
+    "Do not retry the same tool call or a trivial variation.",
     "Using only the evidence already visible in the session, state the concrete blocker or describe a materially different recovery path in the final answer.",
   ].join("\n");
 }
@@ -1018,6 +1035,32 @@ function buildToolFailureSignature(
       structured?.timedOut === true || metadata?.timedOut === true ? "timed_out" : "",
     ].join("|"),
     preview: meaningfulLine.slice(0, 220),
+  };
+}
+
+function stableSerializeToolInput(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "undefined";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(stableSerializeToolInput).join(",")}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerializeToolInput(entryValue)}`)
+    .join(",")}}`;
+}
+
+function buildToolCallSignature(toolCall: ModelToolCall): { key: string; preview: string } {
+  const serializedInput = stableSerializeToolInput(toolCall.input);
+  return {
+    key: `${toolCall.name}|${serializedInput}`,
+    preview: serializedInput.length > 220
+      ? `${serializedInput.slice(0, 217)}...`
+      : serializedInput,
   };
 }
 
@@ -1762,6 +1805,10 @@ export class SessionEngine {
   }
 
   private appendAssistantResponse(response: ChatResponse): SessionMessage {
+    const toolLoopReasoning =
+      response.toolCalls.length > 0 && response.reasoning?.trim()
+        ? response.reasoning
+        : undefined;
     const message = this.buildMessage(
       "assistant",
       response.toolCalls.length > 0
@@ -1769,6 +1816,7 @@ export class SessionEngine {
         : response.content,
       {
         toolCalls: response.toolCalls.length > 0 ? response.toolCalls : undefined,
+        reasoning: toolLoopReasoning,
       },
     );
     this.history.push(message);
@@ -1929,6 +1977,7 @@ export class SessionEngine {
     let completedFromFinalizationToolResponse = false;
     let nextStepAvailableTools: ToolDefinition[] | undefined;
     const failedToolSignatureCounts = new Map<string, number>();
+    const toolCallSignatureCounts = new Map<string, number>();
     const requiredTools = resolveRequiredTools(this.mode).filter((toolName) =>
       this.availableTools.some((tool) => tool.name === toolName),
     );
@@ -2410,7 +2459,7 @@ export class SessionEngine {
         this.discardAssistantResponse(assistantMessage);
         throw new GemmaDesktopError(
           "tool_execution_failed",
-          "Model attempted another tool call after repeated tool failures disabled tool access for the recovery step.",
+          "Model attempted another tool call after repeated tool activity disabled tool access for the recovery step.",
           {
             details: {
               toolCalls: response.toolCalls,
@@ -2420,6 +2469,48 @@ export class SessionEngine {
       }
 
       continuationAttempts = 0;
+
+      let repeatedToolCall:
+        | { toolName: string; inputPreview: string; count: number }
+        | undefined;
+      for (const toolCall of response.toolCalls) {
+        const signature = buildToolCallSignature(toolCall);
+        const count = (toolCallSignatureCounts.get(signature.key) ?? 0) + 1;
+        toolCallSignatureCounts.set(signature.key, count);
+        if (count >= REPEATED_TOOL_CALL_THRESHOLD && !repeatedToolCall) {
+          repeatedToolCall = {
+            toolName: toolCall.name,
+            inputPreview: signature.preview,
+            count,
+          };
+        }
+      }
+
+      if (repeatedToolCall) {
+        this.discardAssistantResponse(assistantMessage);
+
+        if (step >= maxSteps) {
+          throw new GemmaDesktopError(
+            "tool_execution_failed",
+            `Tool "${repeatedToolCall.toolName}" repeated the same input ${repeatedToolCall.count} times and no steps remain for recovery.`,
+            {
+              details: repeatedToolCall,
+            },
+          );
+        }
+
+        const warning =
+          `Tool "${repeatedToolCall.toolName}" repeated the same input ${repeatedToolCall.count} times. `
+          + "Disabling tools for one recovery step so the assistant must stop the loop and use the existing evidence.";
+        warnings.push(warning);
+        this.emit(queue, turnId, "warning.raised", {
+          step,
+          warning,
+        });
+        continuationInstruction = buildRepeatedToolCallContinuationInstruction(repeatedToolCall);
+        nextStepAvailableTools = [];
+        continue;
+      }
 
       if (!this.tools || this.tools.listTools().length === 0) {
         throw new GemmaDesktopError(

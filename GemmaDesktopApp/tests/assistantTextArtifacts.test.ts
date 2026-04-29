@@ -41,6 +41,19 @@ describe('assistant text artifact sanitization', () => {
     ).toBe('Before  after')
   })
 
+  it('strips leaked XML-style thought blocks from visible text', () => {
+    expect(
+      stripAssistantTransportArtifacts(
+        "First, I'll create the directory.\n\n<thought I'll use exec_command to create the folder.",
+      ),
+    ).toBe("First, I'll create the directory.")
+    expect(
+      stripAssistantTransportArtifacts(
+        'Before\n<thought>private scratch</thought>\nAfter',
+      ),
+    ).toBe('Before\nAfter')
+  })
+
   it('suppresses partial leaked channel labels while a marker is still unfolding', () => {
     expect(stripAssistantTransportArtifacts('<|channel>t')).toBe('')
     expect(stripAssistantTransportArtifacts('<|channel>thou')).toBe('')

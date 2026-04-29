@@ -51,4 +51,42 @@ describe("LM Studio native streaming", () => {
     const completed = events.find((event) => event.type === "response.complete");
     expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("Done.");
   });
+
+  it("sanitizes XML-style thought leakage from native message streams", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/v1/chat") {
+        return {
+          sse: [
+            'event: message.delta\ndata: {"type":"message.delta","content":"First, I will inspect it."}\n\n',
+            'event: message.delta\ndata: {"type":"message.delta","content":"\\n\\n<thought I should use a command."}\n\n',
+            'event: message.delta\ndata: {"type":"message.delta","content":"\\n</thought>\\nDone."}\n\n',
+            'event: chat.end\ndata: {"type":"chat.end","result":{"response_id":"resp_1","output":[{"type":"message","content":"First, I will inspect it.\\n\\n<thought I should use a command.\\n</thought>\\nDone."}]}}\n\n',
+          ],
+        };
+      }
+      if (request.path === "/api/v1/models") {
+        return {
+          json: { models: [] },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioNativeAdapter({ baseUrl: server.url });
+    const events = [];
+    for await (const event of adapter.stream({
+      model: "mock-model",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Inspect it." }], createdAt: new Date().toISOString() }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([
+      { type: "text.delta", delta: "First, I will inspect it." },
+      { type: "text.delta", delta: "\n\nDone." },
+    ]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("First, I will inspect it.\n\nDone.");
+  });
 });

@@ -182,6 +182,7 @@ describe("ollama native debug events", () => {
           id: "msg_2",
           role: "assistant",
           content: [],
+          reasoning: "I should delegate the web lookup.",
           toolCalls: [
             {
               id: "call_1",
@@ -242,6 +243,7 @@ describe("ollama native debug events", () => {
         {
           role: "assistant",
           content: "",
+          thinking: "I should delegate the web lookup.",
           tool_calls: [
             {
               function: {

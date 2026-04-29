@@ -59,6 +59,38 @@ describe("LM Studio OpenAI-compatible output sanitization", () => {
     }]);
   });
 
+  it("strips leaked XML-style thought tags from generate responses", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        return {
+          json: {
+            id: "chatcmpl_mock",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "First, I'll create the directory.\n\n<thought I'll use exec_command to create the folder.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioOpenAICompatibleAdapter({ baseUrl: server.url });
+    const response = await adapter.generate({
+      model: "supergemma4-26b-uncensored-v2",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Build something." }], createdAt: new Date().toISOString() }],
+    });
+
+    expect(response.text).toBe("First, I'll create the directory.");
+    expect(response.content).toEqual([{ type: "text", text: "First, I'll create the directory." }]);
+  });
+
   it("suppresses streamed Gemma transport artifacts but keeps structured tool calls", async () => {
     const server = await createMockServer((request) => {
       if (request.path === "/v1/chat/completions") {
@@ -100,6 +132,41 @@ describe("LM Studio OpenAI-compatible output sanitization", () => {
         content: "hello",
       },
     }]);
+  });
+
+  it("withholds streamed XML-style thought leakage while preserving later visible text", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        return {
+          sse: [
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"First, I'll create the directory.\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\\n<thought I'll use exec_command to create the folder.\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n</thought>\\nDone.\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+          ],
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioOpenAICompatibleAdapter({ baseUrl: server.url });
+    const events = [];
+    for await (const event of adapter.stream({
+      model: "supergemma4-26b-uncensored-v2",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Build something." }], createdAt: new Date().toISOString() }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([
+      { type: "text.delta", delta: "First, I'll create the directory." },
+      { type: "text.delta", delta: "\n\nDone." },
+    ]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("First, I'll create the directory.\n\nDone.");
   });
 
   it("drops malformed empty streamed tool calls when LM Studio also returns a valid tool call", async () => {
