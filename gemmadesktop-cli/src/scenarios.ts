@@ -1,5 +1,7 @@
-import { mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import {
   runShellCommand,
   type GemmaDesktopEvent,
@@ -14,6 +16,8 @@ import {
 import type { CreateSessionOptions } from "@gemma-desktop/sdk-node";
 import type { ScenarioCliOptions } from "./args.js";
 import { buildDesktopParitySessionMetadata } from "./metadata.js";
+
+const execFileAsync = promisify(execFile);
 
 interface WritableTextStream {
   write(chunk: string): unknown;
@@ -109,12 +113,99 @@ const NEWS_COVERAGE_PROMPTS = [
   ].join(" "),
 ] as const;
 
+const REST_IS_HISTORY_LYNDON_PROMPTS = [
+  [
+    "Run this as a headless CLI managed-browser acceptance scenario.",
+    "Use the browser tool for the website interaction; do not solve this with fetch_url, search_web, or web_research_agent.",
+    "Open https://therestishistory.com/ in the browser.",
+    "Navigate to the Episodes tab or Episodes archive from the site UI.",
+    "Find the episode search box, search for \"lyndon\", and return the names and absolute links for all matching episodes visible after the search.",
+    "If the site blocks automation, report that exact blocker instead of substituting generic search results.",
+  ].join(" "),
+] as const;
+
 const GEMMA4_RESEARCH_PROMPTS = [
   [
     "Run a research-style headless check for the latest Gemma 4 model availability details.",
     "Use fetch_url directly on https://ollama.com/library/gemma4 and https://ai.google.dev/gemma/docs. Also use exec_command to inspect local Ollama availability with `ollama list | grep gemma4`.",
     "Find what Gemma 4 versions are available, including 26B and 31B if current sources support them, and summarize model sizes, sources, runtimes, and availability.",
     "Use current web sources and include the URLs you relied on. Distinguish official source information from runtime catalog information such as Ollama availability.",
+  ].join(" "),
+] as const;
+
+const IMAGE_READING_PROMPTS = [
+  (context: ScenarioFixtureContext): SessionInput => [
+    {
+      type: "text",
+      text: [
+        "Run this as a headless CLI multimodal acceptance scenario.",
+        "Read the attached image directly. Return the visible project code, numeric total, and status.",
+        "Do not infer from the file name; answer only from image contents.",
+      ].join(" "),
+    },
+    {
+      type: "image_url",
+      url: path.join(context.artifactDirectory, "gemma-qa-card.png"),
+      mediaType: "image/png",
+    },
+  ],
+] as const;
+
+const AUDIO_HARVARD_PROMPTS = [
+  (context: ScenarioFixtureContext): SessionInput => [
+    {
+      type: "text",
+      text: [
+        "Run this as a headless CLI audio acceptance scenario.",
+        "Transcribe the attached Open Speech Repository Harvard sentence recording.",
+        "Return the words you hear and say that the source is Open Speech Repository.",
+      ].join(" "),
+    },
+    {
+      type: "audio_url",
+      url: path.join(context.artifactDirectory, "OSR_us_000_0010_8k.wav"),
+      mediaType: "audio/wav",
+    },
+  ],
+] as const;
+
+const VIDEO_KEYFRAME_PROMPTS = [
+  (context: ScenarioFixtureContext): SessionInput => [
+    {
+      type: "text",
+      text: [
+        "Run this as a headless CLI video-keyframe acceptance scenario.",
+        `The source video is saved at ${path.join(context.artifactDirectory, "placeholder-640x360.mp4")}.`,
+        "Gemma Desktop-style video handling supplies representative keyframes to vision-capable models.",
+        "Inspect the attached prepared keyframe image and report the visible video dimensions or label.",
+      ].join(" "),
+    },
+    {
+      type: "image_url",
+      url: path.join(context.artifactDirectory, "keyframe-1.png"),
+      mediaType: "image/png",
+    },
+  ],
+] as const;
+
+const ACT_FIX_BROKEN_TESTS_PROMPTS = [
+  [
+    "Run this as a headless CLI ACT repair scenario.",
+    "There is a small npm project in the broken folder with failing tests.",
+    "Fix the implementation without weakening the tests, run npm test inside broken, then call finalize_build immediately.",
+  ].join(" "),
+] as const;
+
+const ACT_MULTILANG_PYTHON_GO_PROMPTS = [
+  [
+    "Run this as a headless CLI multi-language build scenario.",
+    "Build a small project in the polyglot folder using the provided data/sample.txt fixture.",
+    "Create a Python CLI that reads the sample numbers and prints count, sum, and average.",
+    "Create a Go HTTP backend with go.mod and a package main server exposing /health and /summary JSON endpoints using only the standard library.",
+    "Create validate.sh at the polyglot root.",
+    "The validation script must run the Python CLI with python3 and must run go test ./... inside the Go backend when go is installed.",
+    "If go is not installed, validate.sh must statically verify go.mod, main.go, package main, net/http, /health, and /summary, then print that static Go validation passed because the toolchain is unavailable.",
+    "Run sh validate.sh inside polyglot, then call finalize_build immediately.",
   ].join(" "),
 ] as const;
 
@@ -125,12 +216,22 @@ const SCENARIO_SYSTEM_INSTRUCTIONS = [
   "Keep outputs concise but include enough source, command, or artifact detail for an automated validator to verify the run.",
 ].join("\n");
 
+interface ScenarioFixtureContext {
+  command: ScenarioCliOptions;
+  artifactDirectory: string;
+  workingDirectory: string;
+  runtime: ScenarioRuntimeLike;
+}
+
+type ScenarioPrompt = string | ((context: ScenarioFixtureContext) => Promise<SessionInput> | SessionInput);
+
 interface ScenarioDefinition {
   id: ScenarioCliOptions["scenarioId"];
   mode: CreateSessionOptions["mode"];
   artifactDirectoryName: string;
-  prompts: readonly string[];
+  prompts: readonly ScenarioPrompt[];
   kind: string;
+  prepare?(context: ScenarioFixtureContext): Promise<void>;
   evaluator(input: {
     command: ScenarioCliOptions;
     artifactDirectory: string;
@@ -139,13 +240,25 @@ interface ScenarioDefinition {
   }): Promise<ScenarioEvaluation>;
 }
 
+const IMAGE_READING_FIXTURE_URL =
+  "https://placehold.co/900x500/0b1220/ffffff.png?text=GEMMA+QA%0AORION+47%0ATOTAL+128.50%0ASTATUS+READY";
+const AUDIO_HARVARD_FIXTURE_URL =
+  "https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav";
+const VIDEO_PLACEHOLDER_FIXTURE_URL = "https://placeholdervideo.dev/640x360";
+const VIDEO_KEYFRAME_FALLBACK_URL =
+  "https://placehold.co/640x360/18202f/ffffff.png?text=640x360+PLACEHOLDER+VIDEO";
+
 const TEXT_EXTENSIONS = new Set([
   ".css",
   ".html",
+  ".go",
   ".js",
   ".json",
   ".jsx",
+  ".mod",
   ".mjs",
+  ".py",
+  ".sh",
   ".ts",
   ".tsx",
   ".txt",
@@ -161,6 +274,215 @@ function formatError(error: unknown): string {
 
 function hasRequestPreferences(command: ScenarioCliOptions): boolean {
   return Object.keys(command.requestPreferences).length > 0;
+}
+
+function scenarioModeBase(mode: CreateSessionOptions["mode"]): string {
+  return typeof mode === "string" ? mode : mode.base ?? "explore";
+}
+
+function summarizeSessionInput(input: SessionInput): string {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  return input
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+      return `[${part.type}: ${path.basename(part.url)}]`;
+    })
+    .join("\n");
+}
+
+async function resolveScenarioPrompt(
+  prompt: ScenarioPrompt,
+  context: ScenarioFixtureContext,
+): Promise<SessionInput> {
+  return typeof prompt === "function" ? await prompt(context) : prompt;
+}
+
+async function downloadFixtureFile(input: {
+  url: string;
+  outputPath: string;
+  maxBytes: number;
+}): Promise<void> {
+  await mkdir(path.dirname(input.outputPath), { recursive: true });
+  const existing = await stat(input.outputPath).catch(() => undefined);
+  if (existing?.isFile() && existing.size > 0) {
+    return;
+  }
+
+  const response = await fetch(input.url);
+  if (!response.ok) {
+    throw new Error(`Failed to download fixture ${input.url}: HTTP ${response.status}`);
+  }
+
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (contentLength > input.maxBytes) {
+    throw new Error(
+      `Refusing to download fixture ${input.url}: ${contentLength} bytes exceeds ${input.maxBytes}.`,
+    );
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > input.maxBytes) {
+    throw new Error(
+      `Refusing to write fixture ${input.url}: ${buffer.byteLength} bytes exceeds ${input.maxBytes}.`,
+    );
+  }
+
+  await writeFile(input.outputPath, buffer);
+}
+
+async function prepareImageReadingScenario(context: ScenarioFixtureContext): Promise<void> {
+  await downloadFixtureFile({
+    url: IMAGE_READING_FIXTURE_URL,
+    outputPath: path.join(context.artifactDirectory, "gemma-qa-card.png"),
+    maxBytes: 2 * 1024 * 1024,
+  });
+  await writeFile(
+    path.join(context.artifactDirectory, "README.txt"),
+    [
+      "Fixture source: placehold.co generated PNG.",
+      "Expected visible text: GEMMA QA / ORION 47 / TOTAL 128.50 / STATUS READY.",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+async function prepareAudioHarvardScenario(context: ScenarioFixtureContext): Promise<void> {
+  await downloadFixtureFile({
+    url: AUDIO_HARVARD_FIXTURE_URL,
+    outputPath: path.join(context.artifactDirectory, "OSR_us_000_0010_8k.wav"),
+    maxBytes: 20 * 1024 * 1024,
+  });
+  await writeFile(
+    path.join(context.artifactDirectory, "README.txt"),
+    [
+      "Fixture source: Open Speech Repository.",
+      "Expected content class: American English Harvard sentences.",
+      "Reference sentence list includes: The birch canoe slid on the smooth planks.",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+async function extractVideoKeyframe(input: {
+  videoPath: string;
+  outputPath: string;
+}): Promise<boolean> {
+  try {
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-ss",
+      "00:00:01",
+      "-i",
+      input.videoPath,
+      "-frames:v",
+      "1",
+      input.outputPath,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function prepareVideoKeyframeScenario(context: ScenarioFixtureContext): Promise<void> {
+  const videoPath = path.join(context.artifactDirectory, "placeholder-640x360.mp4");
+  const keyframePath = path.join(context.artifactDirectory, "keyframe-1.png");
+  await downloadFixtureFile({
+    url: VIDEO_PLACEHOLDER_FIXTURE_URL,
+    outputPath: videoPath,
+    maxBytes: 20 * 1024 * 1024,
+  });
+
+  const extracted = await extractVideoKeyframe({
+    videoPath,
+    outputPath: keyframePath,
+  });
+  if (!extracted) {
+    await downloadFixtureFile({
+      url: VIDEO_KEYFRAME_FALLBACK_URL,
+      outputPath: keyframePath,
+      maxBytes: 2 * 1024 * 1024,
+    });
+  }
+
+  await writeFile(
+    path.join(context.artifactDirectory, "keyframes-manifest.json"),
+    `${JSON.stringify({
+      sourceVideoUrl: VIDEO_PLACEHOLDER_FIXTURE_URL,
+      sourceVideoPath: videoPath,
+      keyframes: [keyframePath],
+      extraction: extracted ? "ffmpeg" : "fallback-placeholder-image",
+      expectedVisibleText: "640x360",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function prepareFixBrokenTestsScenario(context: ScenarioFixtureContext): Promise<void> {
+  await mkdir(context.artifactDirectory, { recursive: true });
+  await writeFile(
+    path.join(context.artifactDirectory, "package.json"),
+    `${JSON.stringify({
+      name: "gemma-desktop-broken-math-fixture",
+      private: true,
+      type: "module",
+      scripts: {
+        test: "node index.test.mjs",
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(context.artifactDirectory, "index.js"),
+    [
+      "export function add(a, b) {",
+      "  return a - b;",
+      "}",
+      "",
+      "export function formatTotal(value) {",
+      "  return `Total: ${value}`;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(context.artifactDirectory, "index.test.mjs"),
+    [
+      "import { strict as assert } from 'node:assert';",
+      "import { add, formatTotal } from './index.js';",
+      "",
+      "assert.equal(add(2, 3), 5);",
+      "assert.equal(add(-4, 7), 3);",
+      "assert.equal(formatTotal(add(10, 5)), 'Total: 15');",
+      "console.log('broken fixture tests passed');",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+async function prepareMultilangPythonGoScenario(context: ScenarioFixtureContext): Promise<void> {
+  await mkdir(path.join(context.artifactDirectory, "data"), { recursive: true });
+  await writeFile(
+    path.join(context.artifactDirectory, "data", "sample.txt"),
+    ["4", "8", "15", "16", "23", "42", ""].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(context.artifactDirectory, "README.txt"),
+    [
+      "Multi-language fixture.",
+      "Expected Python summary for data/sample.txt: count 6, sum 108, average 18.",
+      "Go toolchain may be unavailable on CI or developer machines; validate.sh should compile/test when available and perform explicit static backend checks otherwise.",
+    ].join("\n"),
+    "utf8",
+  );
 }
 
 function countEvents(events: readonly GemmaDesktopEvent[]): Record<string, number> {
@@ -534,6 +856,36 @@ async function evaluateNewsCoverageScenario(input: {
   };
 }
 
+async function evaluateRestIsHistoryLyndonScenario(input: {
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  await Promise.resolve();
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults);
+  const normalized = normalizeForSearch(haystack);
+  const toolNames = collectToolNames(input.rawResults);
+  const restIsHistoryEpisodeLinks =
+    haystack.match(/https?:\/\/(?:www\.)?therestishistory\.com\/episodes\/[^\s)\]]+/gi) ?? [];
+  const checks = {
+    browserToolUsed: toolNames.has("browser"),
+    siteOpened: /therestishistory\.com/.test(normalized),
+    episodesUiUsed: /\bepisodes?\b/.test(normalized),
+    searchBoxUsed: /\b(search|searched|search\s+box|filled)\b/.test(normalized),
+    lyndonResultsReturned: /\blyndon\b/.test(normalized),
+    episodeLinksReturned: restIsHistoryEpisodeLinks.length >= 1,
+    noToolFailure: input.rawResults.every((result) =>
+      result.toolResults.every((toolResult) => toolResult.metadata?.toolError !== true),
+    ),
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+  };
+}
+
 async function evaluateGemma4ResearchScenario(input: {
   turns: readonly ScenarioTurnRecord[];
   rawResults: readonly TurnResult[];
@@ -566,9 +918,218 @@ async function evaluateGemma4ResearchScenario(input: {
   };
 }
 
+async function evaluateImageReadingScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults);
+  const normalized = normalizeForSearch(haystack);
+  const imageExists = await pathExists(path.join(input.artifactDirectory, "gemma-qa-card.png"));
+  const checks = {
+    imageFixtureExists: imageExists,
+    readsVisibleCode: /orion\s*47|orion-47/.test(normalized),
+    readsVisibleTotal: /128[.\s]*50/.test(normalized),
+    readsVisibleStatus: /status\s+ready|ready/.test(normalized),
+    noToolFailure: input.rawResults.every((result) =>
+      result.toolResults.every((toolResult) => toolResult.metadata?.toolError !== true),
+    ),
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+  };
+}
+
+async function evaluateAudioHarvardScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults);
+  const normalized = normalizeForSearch(haystack);
+  const audioExists = await pathExists(path.join(input.artifactDirectory, "OSR_us_000_0010_8k.wav"));
+  const harvardTerms = [
+    "birch",
+    "canoe",
+    "smooth",
+    "planks",
+    "glue",
+    "sheet",
+    "background",
+    "chicken",
+    "lemons",
+    "punch",
+  ];
+  const matchedTerms = harvardTerms.filter((term) => normalized.includes(term));
+  const checks = {
+    audioFixtureExists: audioExists,
+    sourceCredited: /open\s+speech\s+repository|harvard\s+sentence/.test(normalized),
+    transcribedHarvardWords: matchedTerms.length >= 3,
+    noToolFailure: input.rawResults.every((result) =>
+      result.toolResults.every((toolResult) => toolResult.metadata?.toolError !== true),
+    ),
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+  };
+}
+
+async function evaluateVideoKeyframeScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults);
+  const normalized = normalizeForSearch(haystack);
+  const videoExists = await pathExists(path.join(input.artifactDirectory, "placeholder-640x360.mp4"));
+  const keyframeExists = await pathExists(path.join(input.artifactDirectory, "keyframe-1.png"));
+  const checks = {
+    videoFixtureExists: videoExists,
+    keyframePrepared: keyframeExists,
+    reportsVideoDimensions: /640\s*[x×]\s*360|640\s+by\s+360/.test(normalized),
+    mentionsVideoOrKeyframe: /video|keyframe|frame|placeholder/.test(normalized),
+    noToolFailure: input.rawResults.every((result) =>
+      result.toolResults.every((toolResult) => toolResult.metadata?.toolError !== true),
+    ),
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+  };
+}
+
+async function evaluateFixBrokenTestsScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const packagePath = path.join(input.artifactDirectory, "package.json");
+  const implementationPath = path.join(input.artifactDirectory, "index.js");
+  const testsPath = path.join(input.artifactDirectory, "index.test.mjs");
+  const packageJsonExists = await pathExists(packagePath);
+  const implementationText = await readFile(implementationPath, "utf8").catch(() => "");
+  const testsText = await readFile(testsPath, "utf8").catch(() => "");
+  const projectText = await collectProjectText(input.artifactDirectory, 60_000);
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults, projectText).toLowerCase();
+  const commandText = input.rawResults
+    .map((result) => toolCommandText(result.toolResults))
+    .join("\n");
+  const validationCommand = packageJsonExists
+    ? await runShellCommand("npm test", {
+        cwd: input.artifactDirectory,
+        timeoutMs: 120_000,
+      })
+    : undefined;
+  const checks = {
+    packageJsonExists,
+    implementationFixed:
+      /return\s+a\s*\+\s*b/.test(implementationText)
+      || (!/return\s+a\s*-\s*b/.test(implementationText) && /add\s*\(/.test(implementationText)),
+    testsPreserved:
+      /assert\.equal\(add\(2,\s*3\),\s*5\)/.test(testsText)
+      && /assert\.equal\(add\(-4,\s*7\),\s*3\)/.test(testsText),
+    npmTestRan: /\bnpm\s+test\b/.test(commandText) || /\bnpm\s+test\b/.test(haystack),
+    validationPassed:
+      validationCommand?.exitCode === 0
+      && validationCommand.timedOut === false
+      && /passed/i.test(validationCommand.stdout),
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+    ...(validationCommand
+      ? {
+          validationCommand: {
+            command: validationCommand.command,
+            exitCode: validationCommand.exitCode,
+            timedOut: validationCommand.timedOut,
+            stdout: validationCommand.stdout.slice(0, 4_000),
+            stderr: validationCommand.stderr.slice(0, 4_000),
+          },
+        }
+      : {}),
+  };
+}
+
+async function evaluateMultilangPythonGoScenario(input: {
+  artifactDirectory: string;
+  turns: readonly ScenarioTurnRecord[];
+  rawResults: readonly TurnResult[];
+}): Promise<ScenarioEvaluation> {
+  const validatePath = path.join(input.artifactDirectory, "validate.sh");
+  const projectText = await collectProjectText(input.artifactDirectory, 100_000);
+  const haystack = buildScenarioHaystack(input.turns, input.rawResults, projectText).toLowerCase();
+  const commandText = input.rawResults
+    .map((result) => toolCommandText(result.toolResults))
+    .join("\n");
+  const validationCommand = await pathExists(validatePath)
+    ? await runShellCommand("sh validate.sh", {
+        cwd: input.artifactDirectory,
+        timeoutMs: 120_000,
+      })
+    : undefined;
+  const checks = {
+    pythonSourcePresent:
+      /--- [^\n]+\.py ---/.test(projectText)
+      && /\b(count|sum|average)\b/.test(projectText.toLowerCase()),
+    goBackendPresent:
+      /--- [^\n]+\.go ---/.test(projectText)
+      && /--- [^\n]*go\.mod ---/.test(projectText)
+      && /\bpackage\s+main\b/.test(projectText)
+      && /net\/http/.test(projectText)
+      && /\/health/.test(projectText)
+      && /\/summary/.test(projectText),
+    validationScriptPresent: await pathExists(validatePath),
+    pythonValidationRan:
+      /\bpython3\b/.test(commandText)
+      || /\bpython3\b/.test(haystack)
+      || /\bpython\b/.test(validationCommand?.stdout.toLowerCase() ?? ""),
+    goValidationHandled:
+      /\bgo\s+test\b/.test(commandText)
+      || /\bgo\s+test\b/.test(haystack)
+      || /static go validation passed|go toolchain unavailable/.test(validationCommand?.stdout.toLowerCase() ?? ""),
+    validationPassed:
+      validationCommand?.exitCode === 0
+      && validationCommand.timedOut === false,
+  };
+  const evaluation = evaluateChecks(checks);
+  return {
+    success: evaluation.issues.length === 0,
+    score: evaluation.score,
+    checks,
+    issues: evaluation.issues,
+    ...(validationCommand
+      ? {
+          validationCommand: {
+            command: validationCommand.command,
+            exitCode: validationCommand.exitCode,
+            timedOut: validationCommand.timedOut,
+            stdout: validationCommand.stdout.slice(0, 4_000),
+            stderr: validationCommand.stderr.slice(0, 4_000),
+          },
+        }
+      : {}),
+  };
+}
+
 async function runScenarioTurn(input: {
   session: ScenarioSession;
-  prompt: string;
+  prompt: SessionInput;
+  promptSummary: string;
   index: number;
   command: ScenarioCliOptions;
   buildPolicy?: ScenarioCliOptions["buildPolicy"];
@@ -616,7 +1177,7 @@ async function runScenarioTurn(input: {
       result,
       record: {
         index: input.index,
-        prompt: input.prompt,
+        prompt: input.promptSummary,
         turnId: result.turnId,
         text: result.text,
         steps: result.steps,
@@ -666,6 +1227,18 @@ const SCENARIO_DEFINITIONS: Record<ScenarioCliOptions["scenarioId"], ScenarioDef
     kind: "web-research",
     evaluator: evaluateNewsCoverageScenario,
   },
+  "browser-rest-is-history-lyndon": {
+    id: "browser-rest-is-history-lyndon",
+    mode: {
+      base: "explore",
+      tools: ["browser"],
+      withoutTools: ["fetch_url", "search_web", "web_research_agent"],
+    },
+    artifactDirectoryName: path.join(".gemma-headless", "rest-is-history-lyndon"),
+    prompts: REST_IS_HISTORY_LYNDON_PROMPTS,
+    kind: "browser-navigation",
+    evaluator: evaluateRestIsHistoryLyndonScenario,
+  },
   "research-gemma4-availability": {
     id: "research-gemma4-availability",
     mode: "build",
@@ -673,6 +1246,51 @@ const SCENARIO_DEFINITIONS: Record<ScenarioCliOptions["scenarioId"], ScenarioDef
     prompts: GEMMA4_RESEARCH_PROMPTS,
     kind: "web-research",
     evaluator: evaluateGemma4ResearchScenario,
+  },
+  "image-reading-card": {
+    id: "image-reading-card",
+    mode: "explore",
+    artifactDirectoryName: path.join(".gemma-headless", "image-reading-card"),
+    prompts: IMAGE_READING_PROMPTS,
+    kind: "image-reading",
+    prepare: prepareImageReadingScenario,
+    evaluator: evaluateImageReadingScenario,
+  },
+  "audio-harvard-transcript": {
+    id: "audio-harvard-transcript",
+    mode: "explore",
+    artifactDirectoryName: path.join(".gemma-headless", "audio-harvard"),
+    prompts: AUDIO_HARVARD_PROMPTS,
+    kind: "audio-transcription",
+    prepare: prepareAudioHarvardScenario,
+    evaluator: evaluateAudioHarvardScenario,
+  },
+  "video-placeholder-keyframes": {
+    id: "video-placeholder-keyframes",
+    mode: "explore",
+    artifactDirectoryName: path.join(".gemma-headless", "video-placeholder"),
+    prompts: VIDEO_KEYFRAME_PROMPTS,
+    kind: "video-keyframes",
+    prepare: prepareVideoKeyframeScenario,
+    evaluator: evaluateVideoKeyframeScenario,
+  },
+  "act-fix-broken-tests": {
+    id: "act-fix-broken-tests",
+    mode: "build",
+    artifactDirectoryName: "broken",
+    prompts: ACT_FIX_BROKEN_TESTS_PROMPTS,
+    kind: "act-repair",
+    prepare: prepareFixBrokenTestsScenario,
+    evaluator: evaluateFixBrokenTestsScenario,
+  },
+  "act-multilang-python-go": {
+    id: "act-multilang-python-go",
+    mode: "build",
+    artifactDirectoryName: "polyglot",
+    prompts: ACT_MULTILANG_PYTHON_GO_PROMPTS,
+    kind: "act-multilang",
+    prepare: prepareMultilangPythonGoScenario,
+    evaluator: evaluateMultilangPythonGoScenario,
   },
 };
 
@@ -683,8 +1301,18 @@ export async function runHeadlessScenario(
 ): Promise<ScenarioRunResult> {
   const definition = SCENARIO_DEFINITIONS[command.scenarioId];
   const artifactDirectory = path.join(command.workingDirectory, definition.artifactDirectoryName);
-  const isBuildScenario = definition.mode === "build";
+  const isBuildScenario = scenarioModeBase(definition.mode) === "build";
   await mkdir(command.workingDirectory, { recursive: true });
+  const fixtureContext: ScenarioFixtureContext = {
+    command,
+    artifactDirectory,
+    workingDirectory: command.workingDirectory,
+    runtime,
+  };
+  if (definition.prepare) {
+    writeLine(runtime.stderr, `scenario: ${definition.id} preparing fixtures`);
+    await definition.prepare(fixtureContext);
+  }
   const metadata = buildDesktopParitySessionMetadata({
     mode: definition.mode,
     runtimeId: command.runtimeId,
@@ -712,10 +1340,13 @@ export async function runHeadlessScenario(
   const rawResults: TurnResult[] = [];
   for (const [index, prompt] of definition.prompts.entries()) {
     writeLine(runtime.stderr, `scenario: ${definition.id} turn ${index + 1}/${definition.prompts.length}`);
+    const resolvedPrompt = await resolveScenarioPrompt(prompt, fixtureContext);
+    const promptSummary = summarizeSessionInput(resolvedPrompt);
     try {
       const turn = await runScenarioTurn({
         session,
-        prompt,
+        prompt: resolvedPrompt,
+        promptSummary,
         index: index + 1,
         command,
         buildPolicy: isBuildScenario ? command.buildPolicy : undefined,
@@ -728,7 +1359,7 @@ export async function runHeadlessScenario(
     } catch (error) {
       turns.push({
         index: index + 1,
-        prompt,
+        prompt: promptSummary,
         error: formatError(error),
       });
       if (runtime.signal?.aborted === true) {

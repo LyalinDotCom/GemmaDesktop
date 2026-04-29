@@ -30,6 +30,7 @@ import {
   createDesktopParityRuntimeAdapters,
   describeDesktopParityRuntimeConfig,
 } from "./desktopParity.js";
+import { createCliBrowserTool } from "./browserTool.js";
 import { buildDesktopParitySessionMetadata } from "./metadata.js";
 import { runHeadlessScenario } from "./scenarios.js";
 
@@ -181,6 +182,7 @@ function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtim
     adapters: createDesktopParityRuntimeAdapters(command.endpoints, {
       omlxApiKey: command.omlxApiKey ?? resolveOptionalEnvValue(runtime.env.OMLX_API_KEY),
     }),
+    extraTools: [createCliBrowserTool()],
     geminiApiKey: command.geminiApiKey ?? resolveOptionalEnvValue(runtime.env.GEMINI_API_KEY),
     geminiApiModel: command.geminiApiModel ?? resolveOptionalEnvValue(runtime.env.GEMMA_DESKTOP_GEMINI_API_MODEL),
     ...("approvalMode" in command ? { toolPolicy: createCliToolPermissionPolicy(command.approvalMode) } : {}),

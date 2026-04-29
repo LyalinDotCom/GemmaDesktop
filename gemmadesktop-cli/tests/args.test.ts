@@ -130,10 +130,16 @@ describe("CLI argument parsing", () => {
   it("parses the on-demand headless scenario catalog", () => {
     const scenarioIds = [
       "act-webapp-black-hole",
+      "act-fix-broken-tests",
+      "act-multilang-python-go",
+      "browser-rest-is-history-lyndon",
       "pdf-attention-authors",
       "web-hacker-news-frontpage",
       "web-news-coverage-compare",
       "research-gemma4-availability",
+      "image-reading-card",
+      "audio-harvard-transcript",
+      "video-placeholder-keyframes",
     ];
 
     for (const scenarioId of scenarioIds) {

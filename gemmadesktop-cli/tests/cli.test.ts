@@ -612,4 +612,505 @@ describe("headless CLI", () => {
       },
     });
   });
+
+  it("runs the ACT repair fixture scenario and validates the fixed project", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-repair-scenario-"));
+    const calls = {
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: () => {
+        const snapshot = makeSnapshot({
+          mode: "build",
+          workingDirectory: tempDirectory,
+          maxSteps: 30,
+        });
+        const session: SessionLike = {
+          id: snapshot.sessionId,
+          snapshot: () => snapshot,
+          runStreamed: async (input) => {
+            calls.inputs.push(input);
+            await writeFile(
+              path.join(tempDirectory, "broken", "index.js"),
+              [
+                "export function add(a, b) {",
+                "  return a + b;",
+                "}",
+                "",
+                "export function formatTotal(value) {",
+                "  return `Total: ${value}`;",
+                "}",
+                "",
+              ].join("\n"),
+              "utf8",
+            );
+            return {
+              turnId: "turn-repair",
+              events: (async function* () {})(),
+              completed: Promise.resolve(makeTurnResult({
+                turnId: "turn-repair",
+                text: "Fixed add(), preserved the tests, and npm test passed.",
+                steps: 1,
+                toolResults: [{
+                  callId: "call-test",
+                  toolName: "exec_command",
+                  output: "broken fixture tests passed",
+                  structuredOutput: {
+                    command: "npm test",
+                    exitCode: 0,
+                    stdout: "broken fixture tests passed\n",
+                    stderr: "",
+                    timedOut: false,
+                  },
+                }],
+                build: {
+                  policy: {
+                    samplingTurns: 30,
+                    requireVerificationAfterMutation: true,
+                    requireFinalizationAfterMutation: false,
+                    completionVerifier: "off",
+                    verificationContinuationLimit: 3,
+                    finalizationContinuationLimit: 3,
+                    verifierAttemptLimit: 2,
+                  },
+                  changedPaths: ["broken/index.js"],
+                  verification: {
+                    attempted: true,
+                    passed: true,
+                    changedPaths: ["broken/index.js"],
+                    recommendedCommands: ["npm test"],
+                    rationale: "scenario validated with npm test",
+                  },
+                  browserEvidence: [],
+                },
+              })),
+            };
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "scenario",
+          "run",
+          "act-fix-broken-tests",
+          "--model",
+          "gemma4:26b",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          tempDirectory,
+          "--json",
+        ],
+        cwd: "/tmp/gemma-project",
+        env: {},
+        stdin: new MemoryStream(),
+        stdout,
+        stderr: new MemoryStream(),
+        dependencies,
+      });
+
+      expect(code).toBe(0);
+      expect(calls.inputs).toHaveLength(1);
+      expect(calls.sessionOptions[0]).toMatchObject({
+        runtime: "ollama-native",
+        model: "gemma4:26b",
+        mode: "build",
+        workingDirectory: tempDirectory,
+      });
+      expect(JSON.parse(stdout.text()) as unknown).toMatchObject({
+        scenarioId: "act-fix-broken-tests",
+        artifactDirectory: path.join(tempDirectory, "broken"),
+        evaluation: {
+          success: true,
+          checks: {
+            implementationFixed: true,
+            testsPreserved: true,
+            validationPassed: true,
+          },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the ACT polyglot Python/Go scenario and validates the project", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-polyglot-scenario-"));
+    const calls = {
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: () => {
+        const snapshot = makeSnapshot({
+          mode: "build",
+          workingDirectory: tempDirectory,
+          maxSteps: 30,
+        });
+        const session: SessionLike = {
+          id: snapshot.sessionId,
+          snapshot: () => snapshot,
+          runStreamed: async (input) => {
+            calls.inputs.push(input);
+            const polyglotDirectory = path.join(tempDirectory, "polyglot");
+            await mkdir(path.join(polyglotDirectory, "python"), { recursive: true });
+            await mkdir(path.join(polyglotDirectory, "go-backend"), { recursive: true });
+            await writeFile(
+              path.join(polyglotDirectory, "python", "summarize.py"),
+              [
+                "import sys",
+                "values = [int(line.strip()) for line in open(sys.argv[1], encoding='utf8') if line.strip()]",
+                "print(f'python count={len(values)} sum={sum(values)} average={sum(values) // len(values)}')",
+                "",
+              ].join("\n"),
+              "utf8",
+            );
+            await writeFile(
+              path.join(polyglotDirectory, "go-backend", "go.mod"),
+              "module example.com/polyglot\n\ngo 1.22\n",
+              "utf8",
+            );
+            await writeFile(
+              path.join(polyglotDirectory, "go-backend", "main.go"),
+              [
+                "package main",
+                "",
+                "import (",
+                '  "encoding/json"',
+                '  "net/http"',
+                ")",
+                "",
+                "func main() {",
+                '  http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(map[string]string{"status":"ok"}) })',
+                '  http.HandleFunc("/summary", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(map[string]int{"count":6,"sum":108}) })',
+                '  _ = http.ListenAndServe(":8080", nil)',
+                "}",
+                "",
+              ].join("\n"),
+              "utf8",
+            );
+            await writeFile(
+              path.join(polyglotDirectory, "validate.sh"),
+              [
+                "set -eu",
+                "python3 python/summarize.py data/sample.txt",
+                "if command -v go >/dev/null 2>&1; then",
+                "  (cd go-backend && go test ./...)",
+                "else",
+                "  grep -q 'module ' go-backend/go.mod",
+                "  grep -q 'package main' go-backend/main.go",
+                "  grep -q 'net/http' go-backend/main.go",
+                "  grep -q '/health' go-backend/main.go",
+                "  grep -q '/summary' go-backend/main.go",
+                "  echo 'go toolchain unavailable, static Go validation passed'",
+                "fi",
+                "",
+              ].join("\n"),
+              "utf8",
+            );
+            return {
+              turnId: "turn-polyglot",
+              events: (async function* () {})(),
+              completed: Promise.resolve(makeTurnResult({
+                turnId: "turn-polyglot",
+                text: "Created Python CLI and Go HTTP backend; sh validate.sh passed.",
+                steps: 1,
+                toolResults: [{
+                  callId: "call-validate",
+                  toolName: "exec_command",
+                  output: "python count=6 sum=108 average=18\ngo toolchain unavailable, static Go validation passed",
+                  structuredOutput: {
+                    command: "sh validate.sh",
+                    exitCode: 0,
+                    stdout: "python count=6 sum=108 average=18\ngo toolchain unavailable, static Go validation passed\n",
+                    stderr: "",
+                    timedOut: false,
+                  },
+                }],
+              })),
+            };
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "scenario",
+          "run",
+          "act-multilang-python-go",
+          "--model",
+          "gemma4:31b",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          tempDirectory,
+          "--json",
+        ],
+        cwd: "/tmp/gemma-project",
+        env: {},
+        stdin: new MemoryStream(),
+        stdout,
+        stderr: new MemoryStream(),
+        dependencies,
+      });
+
+      expect(code).toBe(0);
+      expect(calls.inputs).toHaveLength(1);
+      expect(JSON.parse(stdout.text()) as unknown).toMatchObject({
+        scenarioId: "act-multilang-python-go",
+        artifactDirectory: path.join(tempDirectory, "polyglot"),
+        evaluation: {
+          success: true,
+          checks: {
+            pythonSourcePresent: true,
+            goBackendPresent: true,
+            validationPassed: true,
+          },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs multimodal fixture scenarios with structured session inputs", async () => {
+    const originalFetch = globalThis.fetch;
+    const fixtureBytes = new Uint8Array([1, 2, 3, 4]);
+    const mockFetch: typeof fetch = () =>
+      Promise.resolve(new Response(fixtureBytes, {
+        status: 200,
+        headers: {
+          "content-length": String(fixtureBytes.byteLength),
+        },
+      }));
+    globalThis.fetch = mockFetch;
+
+    const scenarios = [
+      {
+        id: "image-reading-card",
+        expectedInputType: "image_url",
+        text: "The image says ORION 47, TOTAL 128.50, STATUS READY.",
+      },
+      {
+        id: "audio-harvard-transcript",
+        expectedInputType: "audio_url",
+        text: "Open Speech Repository Harvard sentence: The birch canoe slid on the smooth planks.",
+      },
+      {
+        id: "video-placeholder-keyframes",
+        expectedInputType: "image_url",
+        text: "The prepared video keyframe shows a 640x360 placeholder video.",
+      },
+    ] as const;
+
+    try {
+      for (const scenario of scenarios) {
+        const tempDirectory = await mkdtemp(path.join(os.tmpdir(), `gemma-desktop-cli-${scenario.id}-`));
+        const calls = {
+          inputs: [] as unknown[],
+        };
+        const stdout = new MemoryStream();
+        const dependencies: CliDependencies = {
+          createGemmaDesktop: () => {
+            const snapshot = makeSnapshot({
+              mode: "explore",
+              workingDirectory: tempDirectory,
+              maxSteps: 30,
+            });
+            const session: SessionLike = {
+              id: snapshot.sessionId,
+              snapshot: () => snapshot,
+              runStreamed: async (input) => {
+                await Promise.resolve();
+                calls.inputs.push(input);
+                return {
+                  turnId: `turn-${scenario.id}`,
+                  events: (async function* () {})(),
+                  completed: Promise.resolve(makeTurnResult({
+                    turnId: `turn-${scenario.id}`,
+                    text: scenario.text,
+                    steps: 1,
+                    toolResults: [],
+                  })),
+                };
+              },
+            };
+            return Promise.resolve({
+              inspectEnvironment: () => Promise.resolve(makeInspection()),
+              describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+              sessions: {
+                create: () => Promise.resolve(session),
+              },
+            });
+          },
+        };
+
+        try {
+          const code = await runCli({
+            argv: [
+              "scenario",
+              "run",
+              scenario.id,
+              "--model",
+              "gemma4:26b",
+              "--runtime",
+              "ollama-native",
+              "--cwd",
+              tempDirectory,
+              "--json",
+            ],
+            cwd: "/tmp/gemma-project",
+            env: {},
+            stdin: new MemoryStream(),
+            stdout,
+            stderr: new MemoryStream(),
+            dependencies,
+          });
+
+          expect(code).toBe(0);
+          expect(calls.inputs).toHaveLength(1);
+          expect(Array.isArray(calls.inputs[0])).toBe(true);
+          expect((calls.inputs[0] as Array<{ type: string }>).some((part) =>
+            part.type === scenario.expectedInputType,
+          )).toBe(true);
+          expect(JSON.parse(stdout.text()) as unknown).toMatchObject({
+            scenarioId: scenario.id,
+            evaluation: {
+              success: true,
+            },
+          });
+        } finally {
+          await rm(tempDirectory, { recursive: true, force: true });
+        }
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("runs the managed-browser episode search scenario through the browser tool", async () => {
+    const calls = {
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: () => {
+        const snapshot = makeSnapshot({
+          mode: "explore",
+          workingDirectory: "/tmp/gemma-project",
+          maxSteps: 30,
+        });
+        const session: SessionLike = {
+          id: snapshot.sessionId,
+          snapshot: () => snapshot,
+          runStreamed: async (input) => {
+            await Promise.resolve();
+            calls.inputs.push(input);
+            return {
+              turnId: "turn-browser",
+              events: (async function* () {})(),
+              completed: Promise.resolve(makeTurnResult({
+                turnId: "turn-browser",
+                text: [
+                  "Used the browser to open https://therestishistory.com/, navigate to Episodes, find the search box, and search for Lyndon.",
+                  "- The American Century: Lyndon B. Johnson - https://therestishistory.com/episodes/lyndon-johnson",
+                ].join("\n"),
+                steps: 4,
+                toolResults: [{
+                  callId: "call-browser",
+                  toolName: "browser",
+                  output: "Browser search results for Lyndon on therestishistory.com episodes.",
+                  structuredOutput: {
+                    action: "snapshot",
+                    data: {
+                      snapshot: "Episodes search results Lyndon https://therestishistory.com/episodes/lyndon-johnson",
+                    },
+                  },
+                }],
+              })),
+            };
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    const code = await runCli({
+      argv: [
+        "scenario",
+        "run",
+        "browser-rest-is-history-lyndon",
+        "--model",
+        "gemma4:31b",
+        "--runtime",
+        "ollama-native",
+        "--json",
+      ],
+      cwd: "/tmp/gemma-project",
+      env: {},
+      stdin: new MemoryStream(),
+      stdout,
+      stderr: new MemoryStream(),
+      dependencies,
+    });
+
+    expect(code).toBe(0);
+    expect(calls.sessionOptions[0]?.mode).toMatchObject({
+      base: "explore",
+      tools: ["browser"],
+      withoutTools: ["fetch_url", "search_web", "web_research_agent"],
+    });
+    expect(JSON.parse(stdout.text()) as unknown).toMatchObject({
+      scenarioId: "browser-rest-is-history-lyndon",
+      evaluation: {
+        success: true,
+        checks: {
+          browserToolUsed: true,
+          lyndonResultsReturned: true,
+          episodeLinksReturned: true,
+        },
+      },
+    });
+  });
 });

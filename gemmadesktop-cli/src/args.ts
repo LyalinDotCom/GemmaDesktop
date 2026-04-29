@@ -22,10 +22,16 @@ export class CliArgumentError extends Error {
 export type CliCommandName = "help" | "inspect" | "preview" | "run" | "scenario";
 export type ScenarioId =
   | "act-webapp-black-hole"
+  | "act-fix-broken-tests"
+  | "act-multilang-python-go"
+  | "browser-rest-is-history-lyndon"
   | "pdf-attention-authors"
   | "web-hacker-news-frontpage"
   | "web-news-coverage-compare"
-  | "research-gemma4-availability";
+  | "research-gemma4-availability"
+  | "image-reading-card"
+  | "audio-harvard-transcript"
+  | "video-placeholder-keyframes";
 export type BuildVerifierMode = "hybrid" | "deterministic" | "off";
 
 export interface CommonCliOptions {
@@ -118,10 +124,16 @@ const REASONING_MODES = new Set(["auto", "on"]);
 const BUILD_VERIFIER_MODES = new Set<BuildVerifierMode>(["hybrid", "deterministic", "off"]);
 const SCENARIOS = new Set<ScenarioId>([
   "act-webapp-black-hole",
+  "act-fix-broken-tests",
+  "act-multilang-python-go",
+  "browser-rest-is-history-lyndon",
   "pdf-attention-authors",
   "web-hacker-news-frontpage",
   "web-news-coverage-compare",
   "research-gemma4-availability",
+  "image-reading-card",
+  "audio-harvard-transcript",
+  "video-placeholder-keyframes",
 ]);
 const MODE_PRESETS = new Set([
   "assistant",
@@ -176,10 +188,16 @@ export function usage(): string {
     "",
     "On-demand scenario IDs:",
     "  act-webapp-black-hole          Multi-turn build/edit/validate web app scenario.",
+    "  act-fix-broken-tests           Repair a broken npm fixture and validate it.",
+    "  act-multilang-python-go        Build and validate a Python CLI plus Go HTTP backend.",
+    "  browser-rest-is-history-lyndon  Use browser navigation to search podcast episodes.",
     "  pdf-attention-authors          Locate Attention Is All You Need, extract text, list authors.",
     "  web-hacker-news-frontpage      Fetch Hacker News and summarize the current front page.",
     "  web-news-coverage-compare      Compare latest CNN, Fox News, and MSNBC coverage.",
     "  research-gemma4-availability   Research current Gemma 4 versions and availability.",
+    "  image-reading-card             Read exact visible text from a downloaded PNG card.",
+    "  audio-harvard-transcript       Transcribe a free Open Speech Repository WAV sample.",
+    "  video-placeholder-keyframes    Inspect keyframes from a downloaded placeholder MP4.",
   ].join("\n");
 }
 
