@@ -29,6 +29,7 @@ import { AmbientMood } from '@/components/AmbientMood'
 import { DoctorPanel } from '@/components/DoctorPanel'
 import { StartupLoadingOverlay } from '@/components/StartupLoadingOverlay'
 import { StartupRiskDialog } from '@/components/StartupRiskDialog'
+import { FirstRunModelSetup } from '@/components/FirstRunModelSetup'
 import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
@@ -116,6 +117,7 @@ const COBROWSE_BUSY_QUEUE_DISABLED_REASON =
   'Wait for the current CoBrowse turn to finish before sending another request.'
 const COBROWSE_STALE_QUEUE_DISABLED_REASON =
   'CoBrowse queued turns do not run automatically. Send a fresh request after the current turn finishes.'
+const FIRST_RUN_MODEL_SETUP_DISMISSED_KEY = 'gemma-desktop:first-run-model-setup-dismissed'
 
 function buildPinnedSentenceKeysMap(
   pinnedQuotes: PinnedQuote[],
@@ -282,6 +284,13 @@ function findLatestNewAssistantText(
 export function App() {
   const [startupRiskAccepted, setStartupRiskAccepted] = useState(false)
   const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(false)
+  const [firstRunModelSetupDismissed, setFirstRunModelSetupDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(FIRST_RUN_MODEL_SETUP_DISMISSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [doctorOpen, setDoctorOpen] = useState(false)
   const [statusBarTarget, setStatusBarTarget] = useState<HTMLDivElement | null>(null)
   const [assistantHomeVisible, setAssistantHomeVisible] = useState(true)
@@ -1288,6 +1297,37 @@ export function App() {
     setSettingsInitialTab(tab)
     dispatch({ type: 'SET_SETTINGS_OPEN', open: true })
   }
+  const dismissFirstRunModelSetup = useCallback(() => {
+    try {
+      window.localStorage.setItem(FIRST_RUN_MODEL_SETUP_DISMISSED_KEY, '1')
+    } catch {
+      // Ignore storage failures; the modal will stay session-scoped in that case.
+    }
+    setFirstRunModelSetupDismissed(true)
+  }, [])
+  const handleFirstRunModelChoice = useCallback(async (target: {
+    modelId: string
+    runtimeId: string
+  }) => {
+    const modelSelection = {
+      mainModel: { ...target },
+      helperModel: { ...target },
+    }
+    const updated = await window.gemmaDesktopBridge.settings.update({ modelSelection })
+    dispatch({ type: 'SET_SETTINGS', settings: updated })
+    dismissFirstRunModelSetup()
+    await window.gemmaDesktopBridge.environment.inspect().then(({ runtimes, models, bootstrap }) => {
+      dispatch({ type: 'SET_RUNTIMES', runtimes })
+      dispatch({ type: 'SET_MODELS', models })
+      dispatch({ type: 'SET_BOOTSTRAP_STATE', bootstrapState: bootstrap })
+    }).catch((error) => {
+      console.warn('Failed to refresh environment after first-run model setup:', error)
+    })
+  }, [dismissFirstRunModelSetup, dispatch])
+  const showFirstRunModelSetup =
+    startupRiskAccepted
+    && !firstRunModelSetupDismissed
+    && state.bootstrapState.status === 'idle'
   const preferredTerminalWorkingDirectory =
     state.activeSession?.workingDirectory.trim()
     || state.settings.defaultProjectDirectory.trim()
@@ -2795,6 +2835,17 @@ export function App() {
         onOpenVoiceSettings={() => openSettings('voice')}
         onTestReadAloud={readAloudPlayer.playTest}
       />
+
+      {showFirstRunModelSetup && (
+        <FirstRunModelSetup
+          runtimes={state.runtimes}
+          models={state.models}
+          gemmaInstallStates={state.gemmaInstallStates}
+          onChoose={handleFirstRunModelChoice}
+          onDismiss={dismissFirstRunModelSetup}
+          onEnsureGemmaModel={ensureGemmaModel}
+        />
+      )}
 
       <StartupLoadingOverlay
         bootstrap={state.bootstrapState}
