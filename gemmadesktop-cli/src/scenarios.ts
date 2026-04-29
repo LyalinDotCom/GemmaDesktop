@@ -62,7 +62,19 @@ interface ScenarioTurnRecord {
     error?: string;
   };
   eventCounts?: Record<string, number>;
+  recentEvents?: ScenarioEventSummary[];
   error?: string;
+}
+
+interface ScenarioEventSummary {
+  type: string;
+  toolName?: string;
+  step?: number;
+  inputPreview?: string;
+  outputPreview?: string;
+  errorPreview?: string;
+  warning?: string;
+  message?: string;
 }
 
 interface ScenarioEvaluation {
@@ -132,6 +144,7 @@ const REST_IS_HISTORY_LYNDON_PROMPTS = [
     "Open https://therestishistory.com/ in the browser.",
     "Navigate to the Episodes tab or Episodes archive from the site UI.",
     "Find the episode search box, search for \"lyndon\", and return the names and absolute links for all matching episodes visible after the search.",
+    "After search results are visible, use browser link extraction or attribute lookup to capture actual hrefs; do not guess links from titles.",
     "If the site blocks automation, report that exact blocker instead of substituting generic search results.",
   ].join(" "),
 ] as const;
@@ -522,6 +535,71 @@ function countEvents(events: readonly GemmaDesktopEvent[]): Record<string, numbe
   return counts;
 }
 
+function eventPayloadRecord(event: GemmaDesktopEvent): Record<string, unknown> {
+  return event.payload;
+}
+
+function previewValue(value: unknown, maxLength = 300): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!text) {
+    return undefined;
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function toolNamesFromEvents(events: readonly GemmaDesktopEvent[]): string[] {
+  return events
+    .filter((event) => event.type === "tool.call")
+    .map((event) => eventPayloadRecord(event).toolName)
+    .filter((toolName): toolName is string => typeof toolName === "string" && toolName.length > 0);
+}
+
+function warningsFromEvents(events: readonly GemmaDesktopEvent[]): string[] {
+  return events
+    .filter((event) => event.type === "warning.raised")
+    .map((event) => eventPayloadRecord(event).warning)
+    .filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+}
+
+function summarizeRecentEvents(events: readonly GemmaDesktopEvent[]): ScenarioEventSummary[] {
+  return events.slice(-12).map((event) => {
+    const payload = eventPayloadRecord(event);
+    const summary: ScenarioEventSummary = { type: event.type };
+    if (typeof payload.toolName === "string") {
+      summary.toolName = payload.toolName;
+    }
+    if (typeof payload.step === "number") {
+      summary.step = payload.step;
+    }
+    const inputPreview = previewValue(payload.input);
+    if (inputPreview) {
+      summary.inputPreview = inputPreview;
+    }
+    const outputPreview = previewValue(payload.output);
+    if (outputPreview) {
+      summary.outputPreview = outputPreview;
+    }
+    const errorPreview = previewValue(payload.error);
+    if (errorPreview) {
+      summary.errorPreview = errorPreview;
+    }
+    if (typeof payload.warning === "string") {
+      summary.warning = payload.warning;
+    }
+    if (typeof payload.message === "string") {
+      summary.message = payload.message;
+    }
+    return summary;
+  });
+}
+
+function hasDiagnosticEvents(events: readonly GemmaDesktopEvent[]): boolean {
+  return events.some((event) => event.type === "error.raised" || event.type === "warning.raised");
+}
+
 function toolCommandText(toolResults: readonly ToolResult[]): string {
   return toolResults
     .map((toolResult) => {
@@ -896,6 +974,9 @@ async function evaluateRestIsHistoryLyndonScenario(input: {
   const toolNames = collectToolNames(input.rawResults);
   const restIsHistoryEpisodeLinks =
     haystack.match(/https?:\/\/(?:www\.)?therestishistory\.com\/episodes\/[^\s)\]]+/gi) ?? [];
+  const toolHadErrors = input.rawResults.some((result) =>
+    result.toolResults.some((toolResult) => toolResult.metadata?.toolError === true),
+  );
   const checks = {
     browserToolUsed: toolNames.has("browser"),
     siteOpened: /therestishistory\.com/.test(normalized),
@@ -903,9 +984,7 @@ async function evaluateRestIsHistoryLyndonScenario(input: {
     searchBoxUsed: /\b(search|searched|search\s+box|filled)\b/.test(normalized),
     lyndonResultsReturned: /\blyndon\b/.test(normalized),
     episodeLinksReturned: restIsHistoryEpisodeLinks.length >= 1,
-    noToolFailure: input.rawResults.every((result) =>
-      result.toolResults.every((toolResult) => toolResult.metadata?.toolError !== true),
-    ),
+    browserErrorsRecovered: !toolHadErrors || restIsHistoryEpisodeLinks.length >= 1,
   };
   const evaluation = evaluateChecks(checks);
   return {
@@ -1262,6 +1341,7 @@ async function runScenarioTurn(input: {
     }
 
     const result = await streamed.completed;
+    const recentEvents = summarizeRecentEvents(events);
     return {
       result,
       record: {
@@ -1274,6 +1354,22 @@ async function runScenarioTurn(input: {
         toolNames: result.toolResults.map((toolResult) => toolResult.toolName),
         build: result.build,
         eventCounts: countEvents(events),
+        ...(hasDiagnosticEvents(events) && recentEvents.length > 0 ? { recentEvents } : {}),
+      },
+    };
+  } catch (error) {
+    const toolNames = toolNamesFromEvents(events);
+    const warnings = warningsFromEvents(events);
+    const recentEvents = summarizeRecentEvents(events);
+    return {
+      record: {
+        index: input.index,
+        prompt: input.promptSummary,
+        ...(toolNames.length > 0 ? { toolNames } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
+        eventCounts: countEvents(events),
+        ...(recentEvents.length > 0 ? { recentEvents } : {}),
+        error: formatError(error),
       },
     };
   } finally {

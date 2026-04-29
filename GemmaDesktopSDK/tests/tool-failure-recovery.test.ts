@@ -406,6 +406,117 @@ describe("tool failure recovery", () => {
     )).toBe(true);
   });
 
+  it("allows repeated browser snapshots after intervening page actions", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "Opening the podcast site.",
+        toolName: "browser",
+        toolInput: {
+          action: "open",
+          url: "https://therestishistory.com/",
+        },
+      }),
+      createToolCallResponse({
+        text: "Reading the home page.",
+        toolName: "browser",
+        toolInput: {
+          action: "snapshot",
+        },
+      }),
+      createToolCallResponse({
+        text: "Opening episodes.",
+        toolName: "browser",
+        toolInput: {
+          action: "click",
+          ref: "@episodes",
+        },
+      }),
+      createToolCallResponse({
+        text: "Reading the episodes page.",
+        toolName: "browser",
+        toolInput: {
+          action: "snapshot",
+        },
+      }),
+      createToolCallResponse({
+        text: "Searching for Lyndon.",
+        toolName: "browser",
+        toolInput: {
+          action: "fill",
+          ref: "@search",
+          value: "lyndon",
+        },
+      }),
+      createToolCallResponse({
+        text: "Reading the filtered results.",
+        toolName: "browser",
+        toolInput: {
+          action: "snapshot",
+        },
+      }),
+      createTextResponse(
+        "The filtered results include Lyndon B. Johnson episodes with episode links.",
+      ),
+    ]);
+
+    const actions: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "browser",
+      description: "Use a browser.",
+      inputSchema: {
+        type: "object",
+        required: ["action"],
+        properties: {
+          action: { type: "string" },
+          url: { type: "string" },
+          ref: { type: "string" },
+          value: { type: "string" },
+        },
+        additionalProperties: true,
+      },
+      async execute(input) {
+        actions.push(input.action);
+        return {
+          output: `Browser action ${input.action} completed.`,
+          structuredOutput: {
+            ok: true,
+          },
+        };
+      },
+    } satisfies RegisteredTool<{
+      action: string;
+      url?: string;
+      ref?: string;
+      value?: string;
+    }>);
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 10,
+    });
+
+    const result = await engine.run("Find Lyndon episodes on The Rest Is History.");
+
+    expect(result.text).toContain("Lyndon B. Johnson");
+    expect(actions).toEqual([
+      "open",
+      "snapshot",
+      "click",
+      "snapshot",
+      "fill",
+      "snapshot",
+    ]);
+    expect(result.toolResults).toHaveLength(6);
+    expect(adapter.requests.some((request) => request.tools?.length === 0)).toBe(false);
+  });
+
   it("continues the turn after a recoverable tool failure and persists only the tool-call structure", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({

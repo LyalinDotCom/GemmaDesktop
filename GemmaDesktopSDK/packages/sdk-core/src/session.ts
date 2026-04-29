@@ -1957,7 +1957,8 @@ export class SessionEngine {
     let completedFromFinalizationToolResponse = false;
     let nextStepAvailableTools: ToolDefinition[] | undefined;
     const failedToolSignatureCounts = new Map<string, number>();
-    const toolCallSignatureCounts = new Map<string, number>();
+    let consecutiveToolCallSignatureKey: string | undefined;
+    let consecutiveToolCallSignatureCount = 0;
     const requiredTools = resolveRequiredTools(this.mode).filter((toolName) =>
       this.availableTools.some((tool) => tool.name === toolName),
     );
@@ -2356,13 +2357,17 @@ export class SessionEngine {
         | undefined;
       for (const toolCall of response.toolCalls) {
         const signature = buildToolCallSignature(toolCall);
-        const count = (toolCallSignatureCounts.get(signature.key) ?? 0) + 1;
-        toolCallSignatureCounts.set(signature.key, count);
-        if (count >= REPEATED_TOOL_CALL_THRESHOLD && !repeatedToolCall) {
+        if (signature.key === consecutiveToolCallSignatureKey) {
+          consecutiveToolCallSignatureCount += 1;
+        } else {
+          consecutiveToolCallSignatureKey = signature.key;
+          consecutiveToolCallSignatureCount = 1;
+        }
+        if (consecutiveToolCallSignatureCount >= REPEATED_TOOL_CALL_THRESHOLD && !repeatedToolCall) {
           repeatedToolCall = {
             toolName: toolCall.name,
             inputPreview: signature.preview,
-            count,
+            count: consecutiveToolCallSignatureCount,
           };
         }
       }

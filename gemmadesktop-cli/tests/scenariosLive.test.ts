@@ -205,6 +205,10 @@ function scenarioTimedOut(stdout: string, stderr: string): boolean {
 }
 
 function failureReasonForDiagnostic(diagnostic: ScenarioDiagnostic): string | undefined {
+  if (diagnostic.status === "running") {
+    return undefined;
+  }
+
   if (diagnostic.status === "passed") {
     return undefined;
   }

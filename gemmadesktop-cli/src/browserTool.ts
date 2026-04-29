@@ -14,6 +14,10 @@ const BROWSER_ACTIONS = [
   "navigate",
   "wait",
   "snapshot",
+  "links",
+  "get_url",
+  "get_text",
+  "get_attribute",
   "click",
   "fill",
   "type",
@@ -149,6 +153,40 @@ function normalizeRef(value: string): string {
   return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
 }
 
+function optionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function optionalPositiveInteger(record: Record<string, unknown>, key: string, fallback: number): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : fallback;
+}
+
+function buildExtractLinksScript(input: Record<string, unknown>): string {
+  const textIncludes = optionalString(input, "textIncludes")?.toLowerCase() ?? "";
+  const maxResults = Math.min(optionalPositiveInteger(input, "maxResults", 100), 250);
+  return `(() => {
+  const needle = ${JSON.stringify(textIncludes)};
+  return Array.from(document.querySelectorAll("a[href]"))
+    .map((anchor) => {
+      const text = (anchor.innerText || anchor.textContent || "").replace(/\\s+/g, " ").trim();
+      const rawHref = anchor.getAttribute("href") || "";
+      let href = rawHref;
+      try {
+        href = new URL(rawHref, document.baseURI).href;
+      } catch {
+        href = rawHref;
+      }
+      return { text, href };
+    })
+    .filter((link) => link.href && (!needle || (link.text + " " + link.href).toLowerCase().includes(needle)))
+    .slice(0, ${maxResults});
+})()`;
+}
+
 function resolveBrowserArgs(input: Record<string, unknown>): string[] {
   const action = requireString(input, "action", "browser");
   switch (action) {
@@ -194,6 +232,21 @@ function resolveBrowserArgs(input: Record<string, unknown>): string[] {
     }
     case "snapshot":
       return ["snapshot", "-i"];
+    case "links":
+      return ["eval", buildExtractLinksScript(input)];
+    case "get_url":
+      return ["get", "url"];
+    case "get_text": {
+      const ref = optionalString(input, "ref");
+      return ref ? ["get", "text", normalizeRef(ref)] : ["get", "text"];
+    }
+    case "get_attribute":
+      return [
+        "get",
+        "attr",
+        requireString(input, "attribute", action),
+        normalizeRef(requireString(input, "ref", action)),
+      ];
     case "click":
       return ["click", normalizeRef(requireString(input, "ref", action))];
     case "fill":
@@ -234,6 +287,7 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
     description: [
       "Direct tool. Use a managed browser session for live or dynamic sites that need real page interaction.",
       "Open pages, inspect tabs, capture snapshots, wait, click refs, fill forms, type, press keys, navigate, close tabs, or evaluate page scripts.",
+      "Use links to extract visible anchor text and absolute hrefs when the user asks for page links.",
       "Use browser instead of fetch_url for forms, tabs, search boxes, and JavaScript-heavy pages.",
     ].join(" "),
     inputSchema: {
@@ -259,7 +313,10 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
         },
         waitMs: { type: "number" },
         maxChars: { type: "number" },
+        maxResults: { type: "number" },
         ref: { type: "string" },
+        attribute: { type: "string" },
+        textIncludes: { type: "string" },
         value: { type: "string" },
         inputText: { type: "string" },
         key: { type: "string" },
