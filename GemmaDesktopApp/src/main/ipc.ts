@@ -1569,7 +1569,7 @@ function recordSessionTokens(
 let bootstrapState: BootstrapStateRecord = {
   status: 'idle',
   ready: false,
-  message: 'Preparing local models…',
+  message: 'Local models will be prepared when needed.',
   ...resolveBootstrapTargets(),
   updatedAt: Date.now(),
 }
@@ -12848,7 +12848,7 @@ export async function initializeGemmaDesktop(): Promise<void> {
   bootstrapState = {
     status: 'idle',
     ready: false,
-    message: 'Preparing local models…',
+    message: 'Local models will be prepared when needed.',
     ...resolveBootstrapTargets(currentSettings),
     updatedAt: Date.now(),
   }
@@ -12936,9 +12936,6 @@ export async function initializeGemmaDesktop(): Promise<void> {
     void checkDueAutomations()
   }, 15_000)
   void checkDueAutomations()
-  void ensureBootstrapReady().catch((error) => {
-    console.error('[gemma-desktop] Bootstrap failed:', error)
-  })
 }
 
 type SendSessionMessageOptions = {

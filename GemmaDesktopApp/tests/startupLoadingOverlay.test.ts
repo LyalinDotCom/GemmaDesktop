@@ -141,6 +141,26 @@ describe('StartupLoadingOverlay', () => {
     expect(markup).toBe('')
   })
 
+  it('hides while bootstrap is idle so first launch does not imply a model download', () => {
+    const markup = renderToStaticMarkup(
+      createElement(StartupLoadingOverlay, {
+        bootstrap: {
+          ...BASE_BOOTSTRAP,
+          status: 'idle',
+          ready: false,
+          message: 'Models will be prepared when needed.',
+        },
+        readAloudEnabled: false,
+        readAloudStatus: null,
+        dismissed: false,
+        onDismiss: () => {},
+        onRetryBootstrap: () => {},
+      }),
+    )
+
+    expect(markup).toBe('')
+  })
+
   it('shows an error heading and Retry button when bootstrap errored', () => {
     const markup = renderToStaticMarkup(
       createElement(StartupLoadingOverlay, {

@@ -33,7 +33,9 @@ interface StartupLoadingOverlayProps {
 
 function resolveBootstrapTask(bootstrap: BootstrapState): StartupTask {
   const status: TaskStatus =
-    bootstrap.status === 'error'
+    bootstrap.status === 'idle'
+      ? 'ready'
+      : bootstrap.status === 'error'
       ? 'error'
       : bootstrap.status === 'warning'
         ? 'warning'
@@ -41,7 +43,9 @@ function resolveBootstrapTask(bootstrap: BootstrapState): StartupTask {
         ? 'ready'
         : 'in-progress'
   const detail =
-    status === 'ready'
+    bootstrap.status === 'idle'
+      ? 'Local models will be prepared when needed.'
+      : status === 'ready'
       ? `Helper model ${bootstrap.helperModelId} is ready.`
       : bootstrap.message
   return {
