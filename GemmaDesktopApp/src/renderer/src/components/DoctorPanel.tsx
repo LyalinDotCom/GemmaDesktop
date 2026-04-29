@@ -142,6 +142,135 @@ function formatPermissionStatus(status: DoctorPermissionCheck['status']): string
   return map[status] ?? status
 }
 
+export type DoctorOverviewIssueAction =
+  | { kind: 'refresh'; label: string }
+  | { kind: 'tab'; label: string; tab: DoctorTab }
+  | {
+    kind: 'requestPermission' | 'openPrivacySettings'
+    label: string
+    permissionId: DoctorPermissionCheck['id']
+  }
+  | {
+    kind:
+      | 'installSpeech'
+      | 'repairSpeech'
+      | 'openSpeechSettings'
+      | 'runReadAloudTest'
+      | 'openVoiceSettings'
+    label: string
+  }
+
+function appendViewAction(
+  actions: DoctorOverviewIssueAction[],
+  tab: DoctorTab,
+  label: string,
+): DoctorOverviewIssueAction[] {
+  if (actions.some((action) => action.kind === 'tab' && action.tab === tab)) {
+    return actions
+  }
+
+  return [...actions, { kind: 'tab', label, tab }]
+}
+
+export function getDoctorOverviewIssueActions(
+  issue: DoctorIssue,
+  report: DoctorReport,
+): DoctorOverviewIssueAction[] {
+  const actions: DoctorOverviewIssueAction[] = []
+
+  if (issue.title === 'Environment inspection failed') {
+    actions.push({ kind: 'refresh', label: 'Retry Inspection' })
+  }
+
+  if (issue.title === 'npx is unavailable') {
+    return [{ kind: 'tab', label: 'View Commands', tab: 'commands' }]
+  }
+
+  if (issue.title === 'Managed browser last health check failed') {
+    actions.push({ kind: 'refresh', label: 'Re-run Check' })
+    return appendViewAction(actions, 'integrations', 'View Integrations')
+  }
+
+  const permission = report.permissions.find(
+    (candidate) => issue.title === `${candidate.label} access needs attention`,
+  )
+  if (permission) {
+    if (
+      permission.requestableInApp
+      && permission.status === 'not-determined'
+      && (permission.id === 'camera' || permission.id === 'microphone')
+    ) {
+      actions.push({
+        kind: 'requestPermission',
+        label: `Request ${permission.label}`,
+        permissionId: permission.id,
+      })
+    } else if (permission.status !== 'granted') {
+      actions.push({
+        kind: 'openPrivacySettings',
+        label: `Open ${permission.label} Settings`,
+        permissionId: permission.id,
+      })
+    }
+
+    return appendViewAction(actions, 'permissions', 'View Permissions')
+  }
+
+  if (
+    issue.title === 'Speech input is not installed yet'
+    || issue.title === 'Speech runtime needs repair'
+    || issue.title === 'Speech runtime health check failed'
+  ) {
+    if (report.speech.recommendedAction === 'request_microphone') {
+      actions.push({
+        kind: 'requestPermission',
+        label: 'Request Microphone',
+        permissionId: 'microphone',
+      })
+    } else if (report.speech.recommendedAction === 'install') {
+      actions.push({ kind: 'installSpeech', label: 'Install Speech' })
+    } else if (report.speech.recommendedAction === 'repair') {
+      actions.push({ kind: 'repairSpeech', label: 'Repair Speech' })
+    } else if (report.speech.recommendedAction === 'open_settings') {
+      actions.push({ kind: 'openSpeechSettings', label: 'Open Speech Settings' })
+    }
+
+    return appendViewAction(actions, 'speech', 'View Speech')
+  }
+
+  if (
+    issue.title === 'Read aloud will install on first use'
+    || issue.title === 'Read aloud needs attention'
+  ) {
+    if (report.readAloud.enabled) {
+      actions.push({ kind: 'runReadAloudTest', label: 'Run Voice Test' })
+    }
+
+    if (report.readAloud.recommendedAction === 'open_voice_settings' || !report.readAloud.enabled) {
+      actions.push({ kind: 'openVoiceSettings', label: 'Open Voice Settings' })
+    }
+
+    return appendViewAction(actions, 'readAloud', 'View Read Aloud')
+  }
+
+  if (
+    issue.title === 'No compatible runtime is healthy'
+    || issue.title === 'Runtime diagnosis'
+    || issue.title === 'Environment warning'
+    || issue.title === 'Ollama server settings differ from Gemma Desktop'
+    || issue.title === 'Ollama helper and primary defaults cannot stay loaded together'
+    || issue.title.endsWith(' is installed but not responding')
+    || issue.title.endsWith(' is running without visible models')
+    || issue.title.endsWith(' context length is unknown')
+    || issue.title.endsWith(" is below Gemma Desktop's requested context")
+    || issue.title.endsWith(' is spilling to CPU')
+  ) {
+    return [{ kind: 'tab', label: 'View Runtimes', tab: 'runtimes' }]
+  }
+
+  return actions
+}
+
 function Section({
   title,
   subtitle,
@@ -428,6 +557,101 @@ export function DoctorPanel({
     }
   }
 
+  const isOverviewActionBusy = (action: DoctorOverviewIssueAction): boolean => {
+    switch (action.kind) {
+      case 'refresh':
+        return loading || refreshing
+      case 'requestPermission':
+        return action.permissionId === 'camera' ? requestingCamera : requestingMicrophone
+      case 'openPrivacySettings':
+        return openingPrivacySettings === action.permissionId
+      case 'installSpeech':
+      case 'repairSpeech':
+        return installingSpeech
+      case 'runReadAloudTest':
+        return testingReadAloud
+      case 'tab':
+      case 'openSpeechSettings':
+      case 'openVoiceSettings':
+        return false
+    }
+  }
+
+  const isOverviewActionDisabled = (action: DoctorOverviewIssueAction): boolean => {
+    if (isOverviewActionBusy(action)) return true
+
+    if (action.kind === 'runReadAloudTest' && report) {
+      return (
+        !report.readAloud.enabled
+        || report.readAloud.state === 'installing'
+        || report.readAloud.state === 'loading'
+      )
+    }
+
+    return false
+  }
+
+  const overviewActionLabel = (action: DoctorOverviewIssueAction): string => {
+    if (!isOverviewActionBusy(action)) return action.label
+
+    switch (action.kind) {
+      case 'refresh':
+        return 'Checking...'
+      case 'requestPermission':
+        return 'Requesting...'
+      case 'openPrivacySettings':
+        return 'Opening...'
+      case 'installSpeech':
+        return 'Installing...'
+      case 'repairSpeech':
+        return 'Repairing...'
+      case 'runReadAloudTest':
+        return 'Testing...'
+      case 'tab':
+      case 'openSpeechSettings':
+      case 'openVoiceSettings':
+        return action.label
+    }
+  }
+
+  const handleOverviewAction = (action: DoctorOverviewIssueAction) => {
+    switch (action.kind) {
+      case 'refresh':
+        void loadReport(false)
+        return
+      case 'tab':
+        setActiveTab(action.tab)
+        return
+      case 'requestPermission':
+        if (action.permissionId === 'camera') {
+          void handleRequestCameraAccess()
+          return
+        }
+        if (action.permissionId === 'microphone') {
+          void handleRequestMicrophoneAccess()
+        }
+        return
+      case 'openPrivacySettings':
+        void handleOpenPrivacySettings(action.permissionId)
+        return
+      case 'installSpeech':
+        void handleInstallSpeech()
+        return
+      case 'repairSpeech':
+        void handleRepairSpeech()
+        return
+      case 'openSpeechSettings':
+        onOpenSettings()
+        return
+      case 'runReadAloudTest':
+        void handleRunReadAloudTest()
+        return
+      case 'openVoiceSettings':
+        onOpenVoiceSettings()
+        return
+    }
+  }
+
   const tabBadgeCount = (tab: DoctorTab): number => {
     if (!report) return 0
     switch (tab) {
@@ -566,15 +790,39 @@ export function DoctorPanel({
                       {report.issues.length > 0 ? (
                         <Section title="Issues" subtitle="Problems that need attention.">
                           <div className="space-y-2">
-                            {report.issues.map((issue, i) => (
-                              <div key={`${issue.title}-${i}`} className="flex items-start gap-2 text-xs">
-                                <Badge tone={issueTone(issue.severity)}>{issue.severity}</Badge>
-                                <div>
-                                  <span className="font-medium text-zinc-800 dark:text-zinc-200">{issue.title}</span>
-                                  <span className="ml-1 text-zinc-500 dark:text-zinc-400">— {issue.detail}</span>
+                            {report.issues.map((issue, i) => {
+                              const actions = getDoctorOverviewIssueActions(issue, report)
+
+                              return (
+                                <div
+                                  key={`${issue.title}-${i}`}
+                                  className="flex items-start justify-between gap-3 text-xs"
+                                >
+                                  <div className="flex min-w-0 items-start gap-2">
+                                    <Badge tone={issueTone(issue.severity)}>{issue.severity}</Badge>
+                                    <div className="min-w-0">
+                                      <span className="font-medium text-zinc-800 dark:text-zinc-200">{issue.title}</span>
+                                      <span className="ml-1 text-zinc-500 dark:text-zinc-400">— {issue.detail}</span>
+                                    </div>
+                                  </div>
+                                  {actions.length > 0 && (
+                                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                      {actions.map((action) => (
+                                        <button
+                                          key={`${action.kind}-${action.label}`}
+                                          type="button"
+                                          onClick={() => handleOverviewAction(action)}
+                                          disabled={isOverviewActionDisabled(action)}
+                                          className="rounded-md border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                                        >
+                                          {overviewActionLabel(action)}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            ))}
+                              )
+                            })}
                           </div>
                         </Section>
                       ) : (
