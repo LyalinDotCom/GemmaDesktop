@@ -1,12 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type {
-  EnvironmentInspectionResult,
-  GemmaDesktopEvent,
-  RuntimeDebugEvent,
-  SessionInput,
-  SessionSnapshot,
-  TurnResult,
+import {
+  evaluateBuildExecCommandPolicy,
+  shouldRequireToolApproval,
+  type ConversationApprovalMode,
+  type EnvironmentInspectionResult,
+  type GemmaDesktopEvent,
+  type RuntimeDebugEvent,
+  type SessionInput,
+  type SessionSnapshot,
+  type TurnResult,
 } from "@gemma-desktop/sdk-core";
 import {
   createGemmaDesktop,
@@ -90,25 +93,84 @@ function resolveOptionalEnvValue(value: string | undefined): string | undefined 
 }
 
 type ToolPermissionPolicy = NonNullable<CreateGemmaDesktopOptions["toolPolicy"]>;
+type ToolPermissionPolicyInput = Parameters<ToolPermissionPolicy["authorize"]>[0];
+type ToolPermissionDecision = Awaited<ReturnType<ToolPermissionPolicy["authorize"]>>;
 
-function createCliToolPermissionPolicy(): ToolPermissionPolicy {
+function resolveModeBase(mode: unknown): string {
+  if (typeof mode === "string") {
+    return mode;
+  }
+  if (mode && typeof mode === "object" && typeof (mode as { base?: unknown }).base === "string") {
+    return (mode as { base: string }).base;
+  }
+  return "explore";
+}
+
+function createCliToolPermissionPolicy(approvalMode: ConversationApprovalMode): ToolPermissionPolicy {
   return {
-    authorize({ permission }) {
-      if (permission?.kind !== "workspace_escape") {
-        return { allowed: true };
-      }
-
-      return {
-        allowed: false,
-        reason: [
-          "CLI blocks tool calls that target paths outside the session workspace because they require explicit user approval.",
-          permission.reason,
-          `Workspace: ${permission.details.workingDirectory}`,
-          `Requested path: ${permission.details.requestedPath}`,
-          `Resolved path: ${permission.details.resolvedPath}`,
-        ].join(" "),
-      };
+    authorize(input) {
+      return Promise.resolve(resolveCliToolPermissionDecision(approvalMode, input));
     },
+  };
+}
+
+function resolveCliToolPermissionDecision(
+  approvalMode: ConversationApprovalMode,
+  { tool, toolCall, context, permission }: ToolPermissionPolicyInput,
+): ToolPermissionDecision {
+  if (permission?.kind === "workspace_escape") {
+    if (!shouldRequireToolApproval(approvalMode)) {
+      return { allowed: true };
+    }
+
+    return {
+      allowed: false,
+      reason: [
+        'CLI approval mode "require" blocks tool calls that target paths outside the session workspace.',
+        permission.reason,
+        `Workspace: ${permission.details.workingDirectory}`,
+        `Requested path: ${permission.details.requestedPath}`,
+        `Resolved path: ${permission.details.resolvedPath}`,
+        "Rerun with --approval-mode yolo only if this out-of-workspace access is intentional.",
+      ].join(" "),
+    };
+  }
+
+  if (tool.name !== "exec_command" || resolveModeBase(context.mode) !== "build") {
+    return { allowed: true };
+  }
+
+  const command =
+    toolCall.input
+    && typeof toolCall.input === "object"
+    && !Array.isArray(toolCall.input)
+    && typeof (toolCall.input as Record<string, unknown>).command === "string"
+      ? (toolCall.input as Record<string, unknown>).command as string
+      : "";
+  const commandPolicy = evaluateBuildExecCommandPolicy(command);
+
+  if (commandPolicy.kind === "allow") {
+    return { allowed: true };
+  }
+
+  if (commandPolicy.kind === "deny") {
+    return {
+      allowed: false,
+      reason: commandPolicy.reason,
+    };
+  }
+
+  if (!shouldRequireToolApproval(approvalMode)) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason: [
+      'CLI approval mode "require" blocks shell commands that would need interactive approval in the desktop app.',
+      commandPolicy.reason,
+      "Rerun with --approval-mode yolo to auto-approve non-denied build commands.",
+    ].join(" "),
   };
 }
 
@@ -121,7 +183,7 @@ function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtim
     }),
     geminiApiKey: command.geminiApiKey ?? resolveOptionalEnvValue(runtime.env.GEMINI_API_KEY),
     geminiApiModel: command.geminiApiModel ?? resolveOptionalEnvValue(runtime.env.GEMMA_DESKTOP_GEMINI_API_MODEL),
-    toolPolicy: createCliToolPermissionPolicy(),
+    ...("approvalMode" in command ? { toolPolicy: createCliToolPermissionPolicy(command.approvalMode) } : {}),
   });
 }
 
@@ -135,6 +197,7 @@ function createSessionOptions(command: SessionCliOptions): CreateSessionOptions 
     runtimeId: command.runtimeId,
     preferredRuntimeId: command.runtimeId,
     selectedToolNames: command.selectedToolNames,
+    approvalMode: command.approvalMode,
     requestPreferences: hasRequestPreferences(command) ? command.requestPreferences : undefined,
     extraMetadata: command.extraMetadata,
   });

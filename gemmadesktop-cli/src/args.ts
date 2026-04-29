@@ -1,5 +1,11 @@
 import path from "node:path";
-import type { BuildTurnPolicyInput, ModeSelection } from "@gemma-desktop/sdk-core";
+import {
+  DEFAULT_CONVERSATION_APPROVAL_MODE,
+  normalizeConversationApprovalMode,
+  type BuildTurnPolicyInput,
+  type ConversationApprovalMode,
+  type ModeSelection,
+} from "@gemma-desktop/sdk-core";
 import {
   type DesktopParityRuntimeEndpoints,
   resolveDefaultModelTarget,
@@ -45,6 +51,7 @@ export interface SessionCliOptions extends CommonCliOptions {
   showEvents: boolean;
   debugRuntime: boolean;
   selectedToolNames: string[];
+  approvalMode: ConversationApprovalMode;
   requestPreferences: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
 }
@@ -64,6 +71,7 @@ export interface ScenarioCliOptions extends CommonCliOptions {
   buildPolicy?: BuildTurnPolicyInput;
   showEvents: boolean;
   debugRuntime: boolean;
+  approvalMode: ConversationApprovalMode;
   requestPreferences: RequestPreferences;
 }
 
@@ -96,6 +104,7 @@ interface ParseState {
   promptFile?: string;
   showEvents: boolean;
   debugRuntime: boolean;
+  approvalMode: ConversationApprovalMode;
   geminiApiKey?: string;
   geminiApiModel?: string;
   omlxApiKey?: string;
@@ -154,6 +163,8 @@ export function usage(): string {
     "  --tool <name>                 Add a tool to the SDK mode selection. Can repeat.",
     "  --without-tool <name>         Remove a tool from the SDK mode selection. Can repeat.",
     "  --require-tool <name>         Require a tool call in the SDK mode selection. Can repeat.",
+    "  --approval-mode <require|yolo>",
+    "                                Require approval for risky commands, or auto-approve non-denied commands.",
     "  --reasoning <auto|on>          Request reasoning control through desktop-style metadata.",
     "  --ollama-option <key=value>   Numeric Ollama request option. Can repeat.",
     "  --ollama-keep-alive <value>   Ollama request keep_alive value.",
@@ -197,6 +208,7 @@ function initialState(argv: string[], cwd: string): ParseState {
     selectedToolNames: [],
     showEvents: false,
     debugRuntime: false,
+    approvalMode: DEFAULT_CONVERSATION_APPROVAL_MODE,
     requestPreferences: {},
     positional: [],
   };
@@ -283,6 +295,16 @@ function buildBuildPolicy(state: ParseState): BuildTurnPolicyInput | undefined {
   };
 }
 
+function readApprovalMode(value: string): ConversationApprovalMode {
+  if (value === "require" || value === "require_approval") {
+    return DEFAULT_CONVERSATION_APPROVAL_MODE;
+  }
+  if (value === "yolo") {
+    return normalizeConversationApprovalMode(value);
+  }
+  throw new CliArgumentError("--approval-mode must be require or yolo.");
+}
+
 function resolveWorkingDirectory(input: string): string {
   return path.resolve(input);
 }
@@ -355,6 +377,9 @@ function applyFlag(state: ParseState, flag: string): void {
       return;
     case "--require-tool":
       state.requiredTools.push(readFlagValue(state, flag));
+      return;
+    case "--approval-mode":
+      state.approvalMode = readApprovalMode(readFlagValue(state, flag));
       return;
     case "--ollama-endpoint":
       state.endpoints.ollama = readFlagValue(state, flag);
@@ -474,6 +499,7 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
       },
       showEvents: state.showEvents,
       debugRuntime: state.debugRuntime,
+      approvalMode: state.approvalMode,
       requestPreferences: state.requestPreferences,
     };
   }
@@ -492,6 +518,7 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
     ...(state.promptFile ? { promptFile: state.promptFile } : {}),
     showEvents: state.showEvents,
     debugRuntime: state.debugRuntime,
+    approvalMode: state.approvalMode,
     selectedToolNames: [...new Set(state.selectedToolNames)],
     requestPreferences: state.requestPreferences,
     ...(state.extraMetadata ? { extraMetadata: state.extraMetadata } : {}),

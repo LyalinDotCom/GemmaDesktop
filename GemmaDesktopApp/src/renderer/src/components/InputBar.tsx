@@ -55,6 +55,7 @@ import {
 } from '@/lib/speechAudio'
 import { ToolSelector } from '@/components/ToolSelector'
 import { GemmaSizeSelector } from '@/components/GemmaSizeSelector'
+import { ApprovalModeToggle } from '@/components/ApprovalModeToggle'
 import { serializeSessionHistory } from '@/lib/chatCopy'
 import {
   describeAssistantNarrationMode,
@@ -91,6 +92,7 @@ import type {
   SpeechEvent,
   SpeechInspection,
 } from '@/types'
+import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import {
   SPEECH_CHUNK_DURATION_MS,
   SPEECH_CHUNK_OVERLAP_MS,
@@ -121,7 +123,9 @@ export interface InputBarProps {
   selectedMode: SessionMode
   conversationKind: ConversationKind
   planMode: boolean
+  approvalMode?: ConversationApprovalMode
   onSelectConversationMode?: (mode: ConversationRunMode) => void
+  onSelectApprovalMode?: (mode: ConversationApprovalMode) => void
   onSelectModel?: (selection: {
     modelId: string
     runtimeId: string
@@ -293,7 +297,9 @@ export function InputBar({
   selectedMode,
   conversationKind,
   planMode,
+  approvalMode,
   onSelectConversationMode,
+  onSelectApprovalMode,
   onSelectModel,
   modeChangeDisabled = false,
   conversationRunDisabledReason = null,
@@ -2121,6 +2127,13 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           disabled={conversationModeControlDisabled}
           onSelect={onSelectModel}
         />
+        {!isResearchConversation && (
+          <ApprovalModeToggle
+            mode={approvalMode}
+            disabled={conversationModeControlDisabled}
+            onChange={onSelectApprovalMode}
+          />
+        )}
         {sessionTools.length > 0 && (
           <ToolSelector
             tools={sessionTools}

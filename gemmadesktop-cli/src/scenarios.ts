@@ -690,6 +690,7 @@ export async function runHeadlessScenario(
     runtimeId: command.runtimeId,
     preferredRuntimeId: command.runtimeId,
     selectedToolNames: [],
+    approvalMode: command.approvalMode,
     requestPreferences: hasRequestPreferences(command) ? command.requestPreferences : undefined,
     extraMetadata: {
       scenario: command.scenarioId,

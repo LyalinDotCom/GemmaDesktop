@@ -1,4 +1,4 @@
-import type { ModeSelection } from "@gemma-desktop/sdk-core";
+import type { ConversationApprovalMode, ModeSelection } from "@gemma-desktop/sdk-core";
 
 export const APP_SESSION_METADATA_KEY = "gemmaDesktopApp";
 export const REQUEST_PREFERENCES_METADATA_KEY = "requestPreferences";
@@ -15,6 +15,7 @@ export interface DesktopParitySessionMetadataOptions {
   runtimeId: string;
   preferredRuntimeId?: string;
   selectedToolNames?: string[];
+  approvalMode: ConversationApprovalMode;
   requestPreferences?: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
 }
@@ -45,6 +46,7 @@ export function buildDesktopParitySessionMetadata(
       selectedSkillNames: [],
       selectedToolIds: [],
       selectedToolNames,
+      approvalMode: options.approvalMode,
       surface: "default",
       visibility: "visible",
       storageScope: "project",

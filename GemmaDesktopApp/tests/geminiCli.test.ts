@@ -87,6 +87,31 @@ describe('askGeminiCli', () => {
     }
   })
 
+  it('passes YOLO approval mode through to Gemini CLI when requested', async () => {
+    let seenArgs: string[] = []
+
+    const execFile: MockExecFile = (_file, args, _options, callback) => {
+      seenArgs = args
+      callback(null, JSON.stringify({ response: 'YOLO answer.' }), '')
+    }
+
+    const result = await askGeminiCli(
+      {
+        question: 'Can you inspect and suggest?',
+        workingDirectory: '/tmp/project',
+        approvalMode: 'yolo',
+      },
+      { execFile },
+    )
+
+    expect(seenArgs).toContain('--approval-mode')
+    expect(seenArgs).toContain('yolo')
+    expect(result).toMatchObject({
+      ok: true,
+      response: 'YOLO answer.',
+    })
+  })
+
   it('treats missing gemini binary as a soft failure', async () => {
     const error = Object.assign(new Error('spawn gemini ENOENT'), {
       code: 'ENOENT',

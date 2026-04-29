@@ -182,6 +182,8 @@ describe("headless CLI", () => {
         "build",
         "--tool",
         "read_file",
+        "--approval-mode",
+        "yolo",
         "--reasoning",
         "on",
         "--ollama-option",
@@ -200,6 +202,7 @@ describe("headless CLI", () => {
     expect(code).toBe(0);
     expect(stdout.text()).toBe("Hello from Gemma\n");
     expect(stderr.text()).toBe("");
+    expect(typeof calls.createOptions[0]?.toolPolicy?.authorize).toBe("function");
     expect(calls.inputs).toEqual(["hello"]);
     expect(calls.createOptions[0]?.adapters?.map((adapter) => adapter.identity.id)).toEqual(
       [...DESKTOP_PARITY_RUNTIME_ADAPTER_IDS],
@@ -217,6 +220,7 @@ describe("headless CLI", () => {
       [APP_SESSION_METADATA_KEY]: {
         baseMode: "build",
         preferredRuntimeId: "ollama-native",
+        approvalMode: "yolo",
         surface: "default",
         storageScope: "project",
       },

@@ -76,7 +76,8 @@ Each scenario emits JSON with the session turns, artifact directory, evaluator c
 - `--cwd <path>`: set the working directory for SDK tools and session context.
 - `--tool <name>`: add an SDK tool to the active mode. Can repeat.
 - `--without-tool <name>`: remove a tool from the active mode. Can repeat.
-- `--reasoning auto|on|off`: pass desktop-style reasoning metadata.
+- `--approval-mode require|yolo`: require approval for risky build commands, or auto-approve commands that are not hard-denied.
+- `--reasoning auto|on`: pass desktop-style reasoning metadata.
 - `--ollama-option key=value`: pass numeric Ollama request options such as `num_ctx=8192`.
 - `--ollama-keep-alive <value>`: pass the Ollama keep-alive value used by the request.
 - `--show-events`: mirror SDK events to stderr, or include them in JSON output.

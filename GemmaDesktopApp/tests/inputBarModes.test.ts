@@ -127,8 +127,25 @@ describe('InputBar mode rendering', () => {
     expect(buildMarkup).toContain('title="Switch to plan mode"')
     expect(buildMarkup).toContain('aria-label="Session model size"')
     expect(buildMarkup).toContain('Session model size: High')
+    expect(buildMarkup).toContain('aria-label="Switch to YOLO approval mode"')
+    expect(buildMarkup).toContain('>Ask<')
     expect(exploreMarkup).toContain('aria-label="Switch between Explore, Act, and Plan"')
     expect(researchMarkup).not.toContain('aria-label="Switch between Explore, Act, and Plan"')
+    expect(researchMarkup).not.toContain('Switch to YOLO approval mode')
+  })
+
+  it('shows the selected YOLO approval mode in the toolbar', () => {
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        selectedMode: 'build',
+        approvalMode: 'yolo',
+        onSelectApprovalMode: () => {},
+      })),
+    )
+
+    expect(markup).toContain('aria-label="Switch to require approval mode"')
+    expect(markup).toContain('aria-pressed="true"')
+    expect(markup).toContain('>YOLO<')
   })
 
   it('shows a Research badge plus an enabled model selector for research conversations', () => {

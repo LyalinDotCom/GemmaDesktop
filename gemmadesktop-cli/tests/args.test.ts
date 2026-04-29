@@ -25,6 +25,8 @@ describe("CLI argument parsing", () => {
       "read_file",
       "--without-tool",
       "exec_command",
+      "--approval-mode",
+      "yolo",
       "--reasoning",
       "on",
       "--ollama-option",
@@ -45,6 +47,7 @@ describe("CLI argument parsing", () => {
     expect(command.modelId).toBe("gemma4:e2b");
     expect(command.runtimeId).toBe("ollama-native");
     expect(command.outputJson).toBe(true);
+    expect(command.approvalMode).toBe("yolo");
     expect(command.endpoints.omlx).toBe("http://localhost:8001");
     expect(command.omlxApiKey).toBe("1234");
     expect(command.mode).toEqual({
@@ -68,6 +71,13 @@ describe("CLI argument parsing", () => {
 
     expect(command.command).toBe("run");
     expect(command.prompt).toBe("Summarize this");
+    expect(command.approvalMode).toBe("require_approval");
+  });
+
+  it("rejects unsupported approval modes", () => {
+    expect(() =>
+      parseCliCommand(["run", "hello", "--approval-mode", "maybe"], "/tmp/gemma-project"),
+    ).toThrow(CliArgumentError);
   });
 
   it("rejects malformed numeric request preferences", () => {

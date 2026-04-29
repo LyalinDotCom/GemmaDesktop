@@ -1,4 +1,8 @@
 import { execFile } from 'child_process'
+import {
+  normalizeConversationApprovalMode,
+  type ConversationApprovalMode,
+} from '@gemma-desktop/sdk-core'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../shared/geminiModels'
 
 export { ASK_GEMINI_DEFAULT_MODEL } from '../shared/geminiModels'
@@ -23,6 +27,7 @@ export interface AskGeminiCliInput {
   context?: string
   model?: string
   workingDirectory: string
+  approvalMode?: ConversationApprovalMode
 }
 
 export interface AskGeminiCliSuccess {
@@ -97,6 +102,8 @@ export async function askGeminiCli(
     question,
     context: input.context,
   })
+  const approvalMode = normalizeConversationApprovalMode(input.approvalMode)
+  const geminiApprovalMode = approvalMode === 'yolo' ? 'yolo' : 'plan'
   const startedAt = now()
 
   if (question.length === 0) {
@@ -120,7 +127,7 @@ export async function askGeminiCli(
     '--output-format',
     'json',
     '--approval-mode',
-    'plan',
+    geminiApprovalMode,
   ]
 
   let { error, stdout, stderr } = await execGeminiCli({

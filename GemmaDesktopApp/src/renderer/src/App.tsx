@@ -98,6 +98,7 @@ import {
   type ConversationExecutionRun,
 } from '@shared/conversationExecutionPolicy'
 import { createDefaultModelSelectionSettings } from '@shared/sessionModelDefaults'
+import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 
 const DEFAULT_NOTIFICATION_PERMISSION_STATE: NotificationPermissionState = {
   status: 'default',
@@ -1198,6 +1199,38 @@ export function App() {
     refreshSessionSummaries,
   ])
 
+  const handleSelectGlobalChatApprovalMode = useCallback((approvalMode: ConversationApprovalMode) => {
+    const sessionId = globalChatSession.sessionId
+    if (
+      globalChatBusy
+      || globalConversationRunDisabledReason
+      || !sessionId
+      || !globalChatDetail
+      || globalChatDetail.conversationKind !== 'normal'
+      || globalChatDetail.approvalMode === approvalMode
+    ) {
+      return
+    }
+
+    void window.gemmaDesktopBridge.sessions
+      .update(sessionId, {
+        approvalMode,
+      })
+      .then(async () => {
+        await globalChatSession.retry()
+        await refreshSessionSummaries()
+      })
+      .catch((error) => {
+        console.error('Failed to update Assistant Chat approval mode:', error)
+      })
+  }, [
+    globalChatBusy,
+    globalConversationRunDisabledReason,
+    globalChatDetail,
+    globalChatSession,
+    refreshSessionSummaries,
+  ])
+
   const handleToggleGlobalChatTool = useCallback((toolId: string, nextSelected: boolean) => {
     const sessionId = globalChatSession.sessionId
     if (!sessionId || !globalChatDetail || globalConversationRunDisabledReason) {
@@ -1280,6 +1313,27 @@ export function App() {
       await switchActiveSessionModel(selection)
     })().catch((error) => {
       console.error('Failed to update conversation model:', error)
+    })
+  }
+  const handleSelectConversationApprovalMode = (approvalMode: ConversationApprovalMode) => {
+    const sessionId = state.activeSessionId
+    const activeSession = state.activeSession
+
+    if (
+      isBusy
+      || primaryConversationRunDisabledReason
+      || !sessionId
+      || !activeSession
+      || activeConversationKind !== 'normal'
+      || activeSession.approvalMode === approvalMode
+    ) {
+      return
+    }
+
+    updateSession(sessionId, {
+      approvalMode,
+    }).catch((error) => {
+      console.error('Failed to update conversation approval mode:', error)
     })
   }
   const sessionContext = {
@@ -2181,7 +2235,9 @@ export function App() {
       selectedMode={activeMode}
       conversationKind={state.activeSession.conversationKind}
       planMode={activePlanMode}
+      approvalMode={state.activeSession.approvalMode}
       onSelectConversationMode={handleSelectConversationMode}
+      onSelectApprovalMode={handleSelectConversationApprovalMode}
       onSelectModel={handleSelectConversationModel}
       modeChangeDisabled={isBusy || !state.activeSessionId}
       conversationRunDisabledReason={primaryConversationRunDisabledReason}
@@ -2301,7 +2357,9 @@ export function App() {
       selectedMode={globalChatMode}
       conversationKind={globalChatDetail.conversationKind}
       planMode={globalChatPlanMode}
+      approvalMode={globalChatDetail.approvalMode}
       onSelectConversationMode={handleSelectGlobalChatMode}
+      onSelectApprovalMode={handleSelectGlobalChatApprovalMode}
       onSelectModel={handleSelectGlobalChatModel}
       modeChangeDisabled={globalChatBusy || !globalChatSession.sessionId}
       conversationRunDisabledReason={globalConversationRunDisabledReason}
