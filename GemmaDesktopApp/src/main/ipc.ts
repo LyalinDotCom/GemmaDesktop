@@ -42,6 +42,7 @@ import type {
 } from '@gemma-desktop/sdk-node'
 import type {
   CapabilityRecord,
+  ConversationApprovalMode,
   SessionSnapshot,
   GemmaDesktopEvent,
   RuntimeDebugEvent,
@@ -50,7 +51,12 @@ import type {
   SessionInput,
   StructuredOutputSpec,
 } from '@gemma-desktop/sdk-core'
-import { GemmaDesktopError } from '@gemma-desktop/sdk-core'
+import {
+  DEFAULT_CONVERSATION_APPROVAL_MODE,
+  GemmaDesktopError,
+  normalizeConversationApprovalMode,
+  shouldRequireToolApproval,
+} from '@gemma-desktop/sdk-core'
 import {
   createHostTools,
   createWorkspaceSearchBackend,
@@ -125,6 +131,7 @@ import {
   scheduleToText,
   type AutomationLogEntry,
   type AutomationRecord,
+  type AutomationRunRecord,
   type AutomationSchedule,
 } from './automations'
 import { openLinkTarget } from './links'
@@ -560,6 +567,7 @@ interface AppSessionConfig {
   selectedSkillNames: string[]
   selectedToolIds: string[]
   selectedToolNames: string[]
+  approvalMode: ConversationApprovalMode
   surface: AppSessionSurface
   visibility: AppSessionVisibility
   storageScope: AppSessionStorageScope
@@ -581,6 +589,7 @@ function normalizeSessionConfig(config: AppSessionConfig): AppSessionConfig {
       conversationKind === 'normal' && baseMode === 'build'
         ? Boolean(config.planMode)
         : false,
+    approvalMode: normalizeConversationApprovalMode(config.approvalMode),
     surface: normalizeAppSessionSurface(config.surface),
     visibility: normalizeAppSessionVisibility(config.visibility),
     storageScope: normalizeAppSessionStorageScope(config.storageScope),
@@ -1172,11 +1181,13 @@ const automationStore = new AutomationStore()
 let sidebarStore: SidebarStateStore | null = null
 const liveSessions = new Map<string, GemmaDesktopSession>()
 const activeAbortControllers = new Map<string, AbortController>()
-const pendingSessionTasks = new Map<string, ConversationExecutionTask>()
-const activeSessionTasks = new Map<string, ConversationExecutionTask>()
+const pendingSessionTasks = new Map<string, SessionConversationExecutionTask>()
+const activeSessionTasks = new Map<string, SessionConversationExecutionTask>()
 const activeAutomationRuns = new Set<string>()
 const activeAutomationAbortControllers = new Map<string, AbortController>()
 let automationScheduler: NodeJS.Timeout | null = null
+let automationSchedulerChecking = false
+const AUTOMATION_APPROVAL_MODE: ConversationApprovalMode = 'yolo'
 let keepAwakeProcess: ReturnType<typeof spawn> | null = null
 let gemmaInstallManager: ReturnType<typeof createGemmaInstallManager> | null = null
 const speechRuntimeManager = new SpeechRuntimeManager()
@@ -1202,8 +1213,9 @@ const PLACEHOLDER_SESSION_TITLE = 'New Conversation'
 const BUILT_IN_REQUIRED_PRIMARY_MODEL_IDS = [
   createDefaultModelSelectionSettings(os.totalmem()).mainModel.modelId,
 ]
+type SessionConversationExecutionTask = Exclude<ConversationExecutionTask, 'automation'>
 
-function getSessionExecutionTask(sessionId: string): ConversationExecutionTask | undefined {
+function getSessionExecutionTask(sessionId: string): SessionConversationExecutionTask | undefined {
   return activeSessionTasks.get(sessionId) ?? pendingSessionTasks.get(sessionId)
 }
 
@@ -1213,6 +1225,10 @@ function isSessionExecutionBusy(sessionId: string): boolean {
     || activeSessionTasks.has(sessionId)
     || pendingSessionTasks.has(sessionId)
   )
+}
+
+function getAutomationExecutionSessionId(automationId: string): string {
+  return `automation:${automationId}`
 }
 
 function listConversationExecutions(): ConversationExecutionRun[] {
@@ -1234,14 +1250,23 @@ function listConversationExecutions(): ConversationExecutionRun[] {
     })
   }
 
+  for (const automationId of activeAutomationRuns) {
+    const sessionId = getAutomationExecutionSessionId(automationId)
+    runs.set(sessionId, {
+      sessionId,
+      task: 'automation',
+      title: automationStore.get(automationId)?.name ?? 'Automation',
+    })
+  }
+
   return [...runs.values()]
 }
 
 function beginConversationExecutionGate(
   sessionId: string,
-  task: ConversationExecutionTask,
+  task: SessionConversationExecutionTask,
   options: {
-    allowExistingPendingTask?: ConversationExecutionTask
+    allowExistingPendingTask?: SessionConversationExecutionTask
   } = {},
 ): () => void {
   const currentPendingTask = pendingSessionTasks.get(sessionId)
@@ -1287,7 +1312,7 @@ function assertNoConversationExecutionRunning(): void {
 
 function markConversationExecutionActive(
   sessionId: string,
-  task: ConversationExecutionTask,
+  task: SessionConversationExecutionTask,
 ): void {
   if (pendingSessionTasks.get(sessionId) === task) {
     pendingSessionTasks.delete(sessionId)
@@ -4087,6 +4112,7 @@ function getSessionConfigFromMetadata(
     selectedSkillNames,
     selectedToolIds,
     selectedToolNames,
+    approvalMode: normalizeConversationApprovalMode(metadata?.approvalMode),
     surface: normalizeAppSessionSurface(metadata?.surface),
     visibility: normalizeAppSessionVisibility(metadata?.visibility),
     storageScope: normalizeAppSessionStorageScope(metadata?.storageScope),
@@ -4124,6 +4150,7 @@ function createSessionMetadata(
       selectedSkillNames: [...config.selectedSkillNames],
       selectedToolIds: [...config.selectedToolIds],
       selectedToolNames: [...config.selectedToolNames],
+      approvalMode: config.approvalMode,
       surface: config.surface,
       visibility: config.visibility,
       storageScope: config.storageScope,
@@ -4167,7 +4194,9 @@ function resolveSessionStorageDirectory(
   )
 }
 
-function buildTalkSessionConfig(): AppSessionConfig {
+function buildTalkSessionConfig(
+  approvalMode: ConversationApprovalMode = DEFAULT_CONVERSATION_APPROVAL_MODE,
+): AppSessionConfig {
   return normalizeSessionConfig({
     conversationKind: 'normal',
     baseMode: 'explore',
@@ -4177,6 +4206,7 @@ function buildTalkSessionConfig(): AppSessionConfig {
     selectedSkillNames: [],
     selectedToolIds: [],
     selectedToolNames: [],
+    approvalMode,
     surface: 'talk',
     visibility: 'hidden',
     storageScope: 'global',
@@ -4239,7 +4269,7 @@ function normalizePersistedSessionData(
     || isTalkSessionId(data.snapshot.sessionId)
     || isTalkSessionSurface(metadataRecord?.surface)
   const nextConfig: AppSessionConfig = shouldForceTalkConfig
-    ? buildTalkSessionConfig()
+    ? buildTalkSessionConfig(currentConfig.approvalMode)
     : {
         ...currentConfig,
         baseMode:
@@ -4446,9 +4476,10 @@ async function applyCoBrowseSessionComposition(
   }>
 }> {
   const restoreFrame = captureSessionCompositionFrame(snapshot)
+  const rawConfig = getSessionConfig(snapshot)
   const currentConfig = isTalkSessionSnapshot(snapshot)
-    ? buildTalkSessionConfig()
-    : getSessionConfig(snapshot)
+    ? buildTalkSessionConfig(rawConfig.approvalMode)
+    : rawConfig
   const sessionMode = resolveAppSessionMode(currentConfig)
   const target = resolveSessionPrimaryTarget(snapshot.sessionId, currentConfig, snapshot)
   const runtimeSelection = normalizeRuntimeForSessionMode(
@@ -4465,6 +4496,7 @@ async function applyCoBrowseSessionComposition(
     preferredRuntimeId: target.runtimeId,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
     coBrowseActive: true,
     surface: currentConfig.surface,
     visibility: currentConfig.visibility,
@@ -4806,6 +4838,7 @@ async function resolveSessionComposition(input: {
   preferredRuntimeId: string
   selectedSkillIds: string[]
   selectedToolIds: string[]
+  approvalMode: ConversationApprovalMode
   coBrowseActive?: boolean
   surface?: AppSessionSurface
   visibility?: AppSessionVisibility
@@ -4828,6 +4861,7 @@ async function resolveSessionComposition(input: {
     selectedSkillNames: [],
     selectedToolIds: [],
     selectedToolNames: [],
+    approvalMode: input.approvalMode,
     surface: input.surface ?? 'default',
     visibility: input.visibility ?? 'visible',
     storageScope: input.storageScope ?? 'project',
@@ -4950,18 +4984,19 @@ async function resolveSessionComposition(input: {
     toolMode,
     currentSettings.toolPolicy,
   )
+  const exposesInteractiveBuildSurfaces =
+    nextSessionConfig.baseMode === 'build'
+    && nextSessionConfig.conversationKind === 'normal'
+    && !nextSessionConfig.planMode
+    && !isHiddenSessionConfig(nextSessionConfig)
   const toolAugmentedMode = addSessionTools(
     baseMode,
     [
       ...((input.coBrowseActive
-        || (nextSessionConfig.baseMode === 'build'
-          && nextSessionConfig.conversationKind === 'normal'
-          && !nextSessionConfig.planMode))
+        || exposesInteractiveBuildSurfaces)
         ? [...PROJECT_BROWSER_TOOL_NAMES]
         : []),
-      ...(nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      ...(exposesInteractiveBuildSurfaces
         ? [...BACKGROUND_PROCESS_TOOL_NAMES]
         : []),
       ...(!nextSessionConfig.planMode
@@ -5011,15 +5046,11 @@ async function resolveSessionComposition(input: {
     sessionTools: sessionToolInstructions,
     coBrowseTools: input.coBrowseActive ? buildCoBrowseToolInstructions() : undefined,
     projectBrowser:
-      nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      exposesInteractiveBuildSurfaces
         ? buildProjectBrowserInstructions()
         : undefined,
     backgroundProcesses:
-      nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      exposesInteractiveBuildSurfaces
         ? buildBackgroundProcessInstructions()
         : undefined,
     userMemory: userMemorySection,
@@ -5066,9 +5097,14 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
         context.sessionMetadata,
         resolveBaseMode(context.mode),
       )
+      const approvalsRequired = shouldRequireToolApproval(sessionConfig.approvalMode)
       const currentSettings = await getSettingsState()
 
       if (permission?.kind === 'workspace_escape') {
+        if (!approvalsRequired) {
+          return { allowed: true }
+        }
+
         const approved = await requestToolApproval({
           sessionId: context.sessionId,
           signal: context.signal,
@@ -5130,7 +5166,11 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
             ? record.action.trim()
             : undefined
 
-        if (action && CHROME_DEVTOOLS_MUTATING_ACTION_SET.has(action)) {
+        if (
+          action
+          && CHROME_DEVTOOLS_MUTATING_ACTION_SET.has(action)
+          && approvalsRequired
+        ) {
           const approved = await requestToolApproval({
             sessionId: context.sessionId,
             signal: context.signal,
@@ -5194,6 +5234,13 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
           return { allowed: true }
         }
 
+        if (isHiddenSessionConfig(sessionConfig)) {
+          return {
+            allowed: false,
+            reason: 'Project Browser tools are only available in visible Build conversations.',
+          }
+        }
+
         if (sessionConfig.baseMode !== 'build' || sessionConfig.planMode) {
           return {
             allowed: false,
@@ -5205,6 +5252,13 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
       }
 
       if (BACKGROUND_PROCESS_TOOL_NAMES.includes(tool.name as (typeof BACKGROUND_PROCESS_TOOL_NAMES)[number])) {
+        if (isHiddenSessionConfig(sessionConfig)) {
+          return {
+            allowed: false,
+            reason: 'Background process tools are only available in visible Build conversations.',
+          }
+        }
+
         if (sessionConfig.baseMode !== 'build' || sessionConfig.planMode) {
           return {
             allowed: false,
@@ -5255,7 +5309,7 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
           })
         }
 
-        if (commandPolicy.kind === 'ask') {
+        if (commandPolicy.kind === 'ask' && approvalsRequired) {
           const approved = await requestToolApproval({
             sessionId: context.sessionId,
             signal: context.signal,
@@ -5339,7 +5393,7 @@ async function rehydrateSessionSnapshot(
   const rawConfig = getSessionConfig(snapshot)
   const isTalkSnapshot = isTalkSessionSnapshot(snapshot)
   const currentConfig = isTalkSnapshot
-    ? buildTalkSessionConfig()
+    ? buildTalkSessionConfig(rawConfig.approvalMode)
     : rawConfig
   const talkWorkingDirectory = isTalkSnapshot
     ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
@@ -5360,6 +5414,7 @@ async function rehydrateSessionSnapshot(
     preferredRuntimeId: target.runtimeId,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
     surface: currentConfig.surface,
     visibility: currentConfig.visibility,
     storageScope: currentConfig.storageScope,
@@ -8765,6 +8820,7 @@ async function buildPdfWorkerSessionMetadata(
         selectedSkillNames: [],
         selectedToolIds: [],
         selectedToolNames: [],
+        approvalMode: DEFAULT_CONVERSATION_APPROVAL_MODE,
         surface: 'default',
         visibility: 'visible',
         storageScope: 'project',
@@ -9578,7 +9634,9 @@ async function getOrResumeLiveSession(sessionId: string): Promise<{
 
 async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
   let persisted = await getPersistedSession(TALK_SESSION_ID)
-  const talkConfig = buildTalkSessionConfig()
+  const talkConfig = buildTalkSessionConfig(
+    persisted?.snapshot ? getSessionConfig(persisted.snapshot).approvalMode : undefined,
+  )
   const talkWorkingDirectory = await ensureDirectoryExists(
     getTalkSessionWorkspaceDirectory(app.getPath('userData')),
   )
@@ -9600,6 +9658,7 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
       preferredRuntimeId: defaultTarget.runtimeId,
       selectedSkillIds: [],
       selectedToolIds: [],
+      approvalMode: talkConfig.approvalMode,
       surface: talkConfig.surface,
       visibility: talkConfig.visibility,
       storageScope: talkConfig.storageScope,
@@ -9660,6 +9719,7 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
     preferredRuntimeId: currentConfig.preferredRuntimeId,
     selectedSkillIds: talkConfig.selectedSkillIds,
     selectedToolIds: talkConfig.selectedToolIds,
+    approvalMode: talkConfig.approvalMode,
     surface: talkConfig.surface,
     visibility: talkConfig.visibility,
     storageScope: talkConfig.storageScope,
@@ -10816,43 +10876,81 @@ async function refreshKeepAwakeState(): Promise<void> {
   stopKeepAwake()
 }
 
-async function runAutomation(
+type AutomationRunStartResult = 'started' | 'skipped' | 'deferred'
+
+function findAutomationExecutionBlocker(
+  automationId: string,
+): ConversationExecutionRun | null {
+  return findBlockingConversationExecution(
+    listConversationExecutions(),
+    getAutomationExecutionSessionId(automationId),
+  )
+}
+
+async function updateScheduledAutomationAfterRun(
   automationId: string,
   trigger: 'schedule' | 'manual',
 ): Promise<void> {
+  const latest = automationStore.get(automationId)
+  if (latest && trigger === 'schedule') {
+    await automationStore.update(automationId, {
+      nextRunAt: computeNextRunAt(latest),
+    })
+  }
+}
+
+async function runAutomation(
+  automationId: string,
+  trigger: 'schedule' | 'manual',
+): Promise<AutomationRunStartResult> {
   if (activeAutomationRuns.has(automationId)) {
-    return
+    return 'skipped'
   }
 
   const record = automationStore.get(automationId)
   if (!record) {
-    return
+    return 'skipped'
+  }
+
+  const blocker = findAutomationExecutionBlocker(automationId)
+  if (blocker) {
+    if (trigger === 'schedule') {
+      return 'deferred'
+    }
+
+    throw new Error(buildConversationExecutionBlockedMessage(blocker))
   }
 
   const abortController = new AbortController()
-  activeAutomationRuns.add(automationId)
-  activeAutomationAbortControllers.set(automationId, abortController)
-  await refreshKeepAwakeState()
-
-  const run = await automationStore.createRun(
-    automationId,
-    trigger === 'schedule' ? 'Scheduled run started' : 'Manual run started',
-    trigger,
-  )
-  broadcastAutomationsChanged()
-
   let assistantText = ''
   let reasoningText = ''
+  let run: AutomationRunRecord | null = null
+  let releasePrimaryLease: (() => void) | null = null
+  let registeredActiveRun = false
   const startedAt = Date.now()
-  const releasePrimaryLease = await acquirePrimaryModelLease(
-    `automation:${automationId}`,
-    {
-      modelId: record.modelId,
-      runtimeId: record.runtimeId,
-    },
-  )
 
   try {
+    activeAutomationRuns.add(automationId)
+    activeAutomationAbortControllers.set(automationId, abortController)
+    registeredActiveRun = true
+    await refreshKeepAwakeState()
+
+    run = await automationStore.createRun(
+      automationId,
+      trigger === 'schedule' ? 'Scheduled run started' : 'Manual run started',
+      trigger,
+    )
+    const activeRun = run
+    broadcastAutomationsChanged()
+
+    releasePrimaryLease = await acquirePrimaryModelLease(
+      getAutomationExecutionSessionId(automationId),
+      {
+        modelId: record.modelId,
+        runtimeId: record.runtimeId,
+      },
+    )
+
     const sessionMode: AppSessionMode = 'build'
     const runtimeSelection = normalizeRuntimeForSessionMode(
       record.runtimeId,
@@ -10868,6 +10966,9 @@ async function runAutomation(
       preferredRuntimeId: record.runtimeId,
       selectedSkillIds: record.selectedSkillIds,
       selectedToolIds: [],
+      approvalMode: AUTOMATION_APPROVAL_MODE,
+      visibility: 'hidden',
+      storageScope: 'global',
     })
 
     const session = await gemmaDesktop.sessions.create({
@@ -10884,7 +10985,7 @@ async function runAutomation(
       debug: (event) => {
         void automationStore.appendRunLog(
           automationId,
-          run.id,
+          activeRun.id,
           createAutomationLogEntry({
             layer: 'runtime',
             event: `runtime.${event.transport}.${event.stage}`,
@@ -10908,7 +11009,7 @@ async function runAutomation(
 
       await automationStore.appendRunLog(
         automationId,
-        run.id,
+        activeRun.id,
         createAutomationLogEntry({
           layer: 'sdk',
           event: gemmaDesktopEvent.type,
@@ -10941,7 +11042,7 @@ async function runAutomation(
 
     recordSessionTokens(result.runtimeId, result.modelId, result.usage)
 
-    await automationStore.completeRun(automationId, run.id, {
+    await automationStore.completeRun(automationId, activeRun.id, {
       status: 'success',
       summary:
         result.text.slice(0, 180)
@@ -10955,16 +11056,11 @@ async function runAutomation(
       finishedAt: Date.now(),
     })
 
-    const latest = automationStore.get(automationId)
-    if (latest && trigger === 'schedule') {
-      await automationStore.update(automationId, {
-        nextRunAt: computeNextRunAt(latest),
-      })
-    }
+    await updateScheduledAutomationAfterRun(automationId, trigger)
 
     notificationManager.notifyAutomationFinished({
       automationId,
-      runId: run.id,
+      runId: activeRun.id,
       name: record.name,
       status: 'success',
       summary:
@@ -10972,7 +11068,12 @@ async function runAutomation(
         || assistantText.slice(0, 180)
         || 'Completed successfully',
     })
+    return 'started'
   } catch (error) {
+    if (!run) {
+      throw error
+    }
+
     const cancelled = abortController.signal.aborted
     const message = cancelled
       ? 'Run cancelled'
@@ -10989,12 +11090,7 @@ async function runAutomation(
       finishedAt: Date.now(),
     })
 
-    const latest = automationStore.get(automationId)
-    if (latest && trigger === 'schedule') {
-      await automationStore.update(automationId, {
-        nextRunAt: computeNextRunAt(latest),
-      })
-    }
+    await updateScheduledAutomationAfterRun(automationId, trigger)
 
     notificationManager.notifyAutomationFinished({
       automationId,
@@ -11003,29 +11099,50 @@ async function runAutomation(
       status: cancelled ? 'cancelled' : 'error',
       summary: message,
     })
+    return 'started'
   } finally {
-    activeAutomationRuns.delete(automationId)
-    activeAutomationAbortControllers.delete(automationId)
-    releasePrimaryLease()
+    if (registeredActiveRun) {
+      activeAutomationRuns.delete(automationId)
+      activeAutomationAbortControllers.delete(automationId)
+    }
+    releasePrimaryLease?.()
     await refreshKeepAwakeState()
     broadcastAutomationsChanged()
   }
 }
 
 async function checkDueAutomations(): Promise<void> {
-  const now = Date.now()
-  const dueAutomations = automationStore
-    .list()
-    .filter(
-      (record) =>
-        record.enabled
-        && record.nextRunAt !== null
-        && record.nextRunAt <= now
-        && !activeAutomationRuns.has(record.id),
-    )
+  if (automationSchedulerChecking) {
+    return
+  }
 
-  for (const record of dueAutomations) {
-    void runAutomation(record.id, 'schedule')
+  automationSchedulerChecking = true
+  try {
+    while (true) {
+      const now = Date.now()
+      const record = automationStore
+        .list()
+        .find(
+          (item) =>
+            item.enabled
+            && item.nextRunAt !== null
+            && item.nextRunAt <= now
+            && !activeAutomationRuns.has(item.id),
+        )
+
+      if (!record) {
+        return
+      }
+
+      const result = await runAutomation(record.id, 'schedule')
+      if (result !== 'started') {
+        return
+      }
+    }
+  } catch (error) {
+    console.error('Failed to run due automation:', error)
+  } finally {
+    automationSchedulerChecking = false
   }
 }
 
@@ -12123,6 +12240,10 @@ function createAppTools(): RegisteredTool[] {
         context: contextText,
         model: requestedModel ?? configuredModel,
         workingDirectory: context.workingDirectory,
+        approvalMode: getSessionConfigFromMetadata(
+          context.sessionMetadata,
+          resolveBaseMode(context.mode),
+        ).approvalMode,
       })
 
       appendDebugLog(context.sessionId, {
@@ -12668,6 +12789,7 @@ function snapshotToDetail(
     conversationKind: config.conversationKind,
     workMode: sessionMode,
     planMode: config.planMode,
+    approvalMode: config.approvalMode,
     selectedSkillIds: config.selectedSkillIds,
     selectedSkillNames: config.selectedSkillNames,
     selectedToolIds: config.selectedToolIds,
@@ -12708,6 +12830,7 @@ function metaToSummary(
     conversationKind: config?.conversationKind ?? 'normal',
     workMode: config ? resolveAppSessionMode(config) : 'explore',
     planMode: config?.planMode ?? false,
+    approvalMode: config?.approvalMode ?? DEFAULT_CONVERSATION_APPROVAL_MODE,
     selectedSkillIds: config?.selectedSkillIds ?? [],
     selectedSkillNames: config?.selectedSkillNames ?? [],
     selectedToolIds: config?.selectedToolIds ?? [],
@@ -15312,6 +15435,7 @@ export function registerIpcHandlers(): void {
         conversationKind?: ConversationKind
         workMode?: AppSessionMode
         planMode?: boolean
+        approvalMode?: ConversationApprovalMode
         selectedSkillIds?: string[]
         selectedToolIds?: string[]
         workingDirectory?: string
@@ -15334,6 +15458,7 @@ export function registerIpcHandlers(): void {
         selectedSkillNames: [],
         selectedToolIds: [],
         selectedToolNames: [],
+        approvalMode: normalizeConversationApprovalMode(opts.approvalMode),
         surface: 'default',
         visibility: 'visible',
         storageScope: 'project',
@@ -15366,6 +15491,7 @@ export function registerIpcHandlers(): void {
                 Array.isArray(opts.selectedToolIds) ? opts.selectedToolIds : undefined,
                 currentSettings,
               ),
+        approvalMode: nextSessionConfig.approvalMode,
         surface: nextSessionConfig.surface,
         visibility: nextSessionConfig.visibility,
         storageScope: nextSessionConfig.storageScope,
@@ -15464,6 +15590,7 @@ export function registerIpcHandlers(): void {
         conversationKind?: ConversationKind
         workMode?: AppSessionMode
         planMode?: boolean
+        approvalMode?: ConversationApprovalMode
         modelId?: string
         runtimeId?: string
         selectedSkillIds?: string[]
@@ -15498,7 +15625,7 @@ export function registerIpcHandlers(): void {
 
       const currentSnapshotIsTalk = isTalkSessionSnapshot(currentSnapshot)
       const currentConfig = currentSnapshotIsTalk
-        ? buildTalkSessionConfig()
+        ? buildTalkSessionConfig(getSessionConfig(currentSnapshot).approvalMode)
         : getSessionConfig(currentSnapshot)
       const nextWorkingDirectory = currentSnapshotIsTalk
         ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
@@ -15546,10 +15673,15 @@ export function registerIpcHandlers(): void {
         typeof opts.planMode === 'boolean'
           ? opts.planMode
           : currentConfig.planMode
+      const requestedApprovalMode =
+        opts.approvalMode !== undefined
+          ? normalizeConversationApprovalMode(opts.approvalMode)
+          : currentConfig.approvalMode
       const nextSessionConfig = normalizeSessionConfig({
         ...currentConfig,
         baseMode: sessionMode,
         planMode: requestedPlanMode,
+        approvalMode: requestedApprovalMode,
       })
       if (opts.planMode === true && !nextSessionConfig.planMode) {
         throw new Error('Plan mode is only available in Build conversations.')
@@ -15591,6 +15723,7 @@ export function registerIpcHandlers(): void {
         preferredRuntimeId: nextTarget.runtimeId,
         selectedSkillIds,
         selectedToolIds,
+        approvalMode: nextSessionConfig.approvalMode,
         surface: nextSessionConfig.surface,
         visibility: nextSessionConfig.visibility,
         storageScope: nextSessionConfig.storageScope,
@@ -16252,6 +16385,7 @@ export function registerIpcHandlers(): void {
         preferredRuntimeId: executionTarget.runtimeId,
         selectedSkillIds: config.selectedSkillIds,
         selectedToolIds: config.selectedToolIds,
+        approvalMode: config.approvalMode,
         surface: config.surface,
         visibility: config.visibility,
         storageScope: config.storageScope,
@@ -16518,7 +16652,14 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('automations:run-now', async (_, automationId: string) => {
-    void runAutomation(automationId, 'manual')
+    const blocker = findAutomationExecutionBlocker(automationId)
+    if (blocker) {
+      throw new Error(buildConversationExecutionBlockedMessage(blocker))
+    }
+
+    void runAutomation(automationId, 'manual').catch((error) => {
+      console.error('Failed to run automation:', error)
+    })
     return { ok: true }
   })
 

@@ -474,6 +474,19 @@ export function App() {
       })
     }
 
+    for (const automation of state.automations) {
+      if (automation.lastRunStatus !== 'running') {
+        continue
+      }
+
+      const sessionId = `automation:${automation.id}`
+      runs.set(sessionId, {
+        sessionId,
+        task: 'automation',
+        title: automation.name,
+      })
+    }
+
     return [...runs.values()]
   }, [
     globalChatBusy,
@@ -484,6 +497,7 @@ export function App() {
     state.activeSession,
     state.isCompacting,
     state.isGenerating,
+    state.automations,
     state.sessions,
   ])
 

@@ -3,6 +3,7 @@ export * from "./events.js";
 export * from "./fileEdits.js";
 export * from "./runtime.js";
 export * from "./buildMode.js";
+export * from "./approvalMode.js";
 export * from "./systemPrompts.js";
 export * from "./transport.js";
 export * from "./session.js";

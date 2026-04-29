@@ -1,4 +1,4 @@
-export type ConversationExecutionTask = 'generation' | 'compaction'
+export type ConversationExecutionTask = 'generation' | 'compaction' | 'automation'
 
 export interface ConversationExecutionRun {
   sessionId: string
@@ -33,7 +33,12 @@ export function formatConversationExecutionBlockedReason(
 ): string {
   const title = blocker.title?.trim()
   const label = title ? `"${title}"` : 'another conversation'
-  const action = blocker.task === 'compaction' ? 'compacting' : 'answering'
+  const action =
+    blocker.task === 'compaction'
+      ? 'compacting'
+      : blocker.task === 'automation'
+        ? 'running an automation'
+        : 'answering'
 
   return `Gemma Desktop is already ${action} in ${label}. Wait for that conversation to finish or stop it before starting another one.`
 }

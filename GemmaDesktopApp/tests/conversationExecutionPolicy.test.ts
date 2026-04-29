@@ -52,4 +52,16 @@ describe('conversation execution policy', () => {
     expect(isConversationExecutionBlockedError(message)).toBe(true)
     expect(stripConversationExecutionBlockedErrorCode(message)).toBe(reason)
   })
+
+  it('describes active automations as execution blockers', () => {
+    const reason = formatConversationExecutionBlockedReason({
+      sessionId: 'automation:nightly',
+      task: 'automation',
+      title: 'Nightly build check',
+    })
+
+    expect(reason).toBe(
+      'Gemma Desktop is already running an automation in "Nightly build check". Wait for that conversation to finish or stop it before starting another one.',
+    )
+  })
 })

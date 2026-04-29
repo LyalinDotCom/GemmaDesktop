@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
+  AlertTriangle,
   ChevronDown,
   FolderOpen,
   Loader2,
@@ -103,6 +104,10 @@ function formatTimestamp(timestamp?: number | null): string {
   }
 
   return new Date(timestamp).toLocaleString()
+}
+
+function formatOperationError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function singularUnit(unit: AutomationDraft['intervalUnit']): string {
@@ -416,6 +421,7 @@ export function AutomationsPanel({
   const [saving, setSaving] = useState(false)
   const [runningNow, setRunningNow] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [operationError, setOperationError] = useState<string | null>(null)
   const [lastHandledNewAutomationSeed, setLastHandledNewAutomationSeed] = useState(
     newAutomationSeed,
   )
@@ -426,6 +432,7 @@ export function AutomationsPanel({
         setDraft(draftFromAutomation(activeAutomation))
         setEditorSource(activeAutomation.id)
         setActiveTab('latest')
+        setOperationError(null)
       }
       return
     }
@@ -439,6 +446,7 @@ export function AutomationsPanel({
       setActiveTab('latest')
       setSelectedPreviousRunId(null)
       setAdvancedOpen(false)
+      setOperationError(null)
       setLastHandledNewAutomationSeed(newAutomationSeed)
     }
   }, [
@@ -504,6 +512,7 @@ export function AutomationsPanel({
     }
 
     setSaving(true)
+    setOperationError(null)
     try {
       const gemmaEntry = findGemmaCatalogEntryByTag(draft.modelId)
       if (
@@ -545,6 +554,9 @@ export function AutomationsPanel({
       setEditorSource(savedAutomation.id)
       setActiveTab('latest')
       return savedAutomation
+    } catch (error) {
+      setOperationError(formatOperationError(error))
+      return null
     } finally {
       setSaving(false)
     }
@@ -557,8 +569,11 @@ export function AutomationsPanel({
     }
 
     setRunningNow(true)
+    setOperationError(null)
     try {
       await onRunNow(savedAutomation.id)
+    } catch (error) {
+      setOperationError(formatOperationError(error))
     } finally {
       setRunningNow(false)
     }
@@ -570,8 +585,11 @@ export function AutomationsPanel({
     }
 
     setCancelling(true)
+    setOperationError(null)
     try {
       await onCancelRun(draft.id)
+    } catch (error) {
+      setOperationError(formatOperationError(error))
     } finally {
       setCancelling(false)
     }
@@ -631,7 +649,10 @@ export function AutomationsPanel({
                     return
                   }
 
-                  void onDeleteAutomation(draft.id)
+                  setOperationError(null)
+                  void onDeleteAutomation(draft.id).catch((error) => {
+                    setOperationError(formatOperationError(error))
+                  })
                 }}
                 disabled={!draft.id || saving || runningNow || cancelling}
                 tone="danger"
@@ -665,6 +686,22 @@ export function AutomationsPanel({
       {/* Scrollable content */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-5 px-6 py-6">
+          <div className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
+            <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="font-semibold">YOLO execution</div>
+              <div className="mt-0.5 leading-5">
+                Automations run unattended in YOLO mode and can execute allowed build tools without asking first. Schedule only prompts and workspaces you trust.
+              </div>
+            </div>
+          </div>
+
+          {operationError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">
+              {operationError}
+            </div>
+          )}
+
           {/* Name */}
           <div>
             <SectionLabel>Name</SectionLabel>
