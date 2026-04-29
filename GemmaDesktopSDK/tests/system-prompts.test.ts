@@ -127,8 +127,37 @@ describe("system prompt profiles", () => {
     expect(prompt).toContain("**Browser Loop:**");
     expect(prompt).toContain("**Workspace & File Tools:**");
     expect(prompt).toContain("**Execution & File Mutation Rules:**");
+    expect(prompt).toContain("Before creating, initializing, or scaffolding a project in a user-named directory");
     expect(prompt).toContain("**Validation & Dependencies:**");
     expect(prompt).toContain("**Communication Workflow:**");
+  });
+
+  it("adds project destination orientation guidance only to Act mode", () => {
+    const base = {
+      modelId: "gemma4:31b",
+      workingDirectory: "/tmp/gemma-desktop",
+      availableTools: ["list_tree", "search_paths", "read_file", "write_file", "exec_command"],
+      now: new Date("2026-04-07T15:30:00Z"),
+      timeZone: "America/New_York",
+    } as const;
+    const guidance = "Before creating, initializing, or scaffolding a project in a user-named directory";
+
+    const actPrompt = composeSystemPrompt(resolveSessionSystemInstructions({
+      ...base,
+      mode: "build",
+    }));
+    const explorePrompt = composeSystemPrompt(resolveSessionSystemInstructions({
+      ...base,
+      mode: "explore",
+    }));
+    const planPrompt = composeSystemPrompt(resolveSessionSystemInstructions({
+      ...base,
+      mode: "plan",
+    }));
+
+    expect(actPrompt).toContain(guidance);
+    expect(explorePrompt).not.toContain(guidance);
+    expect(planPrompt).not.toContain(guidance);
   });
 
   it("leaves single custom worker prompts raw for minimal child sessions", () => {

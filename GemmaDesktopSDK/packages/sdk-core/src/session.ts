@@ -509,6 +509,9 @@ function buildModeInstructions(
           "Act like a builder and complete the task end-to-end when feasible.",
           "If the conversation already contains an approved plan or planning handoff, treat it as the current execution spec and start implementing instead of re-planning unless a missing requirement blocks work.",
           "Use the tools available in this turn to inspect, edit, run commands, and verify work when those capabilities are present.",
+          canEditFiles || canRunCommands
+            ? "Before creating, initializing, or scaffolding a project in a user-named directory, perform one read-only orientation step: inspect the target path if it exists, otherwise inspect its parent directory. Do not start broad writes, dependency installation, or scaffolding until you know whether the target is missing, empty, or already contains project files."
+            : undefined,
           canEditFiles
             ? "If the user asks you to create a named file or path, create it on disk instead of only drafting it in the reply unless they explicitly asked for inline content."
             : "This turn does not include file-writing tools. If the user asks you to create a named file or path, say plainly that you cannot create it in the workspace from this turn.",
