@@ -1382,6 +1382,14 @@ export class GemmaDesktop {
     this.geminiApiModel = options.geminiApiModel;
   }
 
+  public updateAdapters(adapters: RuntimeAdapter[]): void {
+    this.adapters.clear();
+    for (const adapter of adapters) {
+      this.adapters.set(adapter.identity.id, adapter);
+    }
+    this.capabilityContextCache.clear();
+  }
+
   private async runResearchFromSnapshot(
     snapshot: SessionSnapshot,
     input: SessionInput,

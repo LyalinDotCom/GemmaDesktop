@@ -83,9 +83,11 @@ interface SettingsModalProps {
 export type SettingsTab =
   | 'general'
   | 'ollama'
+  | 'lmstudio'
+  | 'llamacpp'
+  | 'omlx'
   | 'notifications'
   | 'context'
-  | 'runtimes'
   | 'speech'
   | 'voice'
   | 'chrome'
@@ -96,9 +98,11 @@ export type SettingsTab =
 const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['general', 'General'],
   ['ollama', 'Ollama'],
+  ['lmstudio', 'LM Studio'],
+  ['llamacpp', 'llama.cpp'],
+  ['omlx', 'oMLX'],
   ['notifications', 'Notifications'],
   ['context', 'Context'],
-  ['runtimes', 'Runtimes'],
   ['speech', 'Speech'],
   ['voice', 'Voice'],
   ['chrome', 'Browser'],
@@ -968,10 +972,59 @@ export function SettingsModal({
               )}
 
               {activeTab === 'ollama' && (
-                <SettingsSection
-                  title="Managed Ollama Runtime Profiles"
-                  description="Gemma Desktop sends explicit Ollama options on native chat requests and warm-loads instead of relying on hidden server defaults. Profiles below are enforced on ollama-native; the OpenAI-compatible endpoint cannot set context size per request."
-                >
+                <>
+                  <SettingsSection
+                    title="Ollama Runtime"
+                    description="Endpoint and keep-alive coordination. Gemma Desktop coordinates primary model loading itself."
+                  >
+                    <SettingsField
+                      label="Endpoint"
+                      hint={
+                        <>
+                          Current target:
+                          {' '}
+                          <code>helper={bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>
+                          {', '}
+                          <code>numParallel={local.runtimes.ollama?.numParallel ?? 1}</code>
+                          {', '}
+                          <code>maxLoadedModels={local.runtimes.ollama?.maxLoadedModels ?? 2}</code>
+                          {', '}
+                          <code>keepAlive={(local.runtimes.ollama?.keepAliveEnabled ?? true) ? 'on' : 'off'}</code>.
+                        </>
+                      }
+                    >
+                      <TextInput
+                        type="text"
+                        value={local.runtimes.ollama?.endpoint ?? ''}
+                        onChange={(e) => {
+                          const runtimes = {
+                            ...local.runtimes,
+                            ollama: { ...local.runtimes.ollama, endpoint: e.target.value },
+                          }
+                          setLocal({ ...local, runtimes })
+                        }}
+                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                        className="font-mono text-xs"
+                      />
+                    </SettingsField>
+
+                    <SettingsRow
+                      label="Keep Ollama models warm"
+                      description="Preload helper and primary models and send long keep-alive hints. Doctor reports server-level setting drift so you can adjust Ollama manually."
+                      control={
+                        <Toggle
+                          ariaLabel="Toggle Ollama model keep-alive"
+                          checked={local.runtimes.ollama?.keepAliveEnabled ?? true}
+                          onChange={handleOllamaKeepAliveToggle}
+                        />
+                      }
+                    />
+                  </SettingsSection>
+
+                  <SettingsSection
+                    title="Managed Ollama Runtime Profiles"
+                    description="Gemma Desktop sends explicit Ollama options on native chat requests and warm-loads instead of relying on hidden server defaults. Profiles below are enforced on ollama-native; the OpenAI-compatible endpoint cannot set context size per request."
+                  >
                   {listKnownReasoningControlModels().map((model) => {
                     const runtimeModel = models.find((entry) =>
                       entry.id === model.tag && entry.runtimeId === 'ollama-native',
@@ -1094,7 +1147,8 @@ export function SettingsModal({
                       </div>
                     )
                   })}
-                </SettingsSection>
+                  </SettingsSection>
+                </>
               )}
 
               {activeTab === 'notifications' && (
@@ -1257,144 +1311,101 @@ export function SettingsModal({
                 </>
               )}
 
-              {activeTab === 'runtimes' && (
-                <>
-                  <SettingsSection
-                    title="Ollama"
-                    description="Endpoint and keep-alive coordination. Gemma Desktop coordinates primary model loading itself."
+              {activeTab === 'lmstudio' && (
+                <SettingsSection
+                  title="LM Studio Runtime"
+                  description="Saved defaults can target LM Studio. Gemma Desktop blocks conflicting primary models from starting at the same time."
+                >
+                  <SettingsField
+                    label="Endpoint"
+                    hint={
+                      <>
+                        Current default:
+                        {' '}
+                        <code>maxConcurrentPredictions={local.runtimes.lmstudio?.maxConcurrentPredictions ?? 4}</code>.
+                      </>
+                    }
                   >
-                    <SettingsField
-                      label="Endpoint"
-                      hint={
-                        <>
-                          Current target:
-                          {' '}
-                          <code>helper={bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>
-                          {', '}
-                          <code>numParallel={local.runtimes.ollama?.numParallel ?? 1}</code>
-                          {', '}
-                          <code>maxLoadedModels={local.runtimes.ollama?.maxLoadedModels ?? 2}</code>
-                          {', '}
-                          <code>keepAlive={(local.runtimes.ollama?.keepAliveEnabled ?? true) ? 'on' : 'off'}</code>.
-                        </>
-                      }
-                    >
-                      <TextInput
-                        type="text"
-                        value={local.runtimes.ollama?.endpoint ?? ''}
-                        onChange={(e) => {
-                          const runtimes = {
-                            ...local.runtimes,
-                            ollama: { ...local.runtimes.ollama, endpoint: e.target.value },
-                          }
-                          setLocal({ ...local, runtimes })
-                        }}
-                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-
-                    <SettingsRow
-                      label="Keep Ollama models warm"
-                      description="Preload helper and primary models and send long keep-alive hints. Doctor reports server-level setting drift so you can adjust Ollama manually."
-                      control={
-                        <Toggle
-                          ariaLabel="Toggle Ollama model keep-alive"
-                          checked={local.runtimes.ollama?.keepAliveEnabled ?? true}
-                          onChange={handleOllamaKeepAliveToggle}
-                        />
-                      }
+                    <TextInput
+                      type="text"
+                      value={local.runtimes.lmstudio?.endpoint ?? ''}
+                      onChange={(e) => {
+                        const runtimes = {
+                          ...local.runtimes,
+                          lmstudio: { ...local.runtimes.lmstudio, endpoint: e.target.value },
+                        }
+                        setLocal({ ...local, runtimes })
+                      }}
+                      onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                      className="font-mono text-xs"
                     />
-                  </SettingsSection>
+                  </SettingsField>
+                </SettingsSection>
+              )}
 
-                  <SettingsSection
-                    title="LM Studio"
-                    description="Saved defaults can target LM Studio too. Gemma Desktop blocks conflicting primary models from starting at the same time."
+              {activeTab === 'llamacpp' && (
+                <SettingsSection
+                  title="llama.cpp Runtime"
+                  description="Gemma Desktop can use a running llama.cpp server when it exposes the server API."
+                >
+                  <SettingsField label="Endpoint">
+                    <TextInput
+                      type="text"
+                      value={local.runtimes.llamacpp?.endpoint ?? ''}
+                      onChange={(e) => {
+                        const runtimes = {
+                          ...local.runtimes,
+                          llamacpp: { ...local.runtimes.llamacpp, endpoint: e.target.value },
+                        }
+                        setLocal({ ...local, runtimes })
+                      }}
+                      onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                      className="font-mono text-xs"
+                    />
+                  </SettingsField>
+                </SettingsSection>
+              )}
+
+              {activeTab === 'omlx' && (
+                <SettingsSection
+                  title="oMLX Runtime"
+                  description="External OpenAI-compatible oMLX servers are detected when reachable. Gemma Desktop lists visible models, but does not install or start oMLX."
+                >
+                  <SettingsField label="Endpoint">
+                    <TextInput
+                      type="text"
+                      value={local.runtimes.omlx?.endpoint ?? ''}
+                      onChange={(e) => {
+                        const runtimes = {
+                          ...local.runtimes,
+                          omlx: { ...local.runtimes.omlx, endpoint: e.target.value },
+                        }
+                        setLocal({ ...local, runtimes })
+                      }}
+                      onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                      className="font-mono text-xs"
+                    />
+                  </SettingsField>
+                  <SettingsField
+                    label="API key / PIN"
+                    hint="Optional Bearer token for oMLX servers that protect OpenAI-compatible endpoints."
                   >
-                    <SettingsField
-                      label="Endpoint"
-                      hint={
-                        <>
-                          Current default:
-                          {' '}
-                          <code>maxConcurrentPredictions={local.runtimes.lmstudio?.maxConcurrentPredictions ?? 4}</code>.
-                        </>
-                      }
-                    >
-                      <TextInput
-                        type="text"
-                        value={local.runtimes.lmstudio?.endpoint ?? ''}
-                        onChange={(e) => {
-                          const runtimes = {
-                            ...local.runtimes,
-                            lmstudio: { ...local.runtimes.lmstudio, endpoint: e.target.value },
-                          }
-                          setLocal({ ...local, runtimes })
-                        }}
-                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-                  </SettingsSection>
-
-                  <SettingsSection title="llama.cpp" description="Endpoint settings stay editable here.">
-                    <SettingsField label="Endpoint">
-                      <TextInput
-                        type="text"
-                        value={local.runtimes.llamacpp?.endpoint ?? ''}
-                        onChange={(e) => {
-                          const runtimes = {
-                            ...local.runtimes,
-                            llamacpp: { ...local.runtimes.llamacpp, endpoint: e.target.value },
-                          }
-                          setLocal({ ...local, runtimes })
-                        }}
-                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-                  </SettingsSection>
-
-                  <SettingsSection
-                    title="oMLX"
-                    description="External OpenAI-compatible oMLX servers are detected when reachable. Gemma Desktop lists visible models, but does not install or start oMLX."
-                  >
-                    <SettingsField label="Endpoint">
-                      <TextInput
-                        type="text"
-                        value={local.runtimes.omlx?.endpoint ?? ''}
-                        onChange={(e) => {
-                          const runtimes = {
-                            ...local.runtimes,
-                            omlx: { ...local.runtimes.omlx, endpoint: e.target.value },
-                          }
-                          setLocal({ ...local, runtimes })
-                        }}
-                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-                    <SettingsField
-                      label="API key / PIN"
-                      hint="Optional Bearer token for oMLX servers that protect OpenAI-compatible endpoints."
-                    >
-                      <TextInput
-                        type="password"
-                        autoComplete="off"
-                        value={local.runtimes.omlx?.apiKey ?? ''}
-                        onChange={(e) => {
-                          const runtimes = {
-                            ...local.runtimes,
-                            omlx: { ...local.runtimes.omlx, apiKey: e.target.value },
-                          }
-                          setLocal({ ...local, runtimes })
-                        }}
-                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-                  </SettingsSection>
-                </>
+                    <TextInput
+                      type="password"
+                      autoComplete="off"
+                      value={local.runtimes.omlx?.apiKey ?? ''}
+                      onChange={(e) => {
+                        const runtimes = {
+                          ...local.runtimes,
+                          omlx: { ...local.runtimes.omlx, apiKey: e.target.value },
+                        }
+                        setLocal({ ...local, runtimes })
+                      }}
+                      onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                      className="font-mono text-xs"
+                    />
+                  </SettingsField>
+                </SettingsSection>
               )}
 
               {activeTab === 'speech' && (

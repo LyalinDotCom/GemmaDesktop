@@ -17316,6 +17316,10 @@ export function registerIpcHandlers(): void {
           geminiApiModel: nextSettings.integrations.geminiApi.model,
         })
       }
+      if (Object.prototype.hasOwnProperty.call(patch, 'runtimes')) {
+        gemmaDesktop?.updateAdapters(createConfiguredRuntimeAdapters(nextSettings))
+        broadcastEnvironmentModelsChanged()
+      }
       await refreshKeepAwakeState()
       broadcastSettingsChanged(nextSettings)
       broadcastSpeechStatusChanged(await inspectSpeechStatus())

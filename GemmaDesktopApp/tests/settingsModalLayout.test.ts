@@ -189,8 +189,12 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('aria-label="Settings sections"')
     expect(markup).toContain('w-44 shrink-0 overflow-y-auto border-r')
     expect(markup).toContain('scrollbar-thin min-h-0 flex-1 overflow-y-auto')
+    expect(markup).toContain('LM Studio')
+    expect(markup).toContain('llama.cpp')
+    expect(markup).toContain('oMLX')
     expect(markup).toContain('Integrations')
     expect(markup).toContain('aria-current="page"')
+    expect(markup).not.toContain('Runtimes</button>')
     expect(markup).not.toContain('border-b-2 pb-2.5 pt-3')
   })
 
@@ -268,18 +272,35 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('title="Set gemma4:26b reasoning to off"')
   })
 
-  it('surfaces the Ollama keep-alive switch in runtime settings', () => {
-    const markup = renderSettingsModal('runtimes')
+  it('surfaces the Ollama keep-alive switch in the Ollama settings tab', () => {
+    const markup = renderSettingsModal('ollama')
 
     expect(markup).toContain('Keep Ollama models warm')
     expect(markup).toContain('aria-label="Toggle Ollama model keep-alive"')
     expect(markup).toContain('Doctor reports server-level setting drift')
     expect(markup).toContain('keepAlive=on')
+    expect(markup).not.toContain('API key / PIN')
+  })
+
+  it('surfaces LM Studio runtime settings in the LM Studio tab', () => {
+    const markup = renderSettingsModal('lmstudio')
+
+    expect(markup).toContain('LM Studio Runtime')
+    expect(markup).toContain('http://127.0.0.1:1234')
+    expect(markup).toContain('maxConcurrentPredictions=4')
+    expect(markup).not.toContain('Keep Ollama models warm')
+    expect(markup).not.toContain('API key / PIN')
+  })
+
+  it('surfaces oMLX endpoint and PIN settings in the oMLX tab', () => {
+    const markup = renderSettingsModal('omlx')
+
     expect(markup).toContain('oMLX')
     expect(markup).toContain('http://127.0.0.1:8000')
     expect(markup).toContain('does not install or start oMLX')
     expect(markup).toContain('API key / PIN')
     expect(markup).toContain('Optional Bearer token')
+    expect(markup).not.toContain('Keep Ollama models warm')
   })
 
   it('surfaces Gemini API settings for grounded web search', () => {
