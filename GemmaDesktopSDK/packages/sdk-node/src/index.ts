@@ -39,6 +39,7 @@ import {
 import { HarnessRunner } from "@gemma-desktop/sdk-harness";
 import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
 import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
 import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-ollama";
 import {
   ToolRegistry,
@@ -1331,6 +1332,7 @@ export class GemmaDesktop {
         createLmStudioNativeAdapter(),
         createLmStudioOpenAICompatibleAdapter(),
         createLlamaCppServerAdapter(),
+        createOmlxOpenAICompatibleAdapter(),
       ]).map((adapter) => [adapter.identity.id, adapter]),
     );
     this.toolPolicy = options.toolPolicy;

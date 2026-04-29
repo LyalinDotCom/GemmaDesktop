@@ -281,6 +281,7 @@ function providerLabelForRuntime(runtimeId: string, runtimeName?: string): strin
   if (runtimeId.startsWith('ollama')) return 'Ollama'
   if (runtimeId.startsWith('lmstudio')) return 'LM Studio'
   if (runtimeId.startsWith('llamacpp')) return 'llama.cpp'
+  if (runtimeId.startsWith('omlx')) return 'oMLX'
   return runtimeName?.trim() || runtimeId
 }
 
@@ -1343,6 +1344,46 @@ export function SettingsModal({
                           const runtimes = {
                             ...local.runtimes,
                             llamacpp: { ...local.runtimes.llamacpp, endpoint: e.target.value },
+                          }
+                          setLocal({ ...local, runtimes })
+                        }}
+                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                        className="font-mono text-xs"
+                      />
+                    </SettingsField>
+                  </SettingsSection>
+
+                  <SettingsSection
+                    title="oMLX"
+                    description="External OpenAI-compatible oMLX servers are detected when reachable. Gemma Desktop lists visible models, but does not install or start oMLX."
+                  >
+                    <SettingsField label="Endpoint">
+                      <TextInput
+                        type="text"
+                        value={local.runtimes.omlx?.endpoint ?? ''}
+                        onChange={(e) => {
+                          const runtimes = {
+                            ...local.runtimes,
+                            omlx: { ...local.runtimes.omlx, endpoint: e.target.value },
+                          }
+                          setLocal({ ...local, runtimes })
+                        }}
+                        onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                        className="font-mono text-xs"
+                      />
+                    </SettingsField>
+                    <SettingsField
+                      label="API key / PIN"
+                      hint="Optional Bearer token for oMLX servers that protect OpenAI-compatible endpoints."
+                    >
+                      <TextInput
+                        type="password"
+                        autoComplete="off"
+                        value={local.runtimes.omlx?.apiKey ?? ''}
+                        onChange={(e) => {
+                          const runtimes = {
+                            ...local.runtimes,
+                            omlx: { ...local.runtimes.omlx, apiKey: e.target.value },
                           }
                           setLocal({ ...local, runtimes })
                         }}

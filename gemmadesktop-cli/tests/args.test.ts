@@ -31,6 +31,10 @@ describe("CLI argument parsing", () => {
       "num_ctx=8192",
       "--ollama-keep-alive",
       "24h",
+      "--omlx-endpoint",
+      "http://localhost:8001",
+      "--omlx-api-key",
+      "1234",
       "--metadata-json",
       `{"${REQUEST_PREFERENCES_METADATA_KEY}":{"legacy":true},"source":"test"}`,
       "--json",
@@ -41,6 +45,8 @@ describe("CLI argument parsing", () => {
     expect(command.modelId).toBe("gemma4:e2b");
     expect(command.runtimeId).toBe("ollama-native");
     expect(command.outputJson).toBe(true);
+    expect(command.endpoints.omlx).toBe("http://localhost:8001");
+    expect(command.omlxApiKey).toBe("1234");
     expect(command.mode).toEqual({
       base: "build",
       tools: ["read_file"],

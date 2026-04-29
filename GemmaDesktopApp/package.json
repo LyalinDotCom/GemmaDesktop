@@ -29,6 +29,7 @@
     "@gemma-desktop/sdk-node": "0.1.0",
     "@gemma-desktop/sdk-runtime-llamacpp": "0.1.0",
     "@gemma-desktop/sdk-runtime-lmstudio": "0.1.0",
+    "@gemma-desktop/sdk-runtime-omlx": "0.1.0",
     "@gemma-desktop/sdk-runtime-ollama": "0.1.0",
     "@gemma-desktop/sdk-tools": "0.1.0",
     "@huggingface/transformers": "^3.5.1",

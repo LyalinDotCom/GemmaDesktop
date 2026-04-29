@@ -28,6 +28,9 @@ import {
   createLmStudioOpenAICompatibleAdapter,
 } from '@gemma-desktop/sdk-runtime-lmstudio'
 import {
+  createOmlxOpenAICompatibleAdapter,
+} from '@gemma-desktop/sdk-runtime-omlx'
+import {
   createOllamaNativeAdapter,
   createOllamaOpenAICompatibleAdapter,
 } from '@gemma-desktop/sdk-runtime-ollama'
@@ -1323,6 +1326,10 @@ function isLmStudioModelRuntime(runtimeId: string): boolean {
   return runtimeId === 'lmstudio-native' || runtimeId === 'lmstudio-openai'
 }
 
+function isOmlxModelRuntime(runtimeId: string): boolean {
+  return runtimeId === 'omlx-openai'
+}
+
 function getEndpointForModelTarget(
   currentSettings: AppSettingsRecord,
   target: Pick<PrimaryModelTarget, 'runtimeId'>,
@@ -1333,7 +1340,10 @@ function getEndpointForModelTarget(
   if (isLmStudioModelRuntime(target.runtimeId)) {
     return currentSettings.runtimes.lmstudio.endpoint
   }
-  if (target.runtimeId === 'llamacpp') {
+  if (isOmlxModelRuntime(target.runtimeId)) {
+    return currentSettings.runtimes.omlx.endpoint
+  }
+  if (target.runtimeId === 'llamacpp-server') {
     return currentSettings.runtimes.llamacpp.endpoint
   }
   return null
@@ -1629,6 +1639,7 @@ type AppSettingsRecord = {
     }
     lmstudio: { endpoint: string; maxConcurrentPredictions: number }
     llamacpp: { endpoint: string }
+    omlx: { endpoint: string; apiKey: string }
   }
   integrations: {
     geminiApi: {
@@ -2846,7 +2857,7 @@ async function loadModelForRuntime(
       }
     }
 
-    if (target.runtimeId === 'llamacpp') {
+    if (target.runtimeId === 'llamacpp-server') {
       try {
         await requestJson(`${currentSettings.runtimes.llamacpp.endpoint.replace(/\/$/, '')}/models/load`, {
           method: 'POST',
@@ -2860,6 +2871,10 @@ async function loadModelForRuntime(
       } catch (error) {
         throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
       }
+    }
+
+    if (isOmlxModelRuntime(target.runtimeId)) {
+      return target
     }
 
     return target
@@ -2896,7 +2911,7 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
     return
   }
 
-  if (target.runtimeId === 'llamacpp') {
+  if (target.runtimeId === 'llamacpp-server') {
     await requestJson(`${currentSettings.runtimes.llamacpp.endpoint.replace(/\/$/, '')}/models/unload`, {
       method: 'POST',
       headers: {
@@ -2905,6 +2920,19 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({
         model: target.modelId,
       }),
+    })
+    return
+  }
+
+  if (isOmlxModelRuntime(target.runtimeId)) {
+    const apiKey = currentSettings.runtimes.omlx.apiKey.trim()
+    await requestJson(`${currentSettings.runtimes.omlx.endpoint.replace(/\/$/, '')}/v1/models/${encodeURIComponent(target.modelId)}/unload`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({}),
     })
   }
 }
@@ -3165,6 +3193,7 @@ function getDefaultSettings(): AppSettingsRecord {
       },
       lmstudio: { endpoint: 'http://127.0.0.1:1234', maxConcurrentPredictions: 4 },
       llamacpp: { endpoint: 'http://127.0.0.1:8080' },
+      omlx: { endpoint: 'http://127.0.0.1:8000', apiKey: '' },
     },
     integrations: {
       geminiApi: {
@@ -3373,6 +3402,7 @@ async function loadSettings(): Promise<AppSettingsRecord> {
       ),
       lmstudio: { ...defaults.runtimes.lmstudio, ...(reusable.runtimes?.lmstudio ?? {}) },
       llamacpp: { ...defaults.runtimes.llamacpp, ...(reusable.runtimes?.llamacpp ?? {}) },
+      omlx: { ...defaults.runtimes.omlx, ...(reusable.runtimes?.omlx ?? {}) },
     },
     integrations: {
       geminiCli: {
@@ -5803,6 +5833,9 @@ function runtimeFamilyFromRuntimeId(runtimeId: string): string {
   }
   if (runtimeId.startsWith('llamacpp')) {
     return 'llamacpp'
+  }
+  if (runtimeId.startsWith('omlx')) {
+    return 'omlx'
   }
   return runtimeId
 }
@@ -12270,11 +12303,15 @@ function createConfiguredRuntimeAdapters(currentSettings: AppSettingsRecord) {
     createLlamaCppServerAdapter({
       baseUrl: currentSettings.runtimes.llamacpp.endpoint,
     }),
+    createOmlxOpenAICompatibleAdapter({
+      baseUrl: currentSettings.runtimes.omlx.endpoint,
+      apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
+    }),
   ]
 }
 
 type MappedModelRuntimeConfig = {
-  provider: 'ollama' | 'lmstudio'
+  provider: 'ollama' | 'lmstudio' | 'omlx'
   baseParameters?: Record<string, unknown>
   baseParametersText?: string
   requestedOptions?: Record<string, number>
@@ -12370,10 +12407,18 @@ function mapModels(
         meta.num_ctx,
         meta.maxContextLength,
         meta.max_context_length,
+        meta.maxContextWindow,
+        meta.max_context_window,
+        meta.maxTokens,
+        meta.max_tokens,
       )
       const loadedContextLength = coerceNumber(
         loadedConfig.context_length,
         loadedConfig.num_ctx,
+        loadedConfig.maxContextWindow,
+        loadedConfig.max_context_window,
+        loadedConfig.maxTokens,
+        loadedConfig.max_tokens,
       )
 
       let displayName = m.id
@@ -12436,6 +12481,16 @@ function mapModels(
                 nominalContextLength,
                 loadedContextLength,
               }
+              : m.runtimeId === 'omlx-openai'
+                ? {
+                    provider: 'omlx' as const,
+                    loadedOptions:
+                      Object.keys(loadedConfig).length > 0
+                        ? loadedConfig
+                        : undefined,
+                    nominalContextLength,
+                    loadedContextLength,
+                  }
           : undefined
 
       const modelKey = modelTargetKey({

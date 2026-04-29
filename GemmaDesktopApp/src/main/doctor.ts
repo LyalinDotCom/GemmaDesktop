@@ -48,7 +48,7 @@ export interface DoctorModelSummary {
   quantization?: string
   contextLength?: number
   runtimeConfig?: {
-    provider: 'ollama' | 'lmstudio'
+    provider: 'ollama' | 'lmstudio' | 'omlx'
     baseParameters?: Record<string, unknown>
     baseParametersText?: string
     requestedOptions?: Record<string, number>
@@ -233,7 +233,8 @@ const TOOL_COMMANDS: ToolCommandSpec[] = [
 const RUNTIME_SORT_ORDER: Record<string, number> = {
   ollama: 0,
   lmstudio: 1,
-  llamacpp: 2,
+  omlx: 2,
+  llamacpp: 3,
 }
 
 const MODEL_STATUS_SCORE: Record<DoctorModelSummary['status'], number> = {
@@ -306,6 +307,7 @@ function normalizeRuntimeFamilyId(runtimeId: string): string {
   if (runtimeId.startsWith('ollama')) return 'ollama'
   if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
   if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
+  if (runtimeId.startsWith('omlx')) return 'omlx'
   return runtimeId
 }
 
@@ -317,6 +319,8 @@ function runtimeFamilyLabel(familyId: string, fallback: string): string {
       return 'LM Studio'
     case 'llamacpp':
       return 'llama.cpp Server'
+    case 'omlx':
+      return 'oMLX'
     default:
       return fallback
   }
@@ -439,6 +443,14 @@ function mapDoctorModel(
     meta.context_size,
     meta.num_ctx,
     (loadedConfig as Record<string, unknown>).num_ctx,
+    meta.maxContextWindow,
+    meta.max_context_window,
+    meta.maxTokens,
+    meta.max_tokens,
+    (loadedConfig as Record<string, unknown>).maxContextWindow,
+    (loadedConfig as Record<string, unknown>).max_context_window,
+    (loadedConfig as Record<string, unknown>).maxTokens,
+    (loadedConfig as Record<string, unknown>).max_tokens,
   )
   const ollamaRequestedOptions = buildOllamaOptionsRecord(
     resolveManagedOllamaProfile(settings.ollama, model.id, runtime.runtime.id),
@@ -508,6 +520,34 @@ function mapDoctorModel(
               (loadedConfig as Record<string, unknown>).num_ctx,
             ),
           }
+          : runtime.runtime.id === 'omlx-openai'
+            ? {
+                provider: 'omlx' as const,
+                loadedOptions:
+                  Object.keys(loadedConfig).length > 0
+                    ? loadedConfig
+                    : undefined,
+                nominalContextLength: coerceNumber(
+                  meta.contextLength,
+                  meta.contextWindow,
+                  meta.context_size,
+                  meta.num_ctx,
+                  meta.maxContextLength,
+                  meta.max_context_length,
+                  meta.maxContextWindow,
+                  meta.max_context_window,
+                  meta.maxTokens,
+                  meta.max_tokens,
+                ),
+                loadedContextLength: coerceNumber(
+                  (loadedConfig as Record<string, unknown>).context_length,
+                  (loadedConfig as Record<string, unknown>).num_ctx,
+                  (loadedConfig as Record<string, unknown>).maxContextWindow,
+                  (loadedConfig as Record<string, unknown>).max_context_window,
+                  (loadedConfig as Record<string, unknown>).maxTokens,
+                  (loadedConfig as Record<string, unknown>).max_tokens,
+                ),
+              }
       : undefined
 
   return {
@@ -988,8 +1028,9 @@ function buildDoctorIssues(input: {
   }
 
   const primaryRuntimes = input.runtimes.filter((runtime) =>
-    runtime.id === 'ollama' || runtime.id === 'lmstudio',
+    runtime.id === 'ollama' || runtime.id === 'lmstudio' || runtime.id === 'omlx',
   )
+  const requiredRuntimeIssues = primaryRuntimes.filter((runtime) => runtime.id !== 'omlx')
   const runningPrimaryRuntimes = primaryRuntimes.filter(
     (runtime) => runtime.status === 'running',
   )
@@ -998,11 +1039,11 @@ function buildDoctorIssues(input: {
     issues.push(doctorIssue(
       'error',
       'No compatible runtime is healthy',
-      'Gemma Desktop could not confirm a healthy Ollama or LM Studio endpoint. Start one of them and make sure its local server is reachable from the app.',
+      'Gemma Desktop could not confirm a healthy Ollama, LM Studio, or oMLX endpoint. Start one of them and make sure its local server is reachable from the app.',
     ))
   }
 
-  for (const runtime of primaryRuntimes) {
+  for (const runtime of requiredRuntimeIssues) {
     if (runtime.status === 'stopped') {
       issues.push(doctorIssue(
         'warning',

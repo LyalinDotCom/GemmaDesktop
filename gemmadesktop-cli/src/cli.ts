@@ -93,7 +93,9 @@ function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtim
   const dependencies = runtime.dependencies ?? DEFAULT_DEPENDENCIES;
   return dependencies.createGemmaDesktop({
     workingDirectory: command.workingDirectory,
-    adapters: createDesktopParityRuntimeAdapters(command.endpoints),
+    adapters: createDesktopParityRuntimeAdapters(command.endpoints, {
+      omlxApiKey: command.omlxApiKey ?? resolveOptionalEnvValue(runtime.env.OMLX_API_KEY),
+    }),
     geminiApiKey: command.geminiApiKey ?? resolveOptionalEnvValue(runtime.env.GEMINI_API_KEY),
     geminiApiModel: command.geminiApiModel ?? resolveOptionalEnvValue(runtime.env.GEMMA_DESKTOP_GEMINI_API_MODEL),
   });
@@ -170,7 +172,7 @@ function formatInspectionSummary(
     `Inspected at ${inspection.inspectedAt}`,
     `Machine: ${inspection.machine.platform}/${inspection.machine.arch}, ${Math.round(inspection.machine.totalMemoryBytes / 1024 ** 3)} GB RAM`,
     `Desktop parity adapters: ${parity.adapterIds.join(", ")}`,
-    `Endpoints: Ollama ${parity.endpoints.ollama}, LM Studio ${parity.endpoints.lmstudio}, llama.cpp ${parity.endpoints.llamacpp}`,
+    `Endpoints: Ollama ${parity.endpoints.ollama}, LM Studio ${parity.endpoints.lmstudio}, llama.cpp ${parity.endpoints.llamacpp}, oMLX ${parity.endpoints.omlx}`,
     "",
     "Runtimes:",
   ];

@@ -26,10 +26,12 @@ describe("desktop parity runtime setup", () => {
       ollama: "http://localhost:11435",
       lmstudio: "http://localhost:1235",
       llamacpp: "http://localhost:8081",
+      omlx: "http://localhost:8001",
     }).endpoints).toEqual({
       ollama: "http://localhost:11435",
       lmstudio: "http://localhost:1235",
       llamacpp: "http://localhost:8081",
+      omlx: "http://localhost:8001",
     });
   });
 

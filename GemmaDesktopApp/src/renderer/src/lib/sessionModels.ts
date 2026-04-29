@@ -17,6 +17,7 @@ const RUNTIME_PREFERENCE: Record<string, string[]> = {
   lmstudio: ['lmstudio-openai', 'lmstudio-native'],
   ollama: ['ollama-native', 'ollama-openai'],
   llamacpp: ['llamacpp-server'],
+  omlx: ['omlx-openai'],
 }
 
 function statusRank(status: ModelSummary['status']): number {
@@ -42,6 +43,7 @@ export function runtimeFamilyFromId(runtimeId: string): string {
   if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
   if (runtimeId.startsWith('ollama')) return 'ollama'
   if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
+  if (runtimeId.startsWith('omlx')) return 'omlx'
   return runtimeId
 }
 
@@ -53,6 +55,8 @@ function runtimeLabelForFamily(family: string, fallback: string): string {
       return 'Ollama'
     case 'llamacpp':
       return 'llama.cpp'
+    case 'omlx':
+      return 'oMLX'
     default:
       return fallback
   }

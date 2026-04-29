@@ -15,6 +15,7 @@
     "@gemma-desktop/sdk-harness": "0.1.0",
     "@gemma-desktop/sdk-runtime-llamacpp": "0.1.0",
     "@gemma-desktop/sdk-runtime-lmstudio": "0.1.0",
+    "@gemma-desktop/sdk-runtime-omlx": "0.1.0",
     "@gemma-desktop/sdk-runtime-ollama": "0.1.0",
     "@gemma-desktop/sdk-tools": "0.1.0",
     "pdfjs-dist": "~5.4.0",

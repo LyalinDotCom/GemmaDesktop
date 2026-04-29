@@ -12,6 +12,7 @@
     { "path": "../sdk-harness" },
     { "path": "../sdk-runtime-ollama" },
     { "path": "../sdk-runtime-lmstudio" },
-    { "path": "../sdk-runtime-llamacpp" }
+    { "path": "../sdk-runtime-llamacpp" },
+    { "path": "../sdk-runtime-omlx" }
   ]
 }

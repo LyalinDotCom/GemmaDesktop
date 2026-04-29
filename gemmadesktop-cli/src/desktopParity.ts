@@ -2,12 +2,14 @@ import os from "node:os";
 import type { RuntimeAdapter } from "@gemma-desktop/sdk-core";
 import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
 import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
 import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-ollama";
 
 export const DESKTOP_PARITY_DEFAULT_ENDPOINTS = {
   ollama: "http://127.0.0.1:11434",
   lmstudio: "http://127.0.0.1:1234",
   llamacpp: "http://127.0.0.1:8080",
+  omlx: "http://127.0.0.1:8000",
 } as const;
 
 export const DESKTOP_PARITY_RUNTIME_ADAPTER_IDS = [
@@ -16,6 +18,7 @@ export const DESKTOP_PARITY_RUNTIME_ADAPTER_IDS = [
   "lmstudio-native",
   "lmstudio-openai",
   "llamacpp-server",
+  "omlx-openai",
 ] as const;
 
 export const DEFAULT_PRIMARY_RUNTIME_ID = "ollama-native";
@@ -27,6 +30,11 @@ export interface DesktopParityRuntimeEndpoints {
   ollama?: string;
   lmstudio?: string;
   llamacpp?: string;
+  omlx?: string;
+}
+
+export interface DesktopParityRuntimeCredentials {
+  omlxApiKey?: string;
 }
 
 export interface ModelTarget {
@@ -41,13 +49,16 @@ export function resolveDesktopParityEndpoints(
     ollama: endpoints.ollama?.trim() || DESKTOP_PARITY_DEFAULT_ENDPOINTS.ollama,
     lmstudio: endpoints.lmstudio?.trim() || DESKTOP_PARITY_DEFAULT_ENDPOINTS.lmstudio,
     llamacpp: endpoints.llamacpp?.trim() || DESKTOP_PARITY_DEFAULT_ENDPOINTS.llamacpp,
+    omlx: endpoints.omlx?.trim() || DESKTOP_PARITY_DEFAULT_ENDPOINTS.omlx,
   };
 }
 
 export function createDesktopParityRuntimeAdapters(
   endpoints: DesktopParityRuntimeEndpoints = {},
+  credentials: DesktopParityRuntimeCredentials = {},
 ): RuntimeAdapter[] {
   const resolved = resolveDesktopParityEndpoints(endpoints);
+  const omlxApiKey = credentials.omlxApiKey?.trim() || undefined;
   return [
     createOllamaNativeAdapter({
       baseUrl: resolved.ollama,
@@ -63,6 +74,10 @@ export function createDesktopParityRuntimeAdapters(
     }),
     createLlamaCppServerAdapter({
       baseUrl: resolved.llamacpp,
+    }),
+    createOmlxOpenAICompatibleAdapter({
+      baseUrl: resolved.omlx,
+      apiKey: omlxApiKey,
     }),
   ];
 }

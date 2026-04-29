@@ -252,7 +252,7 @@ export interface EmbeddingResult {
 
 export interface RuntimeIdentity {
   id: string;
-  family: "ollama" | "lmstudio" | "llamacpp" | "unknown";
+  family: "ollama" | "lmstudio" | "llamacpp" | "omlx" | "unknown";
   kind: "native" | "openai-compatible" | "server";
   displayName: string;
   endpoint: string;

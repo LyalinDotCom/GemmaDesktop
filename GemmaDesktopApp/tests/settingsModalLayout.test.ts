@@ -99,6 +99,10 @@ function makeSettings(): AppSettings {
       llamacpp: {
         endpoint: 'http://127.0.0.1:8080',
       },
+      omlx: {
+        endpoint: 'http://127.0.0.1:8000',
+        apiKey: '',
+      },
     },
     integrations: {
       geminiApi: {
@@ -269,6 +273,11 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('aria-label="Toggle Ollama model keep-alive"')
     expect(markup).toContain('Doctor reports server-level setting drift')
     expect(markup).toContain('keepAlive=on')
+    expect(markup).toContain('oMLX')
+    expect(markup).toContain('http://127.0.0.1:8000')
+    expect(markup).toContain('does not install or start oMLX')
+    expect(markup).toContain('API key / PIN')
+    expect(markup).toContain('Optional Bearer token')
   })
 
   it('surfaces Gemini API settings for grounded web search', () => {

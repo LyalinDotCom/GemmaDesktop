@@ -26,6 +26,7 @@ export interface CommonCliOptions {
   command: CliCommandName;
   outputJson: boolean;
   endpoints: DesktopParityRuntimeEndpoints;
+  omlxApiKey?: string;
   workingDirectory: string;
   geminiApiKey?: string;
   geminiApiModel?: string;
@@ -97,6 +98,7 @@ interface ParseState {
   debugRuntime: boolean;
   geminiApiKey?: string;
   geminiApiModel?: string;
+  omlxApiKey?: string;
   requestPreferences: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
   positional: string[];
@@ -136,6 +138,8 @@ export function usage(): string {
     "  --ollama-endpoint <url>       Ollama endpoint. Mirrors the desktop default when omitted.",
     "  --lmstudio-endpoint <url>     LM Studio endpoint. Mirrors the desktop default when omitted.",
     "  --llamacpp-endpoint <url>     llama.cpp server endpoint. Mirrors the desktop default when omitted.",
+    "  --omlx-endpoint <url>         oMLX endpoint. Mirrors the desktop default when omitted.",
+    "  --omlx-api-key <key>          Optional oMLX API key/PIN for protected local endpoints.",
     "  --gemini-api-key <key>        Optional Gemini API key for SDK research/search helpers.",
     "  --gemini-api-model <model>    Optional Gemini API model for SDK research/search helpers.",
     "",
@@ -361,6 +365,12 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--llamacpp-endpoint":
       state.endpoints.llamacpp = readFlagValue(state, flag);
       return;
+    case "--omlx-endpoint":
+      state.endpoints.omlx = readFlagValue(state, flag);
+      return;
+    case "--omlx-api-key":
+      state.omlxApiKey = readFlagValue(state, flag);
+      return;
     case "--gemini-api-key":
       state.geminiApiKey = readFlagValue(state, flag);
       return;
@@ -424,6 +434,7 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
   const common: Omit<CommonCliOptions, "command"> = {
     outputJson: state.outputJson,
     endpoints: state.endpoints,
+    ...(state.omlxApiKey ? { omlxApiKey: state.omlxApiKey } : {}),
     workingDirectory: state.workingDirectory,
     ...(state.geminiApiKey ? { geminiApiKey: state.geminiApiKey } : {}),
     ...(state.geminiApiModel ? { geminiApiModel: state.geminiApiModel } : {}),

@@ -481,6 +481,129 @@ describe('doctor helpers', () => {
     ]))
   })
 
+  it('lists unavailable oMLX as a neutral runtime fact', () => {
+    const report = buildDoctorReport({
+      generatedAt: '2026-04-06T15:10:00.000Z',
+      app: {
+        version: '0.1.0',
+        electron: '35.0.0',
+        node: '22.15.0',
+        chrome: '134.0.0.0',
+      },
+      machine: {
+        platform: 'darwin',
+        release: '24.4.0',
+        arch: 'arm64',
+        totalMemoryBytes: 64 * 1024 * 1024 * 1024,
+        cpuModel: 'Apple M4 Pro',
+        cpuCount: 12,
+      },
+      environment: makeEnvironment([
+        makeRuntime({
+          runtime: {
+            id: 'ollama-native',
+            family: 'ollama',
+            kind: 'native',
+            displayName: 'Ollama Native',
+            endpoint: 'http://127.0.0.1:11434',
+          },
+          installed: true,
+          reachable: true,
+          healthy: true,
+        }),
+        makeRuntime({
+          runtime: {
+            id: 'omlx-openai',
+            family: 'omlx',
+            kind: 'openai-compatible',
+            displayName: 'oMLX OpenAI-Compatible',
+            endpoint: 'http://127.0.0.1:8000/v1',
+          },
+          installed: false,
+          reachable: false,
+          healthy: false,
+        }),
+      ]),
+      ollamaServerConfig: null,
+      commands: [],
+      settings: makeSettings(),
+      speech: makeSpeech(),
+      readAloud: makeReadAloud(),
+      permissionStatuses: {},
+      platform: 'darwin',
+    })
+
+    const omlx = report.runtimes.find((runtime) => runtime.id === 'omlx')
+
+    expect(omlx).toEqual(expect.objectContaining({
+      label: 'oMLX',
+      status: 'not_installed',
+      modelCount: 0,
+      summary: 'Gemma Desktop could not detect this runtime on the machine.',
+    }))
+    expect(report.issues.some((issue) => issue.title.includes('oMLX'))).toBe(false)
+  })
+
+  it('treats healthy oMLX as a compatible inference runtime', () => {
+    const report = buildDoctorReport({
+      generatedAt: '2026-04-06T15:10:00.000Z',
+      app: {
+        version: '0.1.0',
+        electron: '35.0.0',
+        node: '22.15.0',
+        chrome: '134.0.0.0',
+      },
+      machine: {
+        platform: 'darwin',
+        release: '24.4.0',
+        arch: 'arm64',
+        totalMemoryBytes: 64 * 1024 * 1024 * 1024,
+        cpuModel: 'Apple M4 Pro',
+        cpuCount: 12,
+      },
+      environment: makeEnvironment([
+        makeRuntime({
+          runtime: {
+            id: 'omlx-openai',
+            family: 'omlx',
+            kind: 'openai-compatible',
+            displayName: 'oMLX OpenAI-Compatible',
+            endpoint: 'http://127.0.0.1:8000/v1',
+          },
+          installed: true,
+          reachable: true,
+          healthy: true,
+          models: [
+            {
+              id: 'gemma-4-31B-it-MLX-8bit',
+              runtimeId: 'omlx-openai',
+              kind: 'llm',
+              availability: 'visible',
+              metadata: {
+                maxContextWindow: 32768,
+                modelType: 'llm',
+              },
+              capabilities: [],
+            },
+          ],
+        }),
+      ]),
+      ollamaServerConfig: null,
+      commands: [],
+      settings: makeSettings(),
+      speech: makeSpeech(),
+      readAloud: makeReadAloud(),
+      permissionStatuses: {},
+      platform: 'darwin',
+    })
+
+    expect(report.runtimes.find((runtime) => runtime.id === 'omlx')).toEqual(expect.objectContaining({
+      status: 'running',
+      modelCount: 1,
+    }))
+    expect(report.issues.some((issue) => issue.title === 'No compatible runtime is healthy')).toBe(false)
+  })
+
   it("warns when guided Gemma on Ollama is running below Gemma Desktop's requested context", () => {
     const report = buildDoctorReport({
       generatedAt: '2026-04-06T15:10:00.000Z',
