@@ -66,7 +66,7 @@ describe("LM Studio runtime options", () => {
       top_k: 40,
       repeat_penalty: 1.05,
       max_output_tokens: 2048,
-      reasoning: "off",
+      reasoning: "on",
     }));
   });
 

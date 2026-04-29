@@ -16,6 +16,7 @@ import {
   buildFileEditArtifact,
   composeSystemPrompt,
   createEvent,
+  isGemma4ModelId,
   renderTrace,
   resolveSessionSystemInstructions,
   runShellCommand,
@@ -277,6 +278,7 @@ export interface SessionDebugSnapshot {
 function buildRequestPreviewSettings(
   mode: ModeSelection,
   metadata: Record<string, unknown> | undefined,
+  modelId?: string,
 ): Record<string, unknown> {
   const settings: Record<string, unknown> = {
     mode: structuredClone(mode),
@@ -287,7 +289,9 @@ function buildRequestPreviewSettings(
     preferencesValue && typeof preferencesValue === "object" && !Array.isArray(preferencesValue)
       ? preferencesValue as Record<string, unknown>
       : undefined;
-  if (preferences?.reasoningMode === "auto" || preferences?.reasoningMode === "on" || preferences?.reasoningMode === "off") {
+  if (modelId && isGemma4ModelId(modelId)) {
+    settings.reasoningMode = "on";
+  } else if (preferences?.reasoningMode === "auto" || preferences?.reasoningMode === "on") {
     settings.reasoningMode = preferences.reasoningMode;
   }
   const ollamaOptions =
@@ -408,7 +412,7 @@ function buildSessionDebugSnapshot(
       ],
       tools: structuredClone(tools),
       settings: {
-        ...buildRequestPreviewSettings(snapshot.mode, snapshot.metadata),
+        ...buildRequestPreviewSettings(snapshot.mode, snapshot.metadata, snapshot.modelId),
         ...(snapshot.buildPolicy
           ? { buildPolicy: structuredClone(snapshot.buildPolicy) }
           : {}),
@@ -747,7 +751,6 @@ function buildWebResearchSubsessionMetadata(
     delegatedTool: "web_research_agent",
     requestPreferences: {
       ...(parentPreferences ?? {}),
-      reasoningMode: "off",
     },
   };
 }

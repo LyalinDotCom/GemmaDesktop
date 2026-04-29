@@ -47,4 +47,26 @@ describe('assistant narration helper prompt', () => {
     expect(buildAssistantNarrationFallback({ phase: 'submission', attachments: [] }))
       .toBe("Sure, I'll take a look.")
   })
+
+  it('treats submission narration as an action acknowledgement, not an answer', () => {
+    const task = buildAssistantNarrationTask({
+      phase: 'submission',
+      userText: 'is he married',
+      conversationTitle: 'Sam Altman',
+    })
+
+    expect(task.systemInstructions).toContain('This is an acknowledgement before work starts')
+    expect(task.systemInstructions).toContain('Do not try to answer the user request yet.')
+    expect(task.systemInstructions).toContain('trust the conversation context')
+    expect(task.systemInstructions).toContain('Never say that you do not know')
+    expect(extractFirstText(task.sessionInput)).toContain('User request: is he married')
+    expect(normalizeAssistantNarrationText(
+      { text: "I don't have the answer to that question." },
+      { phase: 'submission' },
+    )).toBeNull()
+    expect(normalizeAssistantNarrationText(
+      { text: "I don't have the answer to that question." },
+      { phase: 'result' },
+    )).toBe("I don't have the answer to that question.")
+  })
 })

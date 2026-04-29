@@ -103,7 +103,7 @@ interface ParseState {
 }
 
 const COMMANDS = new Set<CliCommandName>(["help", "inspect", "preview", "run", "scenario"]);
-const REASONING_MODES = new Set(["auto", "on", "off"]);
+const REASONING_MODES = new Set(["auto", "on"]);
 const BUILD_VERIFIER_MODES = new Set<BuildVerifierMode>(["hybrid", "deterministic", "off"]);
 const SCENARIOS = new Set<ScenarioId>([
   "act-webapp-black-hole",
@@ -150,7 +150,7 @@ export function usage(): string {
     "  --tool <name>                 Add a tool to the SDK mode selection. Can repeat.",
     "  --without-tool <name>         Remove a tool from the SDK mode selection. Can repeat.",
     "  --require-tool <name>         Require a tool call in the SDK mode selection. Can repeat.",
-    "  --reasoning <auto|on|off>     Request reasoning control through desktop-style metadata.",
+    "  --reasoning <auto|on>          Request reasoning control through desktop-style metadata.",
     "  --ollama-option <key=value>   Numeric Ollama request option. Can repeat.",
     "  --ollama-keep-alive <value>   Ollama request keep_alive value.",
     "  --lmstudio-option <key=value> Numeric LM Studio request option. Can repeat.",
@@ -370,7 +370,7 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--reasoning": {
       const value = readFlagValue(state, flag);
       if (!REASONING_MODES.has(value)) {
-        throw new CliArgumentError("--reasoning must be auto, on, or off.");
+        throw new CliArgumentError("--reasoning must be auto or on.");
       }
       state.requestPreferences.reasoningMode = value as RequestPreferences["reasoningMode"];
       return;

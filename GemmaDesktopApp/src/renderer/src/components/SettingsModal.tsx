@@ -37,10 +37,7 @@ import {
   clampReadAloudSpeed,
 } from '@shared/readAloud'
 import {
-  REASONING_MODE_ORDER,
   listKnownReasoningControlModels,
-  resolveModelReasoningMode,
-  type ReasoningMode,
 } from '@shared/reasoningSettings'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
 import {
@@ -86,7 +83,6 @@ interface SettingsModalProps {
 export type SettingsTab =
   | 'general'
   | 'ollama'
-  | 'reasoning'
   | 'notifications'
   | 'context'
   | 'runtimes'
@@ -100,7 +96,6 @@ export type SettingsTab =
 const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['general', 'General'],
   ['ollama', 'Ollama'],
-  ['reasoning', 'Reasoning'],
   ['notifications', 'Notifications'],
   ['context', 'Context'],
   ['runtimes', 'Runtimes'],
@@ -606,46 +601,6 @@ export function SettingsModal({
     commitUpdate({ runtimes })
   }
 
-  const handleReasoningModeChange = (modelId: string, mode: ReasoningMode) => {
-    const modelModes = { ...local.reasoning.modelModes }
-    if (mode === 'auto') {
-      delete modelModes[modelId]
-    } else {
-      modelModes[modelId] = mode
-    }
-    const reasoning = { ...local.reasoning, modelModes }
-    setLocal({ ...local, reasoning })
-    commitUpdate({ reasoning })
-  }
-
-  const renderReasoningModeButtons = (modelId: string) => {
-    const currentMode = resolveModelReasoningMode(local.reasoning, modelId)
-    return (
-      <div
-        className="inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
-        role="group"
-        aria-label={`Reasoning mode for ${modelId}`}
-      >
-        {REASONING_MODE_ORDER.map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => handleReasoningModeChange(modelId, mode)}
-            aria-pressed={currentMode === mode}
-            title={`Set ${modelId} reasoning to ${mode}`}
-            className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-              currentMode === mode
-                ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
-                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
-            }`}
-          >
-            {mode[0]?.toUpperCase()}{mode.slice(1)}
-          </button>
-        ))}
-      </div>
-    )
-  }
-
   const handleOllamaProfileContextChange = (modelId: string, nextValue: number) => {
     const ollama = {
       ...local.ollama,
@@ -1060,12 +1015,6 @@ export function SettingsModal({
                           ]}
                         />
 
-                        <SettingsRow
-                          label="Reasoning Preference"
-                          description="`Auto` keeps the model/runtime default. Use `Off` only when you intentionally want the speed-over-depth tradeoff for this model."
-                          control={renderReasoningModeButtons(model.tag)}
-                        />
-
                         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
                           <SettingsField label="Context Length">
                             <Select
@@ -1142,32 +1091,6 @@ export function SettingsModal({
                       </div>
                     )
                   })}
-                </SettingsSection>
-              )}
-
-              {activeTab === 'reasoning' && (
-                <SettingsSection
-                  title="Explicit Reasoning Control"
-                  description="Reasoning is a user-controlled tradeoff. `Auto` preserves the model/runtime default; choose `Off` only when you intentionally want lower latency at the cost of reasoning depth. Currently supported on Gemma 4 via Ollama."
-                >
-                  {listKnownReasoningControlModels().map((model) => (
-                    <SettingsRow
-                      key={model.tag}
-                      label={model.label}
-                      description={model.capabilityBadges.join(' • ')}
-                      control={renderReasoningModeButtons(model.tag)}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Tag tone="success">Ollama</Tag>
-                        <Tag>{model.architectureBadge}</Tag>
-                        <Tag>{model.contextBadge}</Tag>
-                      </div>
-                    </SettingsRow>
-                  ))}
-
-                  <Note tone="warning">
-                    `Auto` preserves the model/runtime default. Models without an explicit runtime control do not appear here yet.
-                  </Note>
                 </SettingsSection>
               )}
 

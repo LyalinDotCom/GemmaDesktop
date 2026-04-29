@@ -14,6 +14,7 @@ import type {
 import {
   contentPartsToText,
   detectCommandVersion,
+  isGemma4ModelId,
   parseToolCallInput,
   resolveImageAssetForRequest,
   withInferredModelFamilyCapabilities,
@@ -129,19 +130,23 @@ function normalizeFiniteNumberRecord(
   return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
 }
 
-function resolveLmStudioReasoningControlValue(settings: ChatRequest["settings"]): "on" | "off" | undefined {
+function resolveLmStudioReasoningControlValue(modelId: string, settings: ChatRequest["settings"]): "on" | undefined {
+  if (isGemma4ModelId(modelId)) {
+    return "on";
+  }
   const reasoningMode = settings?.reasoningMode;
-  if (reasoningMode === "on" || reasoningMode === "off") {
+  if (reasoningMode === "on") {
     return reasoningMode;
   }
   return undefined;
 }
 
 function resolveLmStudioNativeRequestOptions(
+  modelId: string,
   settings: ChatRequest["settings"],
 ): Record<string, unknown> | undefined {
   const options = normalizeFiniteNumberRecord(settings?.lmstudioOptions, LMSTUDIO_NATIVE_REQUEST_OPTION_KEYS);
-  const reasoning = resolveLmStudioReasoningControlValue(settings);
+  const reasoning = resolveLmStudioReasoningControlValue(modelId, settings);
   if (!options && !reasoning) {
     return undefined;
   }
@@ -606,7 +611,7 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
         model: request.model,
         input,
         stream: false,
-        ...resolveLmStudioNativeRequestOptions(request.settings),
+        ...resolveLmStudioNativeRequestOptions(request.model, request.settings),
       };
       request.debug?.({
         stage: "request",
@@ -655,7 +660,7 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
         model: request.model,
         input,
         stream: true,
-        ...resolveLmStudioNativeRequestOptions(request.settings),
+        ...resolveLmStudioNativeRequestOptions(request.model, request.settings),
       };
       request.debug?.({
         stage: "request",

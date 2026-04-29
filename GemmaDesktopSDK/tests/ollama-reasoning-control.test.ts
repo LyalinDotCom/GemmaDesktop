@@ -46,7 +46,7 @@ describe("ollama reasoning control", () => {
     expect(requests[0]?.think).toBe(true);
   });
 
-  it("sends think=false when reasoningMode is off", async () => {
+  it("keeps Gemma 4 thinking enabled even when stale metadata says off", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const server = await createMockServer((request) => {
       requests.push((request.bodyJson ?? {}) as Record<string, unknown>);
@@ -77,10 +77,10 @@ describe("ollama reasoning control", () => {
       },
     });
 
-    expect(requests[0]?.think).toBe(false);
+    expect(requests[0]?.think).toBe(true);
   });
 
-  it("keeps Gemma 4 thinking control in the Ollama request instead of raw system prompt tokens", async () => {
+  it("enables Gemma 4 thinking in both the Ollama request and system prompt", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     const server = await createMockServer((request) => {
       switch (request.path) {
@@ -139,12 +139,13 @@ describe("ollama reasoning control", () => {
       .map((message) => String(message.content ?? ""))
       .join("\n");
     expect(systemText).toContain("<gemma_desktop_system_prompt>");
-    expect(systemText).not.toContain("<|think|>");
+    expect(systemText).toContain("<|think|>");
+    expect(systemText).toContain("Thinking mode is enabled for this Gemma 4 conversation.");
     expect(systemText).not.toContain("<|turn>system");
     expect(systemText).not.toContain("<turn|>");
   });
 
-  it("omits think when reasoningMode is auto", async () => {
+  it("sends think=true for Gemma 4 when reasoningMode is auto", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const server = await createMockServer((request) => {
       requests.push((request.bodyJson ?? {}) as Record<string, unknown>);
@@ -175,7 +176,7 @@ describe("ollama reasoning control", () => {
       },
     });
 
-    expect("think" in (requests[0] ?? {})).toBe(false);
+    expect(requests[0]?.think).toBe(true);
   });
 
   it("sends explicit ollama options when provided", async () => {

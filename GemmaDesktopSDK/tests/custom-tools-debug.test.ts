@@ -94,6 +94,7 @@ describe("custom tool surfaces", () => {
 
     expect(sections.map((section) => section.source)).toEqual([
       "fallback",
+      "model",
       "environment",
       "tool_context",
       "mode",

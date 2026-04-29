@@ -29,6 +29,7 @@ import {
   contentPartsToText,
   describeAttachmentKind,
   estimateTextTokens,
+  isGemma4ModelId,
   makeId,
   normalizeInput,
   resolveCapabilityStatus,
@@ -393,6 +394,19 @@ function buildEnvironmentInstructions(options: {
   return [
     `Current date: ${dateText}${timeZone ? ` (${timeZone})` : ""}.`,
     "Use this current date when interpreting relative dates such as today, tomorrow, and yesterday.",
+  ].join("\n");
+}
+
+function buildGemma4ThinkingInstructions(modelId: string): string | undefined {
+  if (!isGemma4ModelId(modelId)) {
+    return undefined;
+  }
+
+  return [
+    "<|think|>",
+    "Thinking mode is enabled for this Gemma 4 conversation.",
+    "Use the native thought channel to reason through tool choices, failures, and self-corrections before taking external actions.",
+    "Do not paste raw thought tokens or scratch reasoning into normal assistant text; keep visible answers concise and outcome-focused.",
   ].join("\n");
 }
 
@@ -805,8 +819,8 @@ const COMPACTION_SYSTEM_PROMPT = [
 
 function normalizeRequestReasoningMode(
   value: unknown,
-): "auto" | "on" | "off" | undefined {
-  return value === "auto" || value === "on" || value === "off"
+): "auto" | "on" | undefined {
+  return value === "auto" || value === "on"
     ? value
     : undefined;
 }
@@ -827,6 +841,7 @@ function normalizeRequestNumericOptions(
 function buildRequestSettings(
   mode: unknown,
   metadata: Record<string, unknown> | undefined,
+  modelId?: string,
 ): Record<string, unknown> {
   const settings: Record<string, unknown> = {
     mode,
@@ -837,7 +852,9 @@ function buildRequestSettings(
     preferencesValue && typeof preferencesValue === "object" && !Array.isArray(preferencesValue)
       ? preferencesValue as Record<string, unknown>
       : undefined;
-  const reasoningMode = normalizeRequestReasoningMode(preferences?.reasoningMode);
+  const reasoningMode = modelId && isGemma4ModelId(modelId)
+    ? "on"
+    : normalizeRequestReasoningMode(preferences?.reasoningMode);
   if (reasoningMode) {
     settings.reasoningMode = reasoningMode;
   }
@@ -1378,6 +1395,14 @@ export function resolveSessionSystemInstructions(options: {
   const base = resolveModeBase(options.mode);
   if (base !== "minimal") {
     sections.push(...resolvePromptProfileSections(options.modelId));
+    const gemma4ThinkingInstructions = buildGemma4ThinkingInstructions(options.modelId);
+    if (gemma4ThinkingInstructions) {
+      sections.push({
+        source: "model",
+        id: "gemma4-thinking",
+        text: gemma4ThinkingInstructions,
+      });
+    }
     sections.push({
       source: "environment",
       text: buildEnvironmentInstructions({
@@ -1559,12 +1584,13 @@ export class SessionEngine {
       ]),
     ];
 
+    const compactionModel = options.model ?? this.model;
     const request: ChatRequest = {
-      model: options.model ?? this.model,
+      model: compactionModel,
       messages,
       signal: options.signal,
       debug: options.debug,
-      settings: buildRequestSettings("compact", this.metadata),
+      settings: buildRequestSettings("compact", this.metadata, compactionModel),
     };
 
     let response: ChatResponse | undefined;
@@ -1731,7 +1757,7 @@ export class SessionEngine {
       responseFormat,
       signal,
       debug,
-      settings: buildRequestSettings(this.mode, this.metadata),
+      settings: buildRequestSettings(this.mode, this.metadata, this.model),
     };
   }
 

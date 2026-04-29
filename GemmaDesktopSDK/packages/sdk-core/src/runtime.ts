@@ -191,6 +191,10 @@ export interface TokenUsage {
   raw?: unknown;
 }
 
+export function isGemma4ModelId(modelId: string): boolean {
+  return modelId.toLowerCase().replace(/[^a-z0-9]+/g, "").includes("gemma4");
+}
+
 export interface SessionMessage {
   id: string;
   role: "system" | "user" | "assistant" | "tool";

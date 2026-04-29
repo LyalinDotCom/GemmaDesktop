@@ -112,6 +112,7 @@ describe("system prompt profiles", () => {
     expect(prompt?.endsWith(`</${SYSTEM_PROMPT_ROOT_TAG}>`)).toBe(true);
     expect(collectSectionSources(prompt)).toEqual([
       "fallback",
+      "model",
       "environment",
       "tool_context",
       "mode",
@@ -120,6 +121,8 @@ describe("system prompt profiles", () => {
     expect(prompt).toContain(
       `<${SYSTEM_PROMPT_SECTION_TAG} source="continuation" id="runtime-continuation">`,
     );
+    expect(prompt).toContain(`<${SYSTEM_PROMPT_SECTION_TAG} source="model" id="gemma4-thinking">`);
+    expect(prompt).toContain("<|think|>");
     expect(prompt).toContain("**Web & Browser Tools:**");
     expect(prompt).toContain("**Browser Loop:**");
     expect(prompt).toContain("**Workspace & File Tools:**");
@@ -252,6 +255,8 @@ describe("system prompt profiles", () => {
     expect(systemText).toContain("execute against it instead of restating it as a fresh proposal");
     expect(systemText).toContain("Do not keep issuing near-duplicate tool calls after partial, empty, or malformed results.");
     expect(systemText).toContain(`<${SYSTEM_PROMPT_SECTION_TAG} source="fallback" id="fallback">`);
+    expect(systemText).toContain(`<${SYSTEM_PROMPT_SECTION_TAG} source="model" id="gemma4-thinking">`);
+    expect(systemText).toContain("<|think|>");
   });
 
   it("snapshots gemma4:31b prompt composition for explore, plan, and build", () => {
@@ -506,5 +511,6 @@ describe("system prompt profiles", () => {
       (requests[0]?.messages as Array<Record<string, unknown>>) ?? [],
     );
     expect(systemText).not.toContain("Optimize for Gemma 4 31B style");
+    expect(systemText).not.toContain("<|think|>");
   });
 });

@@ -21,6 +21,10 @@ export interface AssistantNarrationTask {
   fallbackText: string
 }
 
+export interface AssistantNarrationNormalizeOptions {
+  phase?: AssistantNarrationPhase
+}
+
 export const ASSISTANT_NARRATION_RESPONSE_FORMAT: StructuredOutputSpec = {
   name: 'assistant_spoken_narration',
   strict: false,
@@ -103,7 +107,20 @@ export function buildAssistantNarrationFallback(
   return "Sure, I'll take a look."
 }
 
-export function normalizeAssistantNarrationText(value: unknown): string | null {
+function isPrematureSubmissionAnswer(value: string): boolean {
+  return [
+    /\b(?:i|we)\s+(?:do not|don't|dont|cannot|can't|cant)\s+(?:have|know|answer|tell|determine)\b/i,
+    /\b(?:i|we)\s+(?:do not|don't|dont|cannot|can't|cant)\s+(?:provide|find|confirm)\b/i,
+    /\b(?:i|we)\s+(?:am|are)\s+(?:not sure|unsure)\b/i,
+    /\b(?:not enough|need more)\s+(?:context|information)\b/i,
+    /\b(?:no|not)\s+(?:answer|enough information)\b/i,
+  ].some((pattern) => pattern.test(value))
+}
+
+export function normalizeAssistantNarrationText(
+  value: unknown,
+  options: AssistantNarrationNormalizeOptions = {},
+): string | null {
   const raw =
     typeof value === 'string'
       ? value
@@ -129,6 +146,13 @@ export function normalizeAssistantNarrationText(value: unknown): string | null {
     normalized.match(/^.*?[.!?](?=\s|$)/)?.[0]?.trim()
     ?? normalized
 
+  if (
+    options.phase === 'submission'
+    && isPrematureSubmissionAnswer(firstSentence)
+  ) {
+    return null
+  }
+
   return firstSentence.slice(0, 180).trim() || null
 }
 
@@ -142,7 +166,14 @@ export function buildAssistantNarrationTask(
   })
   const phaseInstruction =
     input.phase === 'submission'
-      ? 'Write what Gemma is about to do for the user request.'
+      ? [
+          'Write what Gemma is about to do for the user request.',
+          'This is an acknowledgement before work starts, not the answer.',
+          'Do not try to answer the user request yet.',
+          'If the request asks for a factual lookup, current fact, or personal detail, say you will look into it or check it.',
+          'If the user uses a pronoun like "he" or "she", trust the conversation context and still acknowledge the lookup.',
+          'Never say that you do not know, do not have the answer, need more context, or cannot answer during submission narration.',
+        ].join('\n')
       : 'Write a brief spoken lead-in or outcome summary for the result.'
 
   return {

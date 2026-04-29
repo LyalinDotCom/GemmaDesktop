@@ -27,7 +27,7 @@ function createInspection(): RuntimeInspectionResult {
 }
 
 describe("session request reasoning settings", () => {
-  it("propagates requestPreferences into chat request settings", async () => {
+  it("propagates requestPreferences and keeps Gemma 4 reasoning enabled", async () => {
     const requests: ChatRequest[] = [];
     const adapter: RuntimeAdapter = {
       identity: createInspection().runtime,
@@ -56,7 +56,7 @@ describe("session request reasoning settings", () => {
 
     const session = new SessionEngine({
       adapter,
-      model: "mock-model",
+      model: "gemma4:31b",
       mode: "cowork",
       workingDirectory: "/tmp",
       metadata: {
@@ -77,7 +77,7 @@ describe("session request reasoning settings", () => {
     expect(result.text).toBe("Reasoning configured.");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.settings).toEqual(expect.objectContaining({
-      reasoningMode: "off",
+      reasoningMode: "on",
       ollamaOptions: {
         num_ctx: 65536,
         temperature: 1,

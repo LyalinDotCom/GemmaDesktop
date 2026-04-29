@@ -258,10 +258,8 @@ import {
 import {
   getDefaultReasoningSettings,
   normalizeReasoningSettings,
-  resolveModelReasoningMode,
   supportsReasoningControlForModel,
   type AppReasoningSettings,
-  type ReasoningMode,
 } from '../shared/reasoningSettings'
 import {
   createDefaultModelSelectionSettings,
@@ -4236,11 +4234,11 @@ function normalizePersistedSessionData(
 }
 
 function resolveEffectiveReasoningMode(
-  currentSettings: AppSettingsRecord,
+  _currentSettings: AppSettingsRecord,
   target: { modelId: string; runtimeId: string },
-): ReasoningMode | undefined {
+): 'on' | undefined {
   return supportsReasoningControlForModel(target.modelId, target.runtimeId)
-    ? resolveModelReasoningMode(currentSettings.reasoning, target.modelId)
+    ? 'on'
     : undefined
 }
 
@@ -4266,7 +4264,6 @@ function withResolvedRequestPreferencesMetadata(
   const currentReasoningMode =
     currentPreferences?.reasoningMode === 'auto'
     || currentPreferences?.reasoningMode === 'on'
-    || currentPreferences?.reasoningMode === 'off'
       ? currentPreferences.reasoningMode
       : undefined
   const currentOllamaKeepAlive =
@@ -6401,12 +6398,6 @@ async function runHelperStructuredTask(input: {
     ) ?? {
       session_role: input.sessionRole,
     }
-    const requestPreferences = {
-      ...(readRequestPreferences(metadata) ?? {}),
-      reasoningMode: 'off' as const,
-    }
-    metadata[REQUEST_PREFERENCES_METADATA_KEY] = requestPreferences
-
     const helperSession = await gemmaDesktop.sessions.create({
       runtime: helperRuntimeId,
       model: helperModelId,
@@ -17114,8 +17105,8 @@ export function registerIpcHandlers(): void {
 
       return {
         text:
-          normalizeAssistantNarrationText(result.structuredOutput)
-          ?? normalizeAssistantNarrationText(result.outputText)
+          normalizeAssistantNarrationText(result.structuredOutput, { phase })
+          ?? normalizeAssistantNarrationText(result.outputText, { phase })
           ?? task.fallbackText,
         helperModelId: result.helperModelId,
         helperRuntimeId: result.helperRuntimeId,

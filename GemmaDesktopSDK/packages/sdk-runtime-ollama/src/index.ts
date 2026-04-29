@@ -17,6 +17,7 @@ import {
   CANONICAL_ATTACHMENT_CAPABILITY_IDS,
   GemmaDesktopError,
   isGemmaDesktopError,
+  isGemma4ModelId,
   parseToolCallInput,
   resolveBinaryAssetForRequest,
   resolveImageAssetForRequest,
@@ -135,13 +136,13 @@ function createCapabilities(): CapabilityRecord[] {
   ];
 }
 
-function resolveReasoningControlValue(settings: ChatRequest["settings"]): boolean | undefined {
+function resolveReasoningControlValue(modelId: string, settings: ChatRequest["settings"]): boolean | undefined {
+  if (isGemma4ModelId(modelId)) {
+    return true;
+  }
   const reasoningMode = settings?.reasoningMode;
   if (reasoningMode === "on") {
     return true;
-  }
-  if (reasoningMode === "off") {
-    return false;
   }
   return undefined;
 }
@@ -762,7 +763,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         messages: nativeMessages,
         stream: false,
       };
-      const think = resolveReasoningControlValue(request.settings);
+      const think = resolveReasoningControlValue(request.model, request.settings);
       const options = resolveOllamaRequestOptions(request.settings);
       const keepAlive = resolveOllamaKeepAliveValue(request.settings);
       if (think !== undefined) {
@@ -832,7 +833,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         messages: nativeMessages,
         stream: true,
       };
-      const think = resolveReasoningControlValue(request.settings);
+      const think = resolveReasoningControlValue(request.model, request.settings);
       const options = resolveOllamaRequestOptions(request.settings);
       const keepAlive = resolveOllamaKeepAliveValue(request.settings);
       if (think !== undefined) {

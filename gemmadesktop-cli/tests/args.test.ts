@@ -26,7 +26,7 @@ describe("CLI argument parsing", () => {
       "--without-tool",
       "exec_command",
       "--reasoning",
-      "off",
+      "on",
       "--ollama-option",
       "num_ctx=8192",
       "--ollama-keep-alive",
@@ -47,7 +47,7 @@ describe("CLI argument parsing", () => {
       withoutTools: ["exec_command"],
     });
     expect(command.requestPreferences).toEqual({
-      reasoningMode: "off",
+      reasoningMode: "on",
       ollamaOptions: { num_ctx: 8192 },
       ollamaKeepAlive: "24h",
     });

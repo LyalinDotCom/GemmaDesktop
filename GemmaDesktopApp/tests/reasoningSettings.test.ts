@@ -7,16 +7,16 @@ import {
 } from '../src/shared/reasoningSettings'
 
 describe('reasoning settings helpers', () => {
-  it('defaults all unspecified models to auto', () => {
+  it('defaults Gemma reasoning to on', () => {
     expect(
       resolveModelReasoningMode(
         getDefaultReasoningSettings(),
         'gemma4:31b',
       ),
-    ).toBe('auto')
+    ).toBe('on')
   })
 
-  it('normalizes persisted overrides and drops invalid or auto entries', () => {
+  it('normalizes legacy persisted overrides away', () => {
     const normalized = normalizeReasoningSettings({
       modelModes: {
         'gemma4:e2b': 'on',
@@ -28,10 +28,7 @@ describe('reasoning settings helpers', () => {
     })
 
     expect(normalized).toEqual({
-      modelModes: {
-        'gemma4:e2b': 'on',
-        'gemma4:31b': 'off',
-      },
+      modelModes: {},
     })
   })
 

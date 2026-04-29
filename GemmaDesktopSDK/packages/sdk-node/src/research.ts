@@ -4257,7 +4257,6 @@ export class ResearchRunner {
         ...metadata,
         requestPreferences: {
           ...(parentPreferences ?? {}),
-          reasoningMode: "off",
         },
       };
     };

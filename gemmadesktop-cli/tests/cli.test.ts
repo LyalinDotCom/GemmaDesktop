@@ -183,7 +183,7 @@ describe("headless CLI", () => {
         "--tool",
         "read_file",
         "--reasoning",
-        "off",
+        "on",
         "--ollama-option",
         "num_ctx=8192",
         "--ollama-keep-alive",
@@ -221,7 +221,7 @@ describe("headless CLI", () => {
         storageScope: "project",
       },
       [REQUEST_PREFERENCES_METADATA_KEY]: {
-        reasoningMode: "off",
+        reasoningMode: "on",
         ollamaOptions: { num_ctx: 8192 },
         ollamaKeepAlive: "24h",
       },

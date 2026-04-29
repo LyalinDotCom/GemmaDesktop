@@ -253,13 +253,13 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('Alpha 7B')
   })
 
-  it('surfaces reasoning preferences on Ollama model cards', () => {
+  it('does not expose reasoning-off controls on Ollama model cards', () => {
     const markup = renderSettingsModal('ollama')
 
-    expect(markup).toContain('Reasoning Preference')
-    expect(markup).toContain('speed-over-depth tradeoff for this model')
-    expect(markup).toContain('aria-label="Reasoning mode for gemma4:26b"')
-    expect(markup).toContain('title="Set gemma4:26b reasoning to off"')
+    expect(markup).not.toContain('Reasoning Preference')
+    expect(markup).not.toContain('speed-over-depth tradeoff for this model')
+    expect(markup).not.toContain('aria-label="Reasoning mode for gemma4:26b"')
+    expect(markup).not.toContain('title="Set gemma4:26b reasoning to off"')
   })
 
   it('surfaces the Ollama keep-alive switch in runtime settings', () => {

@@ -4,13 +4,11 @@ import {
   type GemmaCatalogEntry,
 } from './gemmaCatalog'
 
-export type ReasoningMode = 'auto' | 'on' | 'off'
+export type ReasoningMode = 'on'
 
 export interface AppReasoningSettings {
   modelModes: Record<string, ReasoningMode>
 }
-
-export const REASONING_MODE_ORDER: readonly ReasoningMode[] = ['auto', 'off', 'on']
 
 export function getDefaultReasoningSettings(): AppReasoningSettings {
   return {
@@ -20,52 +18,28 @@ export function getDefaultReasoningSettings(): AppReasoningSettings {
 
 export function normalizeReasoningMode(
   value: unknown,
-  fallback: ReasoningMode = 'auto',
+  fallback: ReasoningMode = 'on',
 ): ReasoningMode {
-  return value === 'auto' || value === 'on' || value === 'off'
+  return value === 'on'
     ? value
     : fallback
 }
 
 export function normalizeReasoningSettings(
-  value: unknown,
+  _value: unknown,
   fallback: AppReasoningSettings = getDefaultReasoningSettings(),
 ): AppReasoningSettings {
-  const settingsRecord =
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null
-  const rawModelModes = settingsRecord?.modelModes
-  const modelModesValue =
-    rawModelModes && typeof rawModelModes === 'object' && !Array.isArray(rawModelModes)
-      ? (rawModelModes as Record<string, unknown>)
-      : {}
-
-  const modelModes = Object.fromEntries(
-    Object.entries(modelModesValue)
-      .map(([modelId, mode]) => [modelId.trim(), normalizeReasoningMode(mode, 'auto')] as const)
-      .filter(
-        ([modelId, mode]) =>
-          modelId.length > 0
-          && mode !== 'auto',
-      ),
-  )
-
   return {
     ...fallback,
-    modelModes,
+    modelModes: {},
   }
 }
 
 export function resolveModelReasoningMode(
-  settings: AppReasoningSettings | undefined,
-  modelId: string,
+  _settings: AppReasoningSettings | undefined,
+  _modelId: string,
 ): ReasoningMode {
-  if (!settings || typeof modelId !== 'string' || modelId.trim().length === 0) {
-    return 'auto'
-  }
-
-  return normalizeReasoningMode(settings.modelModes[modelId.trim()], 'auto')
+  return 'on'
 }
 
 export function supportsReasoningControlForModel(
