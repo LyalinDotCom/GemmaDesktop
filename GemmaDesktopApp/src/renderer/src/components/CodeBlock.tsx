@@ -20,7 +20,7 @@ export function CodeBlock({ code, language, filename }: CodeBlockProps) {
   const label = filename ?? language
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40">
+    <div className="not-prose my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40">
       <div className="flex items-center justify-between border-b border-zinc-200/70 px-2.5 py-0.5 dark:border-zinc-800/70">
         <span className="font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400">
           {label}
@@ -43,8 +43,8 @@ export function CodeBlock({ code, language, filename }: CodeBlockProps) {
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto px-3 py-1.5">
-        <code className="whitespace-pre font-mono text-[12px] leading-snug text-zinc-800 dark:text-zinc-200">
+      <pre className="m-0 overflow-x-auto px-4 py-2.5">
+        <code className="block whitespace-pre font-mono text-[12px] leading-relaxed text-zinc-800 dark:text-zinc-200">
           {code}
         </code>
       </pre>

@@ -114,6 +114,25 @@ describe('external link handling', () => {
     expect(html).toContain('<li>second item</li>')
   })
 
+  it('renders fenced code blocks outside prose inline-code styling', () => {
+    const html = renderToStaticMarkup(
+      createElement(MarkdownContent, {
+        text: [
+          '```bash',
+          'cd .tmp/sim07',
+          'npm run dev',
+          '```',
+        ].join('\n'),
+      }),
+    )
+
+    expect(html).toContain('not-prose')
+    expect(html).toContain('<pre class="m-0 overflow-x-auto px-4 py-2.5">')
+    expect(html).toContain(
+      '<code class="block whitespace-pre font-mono text-[12px] leading-relaxed text-zinc-800 dark:text-zinc-200">',
+    )
+  })
+
   it('renders valid markdown tables as semantic table markup', () => {
     const html = renderToStaticMarkup(
       createElement(MarkdownContent, {
