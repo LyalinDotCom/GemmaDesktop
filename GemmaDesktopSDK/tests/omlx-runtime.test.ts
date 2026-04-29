@@ -228,4 +228,105 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
     expect(response.text).toBe("Ready from oMLX.");
     expect(unloadCalled).toBe(true);
   });
+
+  it("enables oMLX Gemma 4 thinking with a bounded thinking budget", async () => {
+    let chatBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        chatBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            id: "chatcmpl_omlx",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "Ready from oMLX.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOmlxOpenAICompatibleAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      messages: [{
+        id: "msg_1",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        createdAt: new Date().toISOString(),
+      }],
+      settings: {
+        reasoningMode: "on",
+      },
+    });
+
+    expect(chatBody).toEqual(expect.objectContaining({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      stream: false,
+      thinking_budget: 4096,
+      chat_template_kwargs: {
+        enable_thinking: true,
+      },
+    }));
+  });
+
+  it("preserves explicit oMLX thinking budget overrides", async () => {
+    let chatBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        chatBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            id: "chatcmpl_omlx",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "Ready from oMLX.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOmlxOpenAICompatibleAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      messages: [{
+        id: "msg_1",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        createdAt: new Date().toISOString(),
+      }],
+      settings: {
+        reasoningMode: "on",
+        openAICompatibleOptions: {
+          thinking_budget: 8192,
+          chat_template_kwargs: {
+            reasoning_effort: "high",
+          },
+        },
+      },
+    });
+
+    expect(chatBody).toEqual(expect.objectContaining({
+      thinking_budget: 8192,
+      chat_template_kwargs: {
+        enable_thinking: true,
+        reasoning_effort: "high",
+      },
+    }));
+  });
 });

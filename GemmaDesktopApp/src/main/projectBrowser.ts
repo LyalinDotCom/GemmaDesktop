@@ -543,6 +543,14 @@ export class ProjectBrowserManager {
         : 'Page load finished.',
       `Recent console errors: ${result.consoleErrorCount}`,
     ]
+    if (loadTimedOut || result.consoleErrorCount > 0) {
+      const reason = loadTimedOut
+        ? 'page load timed out'
+        : `${result.consoleErrorCount} console error${result.consoleErrorCount === 1 ? '' : 's'} captured`
+      lines.push(
+        `Verification status: failed (${reason}).`,
+      )
+    }
 
     if (result.excerpt.trim().length > 0) {
       lines.push('', 'Visible text excerpt:', result.excerpt)
@@ -852,6 +860,9 @@ export class ProjectBrowserManager {
       }
     } else {
       lines.push('', 'No matching DOM nodes were found.')
+      lines.push(
+        'Verification status: inconclusive (no DOM matches were found for the requested patterns).',
+      )
     }
 
     if (result.truncated) {
@@ -886,9 +897,14 @@ export class ProjectBrowserManager {
     ]
 
     if (returned.length > 0) {
+      lines.push(
+        '',
+        `Verification status: failed (${returned.length} console error${returned.length === 1 ? '' : 's'} returned).`,
+      )
       lines.push('', ...returned.map(formatConsoleEntry))
     } else {
       lines.push('', 'No console errors have been captured yet.')
+      lines.push('Verification status: passed (no console errors captured).')
     }
 
     if (truncated) {

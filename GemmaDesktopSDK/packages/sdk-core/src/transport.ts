@@ -729,6 +729,7 @@ const OPENAI_COMPATIBLE_OPTION_KEYS = new Set([
   "temperature",
   "top_p",
   "top_k",
+  "min_p",
   "max_tokens",
   "stop",
   "presence_penalty",
@@ -736,9 +737,30 @@ const OPENAI_COMPATIBLE_OPTION_KEYS = new Set([
   "logit_bias",
   "repeat_penalty",
   "seed",
+  "xtc_probability",
+  "xtc_threshold",
+  "thinking_budget",
+  "chat_template_kwargs",
 ]);
 
-function normalizeOpenAICompatibleOptionValue(value: unknown): unknown {
+function normalizeOpenAICompatiblePrimitiveRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, entry]) =>
+    (typeof entry === "number" && Number.isFinite(entry))
+    || typeof entry === "string"
+    || typeof entry === "boolean"
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeOpenAICompatibleOptionValue(key: string, value: unknown): unknown {
+  if (key === "chat_template_kwargs") {
+    return normalizeOpenAICompatiblePrimitiveRecord(value);
+  }
+
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
@@ -772,7 +794,7 @@ function resolveOpenAICompatibleRequestOptions(
     if (!OPENAI_COMPATIBLE_OPTION_KEYS.has(key)) {
       return [];
     }
-    const normalized = normalizeOpenAICompatibleOptionValue(rawValue);
+    const normalized = normalizeOpenAICompatibleOptionValue(key, rawValue);
     return normalized === undefined ? [] : [[key, normalized] as const];
   });
 

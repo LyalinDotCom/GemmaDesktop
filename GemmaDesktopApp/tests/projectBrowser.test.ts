@@ -103,6 +103,28 @@ describe('project browser helpers', () => {
     })
   })
 
+  it('labels captured console errors as failed browser verification evidence', () => {
+    const manager = new ProjectBrowserManager(() => {})
+    ;(manager as unknown as {
+      pushConsoleEntry(input: {
+        level: 'error'
+        message: string
+        sourceId?: string
+        lineNumber?: number
+      }): void
+    }).pushConsoleEntry({
+      level: 'error',
+      message: 'Cannot read properties of undefined',
+      sourceId: 'http://localhost:5173/src/main.ts',
+      lineNumber: 42,
+    })
+
+    const result = manager.getConsoleErrors()
+
+    expect(result.output).toContain('Verification status: failed (1 console error returned).')
+    expect(result.output).toContain('Cannot read properties of undefined')
+  })
+
   it('tracks CoBrowse browser ownership and rejects agent browser use while the user has control', () => {
     const manager = new ProjectBrowserManager(() => {})
 

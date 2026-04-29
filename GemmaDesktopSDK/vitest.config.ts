@@ -14,6 +14,7 @@ export default defineConfig({
       "@gemma-desktop/sdk-runtime-ollama": local("./packages/sdk-runtime-ollama/src/index.ts"),
       "@gemma-desktop/sdk-runtime-lmstudio": local("./packages/sdk-runtime-lmstudio/src/index.ts"),
       "@gemma-desktop/sdk-runtime-llamacpp": local("./packages/sdk-runtime-llamacpp/src/index.ts"),
+      "@gemma-desktop/sdk-runtime-omlx": local("./packages/sdk-runtime-omlx/src/index.ts"),
       "@gemma-desktop/sdk-node": local("./packages/sdk-node/src/index.ts")
     }
   },

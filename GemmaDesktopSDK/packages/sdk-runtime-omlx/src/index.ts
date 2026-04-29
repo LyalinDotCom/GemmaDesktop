@@ -12,6 +12,7 @@ import type {
 import {
   fetchJson,
   generateOpenAICompatibleResponse,
+  isGemma4ModelId,
   postJson,
   streamOpenAICompatibleResponse,
   withInferredModelFamilyCapabilities,
@@ -21,6 +22,8 @@ export interface OmlxAdapterOptions {
   baseUrl?: string;
   apiKey?: string;
 }
+
+const DEFAULT_OMLX_GEMMA4_THINKING_BUDGET = 4096;
 
 function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, "");
@@ -60,6 +63,51 @@ function pickNumber(...values: unknown[]): number | undefined {
     }
   }
   return undefined;
+}
+
+function asMutableOpenAIOptions(settings: ChatRequest["settings"]): Record<string, unknown> {
+  const value = settings?.openAICompatibleOptions;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
+function asMutableChatTemplateKwargs(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
+function shouldEnableOmlxReasoning(modelId: string, settings: ChatRequest["settings"]): boolean {
+  return isGemma4ModelId(modelId)
+    || settings?.reasoningMode === "on"
+    || settings?.reasoningMode === "auto";
+}
+
+function withOmlxOpenAICompatibleSettings(request: ChatRequest): ChatRequest {
+  if (!shouldEnableOmlxReasoning(request.model, request.settings)) {
+    return request;
+  }
+
+  const openAICompatibleOptions = asMutableOpenAIOptions(request.settings);
+  const chatTemplateKwargs = asMutableChatTemplateKwargs(openAICompatibleOptions.chat_template_kwargs);
+  chatTemplateKwargs.enable_thinking = true;
+
+  return {
+    ...request,
+    settings: {
+      ...(request.settings ?? {}),
+      openAICompatibleOptions: {
+        ...openAICompatibleOptions,
+        chat_template_kwargs: chatTemplateKwargs,
+        thinking_budget:
+          typeof openAICompatibleOptions.thinking_budget === "number"
+          && Number.isFinite(openAICompatibleOptions.thinking_budget)
+            ? openAICompatibleOptions.thinking_budget
+            : DEFAULT_OMLX_GEMMA4_THINKING_BUDGET,
+      },
+    },
+  };
 }
 
 function authHeaders(apiKey?: string): Record<string, string> {
@@ -276,10 +324,18 @@ export function createOmlxOpenAICompatibleAdapter(options: OmlxAdapterOptions = 
       };
     },
     async generate(request: ChatRequest) {
-      return await generateOpenAICompatibleResponse(baseUrl, request, options.apiKey ?? "omlx");
+      return await generateOpenAICompatibleResponse(
+        baseUrl,
+        withOmlxOpenAICompatibleSettings(request),
+        options.apiKey ?? "omlx",
+      );
     },
     async *stream(request: ChatRequest) {
-      yield* streamOpenAICompatibleResponse(baseUrl, request, options.apiKey ?? "omlx");
+      yield* streamOpenAICompatibleResponse(
+        baseUrl,
+        withOmlxOpenAICompatibleSettings(request),
+        options.apiKey ?? "omlx",
+      );
     },
     async embed(request: EmbeddingRequest): Promise<EmbeddingResult> {
       const response = await postJson<Record<string, unknown>>(`${baseUrl}/embeddings`, {

@@ -1556,6 +1556,74 @@ describe("build mode verification enforcement", () => {
     }
   });
 
+  it("rejects completion after failed Project Browser verification without a concrete blocker", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the nested web app.",
+        toolName: "write_file",
+        toolInput: {
+          path: "black/package.json",
+          content: JSON.stringify({
+            scripts: { build: "vite build" },
+          }),
+        },
+      }),
+      createToolCallResponse({
+        text: "I will verify it in the Project Browser.",
+        toolName: "open_project_browser",
+        toolInput: {
+          url: "http://localhost:5173/",
+        },
+      }),
+      createTextResponse("Done. The web app loads in the Project Browser."),
+      createTextResponse("Done. The web app loads in the Project Browser."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool({ writeToDisk: true }));
+    registry.register(createOpenProjectBrowserTool({
+      title: "Gemma",
+      excerpt: "Gemma Desktop",
+      consoleErrorCount: 4,
+    }));
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    })));
+
+    const originalCwd = process.cwd();
+    process.chdir(workingDirectory);
+    try {
+      const engine = new SessionEngine({
+        adapter,
+        model: "mock-model",
+        mode: "build",
+        workingDirectory,
+        tools: new ToolRuntime({ registry }),
+        buildPolicy: {
+          verificationContinuationLimit: 1,
+        },
+        maxSteps: 5,
+      });
+
+      await expect(engine.run("Create a nested web app in black.")).rejects.toThrow(
+        "Build turn ended with failing verification and no concrete blocker.",
+      );
+      expect(adapter.requests).toHaveLength(4);
+      expect(collectSystemText(adapter.requests[3]?.messages ?? [])).toContain(
+        "The latest browser/runtime verification failed or was inconclusive",
+      );
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it("allows a concrete blocker after a failed verification command", async () => {
     const workingDirectory = await createWorkspaceWithPackageJson({
       build: "vite build",
