@@ -335,6 +335,7 @@ import {
   CANCELLED_TURN_ID_SUFFIX,
   CANCELLED_TURN_WARNING,
   INTERRUPTED_TURN_ID_SUFFIX,
+  resolveInterruptedTurnTimestamp,
 } from './interruptedTurns'
 import {
   buildResearchAssistantMessage,
@@ -5464,7 +5465,11 @@ async function recoverInterruptedPendingTurns(): Promise<void> {
       const recoveredMessage = buildInterruptedAssistantMessage({
         turnId: pendingTurn.turnId,
         content: pendingTurn.content,
-        timestamp: pendingTurn.startedAt + 1,
+        timestamp: resolveInterruptedTurnTimestamp({
+          turnStartedAt: pendingTurn.startedAt,
+          history: persisted.snapshot.history,
+          appMessages: persisted.appMessages,
+        }),
       })
 
       if (recoveredMessage) {

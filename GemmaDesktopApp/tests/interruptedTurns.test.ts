@@ -10,6 +10,7 @@ import {
   INTERRUPTED_TURN_WARNING,
   RECOVERED_TURN_ID_SUFFIX,
   RECOVERED_TURN_WARNING,
+  resolveInterruptedTurnTimestamp,
 } from '../src/main/interruptedTurns'
 
 describe('interrupted turn recovery', () => {
@@ -92,6 +93,24 @@ describe('interrupted turn recovery', () => {
       turnId: 'turn_empty',
       content: [],
     })).toBeNull()
+  })
+
+  it('places recovered app-startup turns after the SDK user turn they answered', () => {
+    expect(resolveInterruptedTurnTimestamp({
+      turnStartedAt: 1_000,
+      history: [
+        {
+          role: 'user',
+          createdAt: new Date(8_000).toISOString(),
+        },
+      ],
+      appMessages: [
+        {
+          role: 'user',
+          timestamp: 1_000,
+        },
+      ],
+    })).toBe(8_001)
   })
 
   it('preserves visible turn content when a generation fails', () => {

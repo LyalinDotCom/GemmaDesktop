@@ -44,6 +44,18 @@ interface BuildRecoveredFailedAssistantMessageInput {
   warningMessage?: string
 }
 
+interface ResolveInterruptedTurnTimestampInput {
+  turnStartedAt: number
+  history?: Array<{
+    role?: string
+    createdAt?: string
+  }>
+  appMessages?: Array<{
+    role?: string
+    timestamp?: number
+  }>
+}
+
 function finalizeInterruptedBlock(
   block: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -58,6 +70,51 @@ function finalizeInterruptedBlock(
   }
 
   return block
+}
+
+function toFiniteTimestamp(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+export function resolveInterruptedTurnTimestamp(
+  input: ResolveInterruptedTurnTimestampInput,
+): number {
+  // SDK user messages can be recorded after app-side send preflight. Anchor
+  // recovered assistant content after that SDK turn so history stays readable.
+  let timestamp = input.turnStartedAt + 1
+
+  for (const message of input.history ?? []) {
+    if (message.role !== 'user') {
+      continue
+    }
+
+    const userTimestamp = toFiniteTimestamp(message.createdAt)
+    if (userTimestamp != null) {
+      timestamp = Math.max(timestamp, userTimestamp + 1)
+    }
+  }
+
+  for (const message of input.appMessages ?? []) {
+    if (message.role !== 'user') {
+      continue
+    }
+
+    const userTimestamp = toFiniteTimestamp(message.timestamp)
+    if (userTimestamp != null) {
+      timestamp = Math.max(timestamp, userTimestamp + 1)
+    }
+  }
+
+  return timestamp
 }
 
 export function buildInterruptedAssistantMessage(
