@@ -526,12 +526,21 @@ function extractCommandExecutions(toolResult: ToolResult): BuildCommandExecution
     && isRecord(toolResult.structuredOutput)
     && typeof toolResult.structuredOutput.command === "string"
     && typeof toolResult.structuredOutput.output === "string"
-    && typeof toolResult.structuredOutput.exitCode === "number"
   ) {
+    const status =
+      typeof toolResult.structuredOutput.status === "string"
+        ? toolResult.structuredOutput.status
+        : undefined;
+    const exitCode =
+      typeof toolResult.structuredOutput.exitCode === "number"
+        ? toolResult.structuredOutput.exitCode
+        : status === "running"
+          ? 0
+          : null;
     return [
       {
         command: toolResult.structuredOutput.command,
-        exitCode: toolResult.structuredOutput.exitCode,
+        exitCode,
         stdout: toolResult.structuredOutput.output,
         stderr: "",
         timedOut: false,

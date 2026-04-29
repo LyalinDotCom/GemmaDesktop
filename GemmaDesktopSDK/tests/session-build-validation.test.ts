@@ -1296,6 +1296,96 @@ describe("build mode verification enforcement", () => {
     }
   });
 
+  it("accepts a running background dev server peek as passing build validation", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the nested npm app.",
+        toolName: "write_file",
+        toolInput: {
+          path: "black/package.json",
+          content: JSON.stringify({
+            scripts: {
+              dev: "vite",
+              build: "vite build",
+            },
+          }),
+        },
+      }),
+      createToolCallResponse({
+        text: "I will inspect the running dev server.",
+        toolName: "peek_background_process",
+        toolInput: {
+          processId: "terminal-1",
+        },
+      }),
+      createToolCallResponse({
+        text: "The app is running and verified.",
+        toolName: FINALIZE_BUILD_TOOL_NAME,
+        toolInput: {
+          summary: "Created a Vite app in black.",
+          artifacts: ["black/package.json"],
+          validation: [{
+            command: "npm run dev",
+            status: "passed",
+          }],
+          instructionChecklist: [
+            "Created the black folder.",
+            "Created an npm web app.",
+            "Verified the dev server starts.",
+          ],
+        },
+      }),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool({ writeToDisk: true }));
+    registry.register(createPeekBackgroundProcessTool({
+      command: "cd black && npm run dev",
+      exitCode: null,
+      stdout: "VITE v8.0.10 ready in 342 ms\nLocal: http://localhost:5173/",
+      stderr: "",
+      timedOut: false,
+    }));
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    })));
+    registry.register(createFinalizeBuildTool());
+
+    const originalCwd = process.cwd();
+    process.chdir(workingDirectory);
+    try {
+      const engine = new SessionEngine({
+        adapter,
+        model: "mock-model",
+        mode: "build",
+        workingDirectory,
+        tools: new ToolRuntime({ registry }),
+        buildPolicy: {
+          requireFinalizationAfterMutation: true,
+          completionVerifier: "off",
+        },
+        maxSteps: 3,
+      });
+
+      const result = await engine.run("Create a nested npm app in black.");
+
+      expect(result.text).toBe("The app is running and verified.");
+      expect(adapter.requests).toHaveLength(3);
+      expect(result.build?.verification?.passed).toBe(true);
+      expect(result.build?.verification?.latestAttempt?.command).toBe("cd black && npm run dev");
+      expect(result.build?.finalization?.passed).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it("allows a concrete blocker after a failed verification command", async () => {
     const workingDirectory = await createWorkspaceWithPackageJson({
       build: "vite build",
