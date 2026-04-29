@@ -183,6 +183,7 @@ export function usage(): string {
     "  --ollama-option <key=value>   Numeric Ollama request option. Can repeat.",
     "  --ollama-keep-alive <value>   Ollama request keep_alive value.",
     "  --lmstudio-option <key=value> Numeric LM Studio request option. Can repeat.",
+    "  --omlx-option <key=value>     Numeric oMLX request option. Can repeat.",
     "  --metadata-json <object>      Extra top-level session metadata.",
     "  --show-events                 Include SDK events in JSON output or mirror them to stderr.",
     "  --debug-runtime               Mirror runtime debug records to stderr as JSON lines.",
@@ -443,6 +444,12 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--lmstudio-option":
       state.requestPreferences.lmstudioOptions = addNumericOption(
         state.requestPreferences.lmstudioOptions,
+        readNumericOption(readFlagValue(state, flag), flag),
+      );
+      return;
+    case "--omlx-option":
+      state.requestPreferences.omlxOptions = addNumericOption(
+        state.requestPreferences.omlxOptions,
         readNumericOption(readFlagValue(state, flag), flag),
       );
       return;

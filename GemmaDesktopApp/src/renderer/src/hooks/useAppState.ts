@@ -27,6 +27,7 @@ import {
 import { DEFAULT_HELPER_GEMMA_TAG } from '@shared/gemmaCatalog'
 import { getDefaultOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import { getDefaultLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
+import { getDefaultOmlxSettings } from '@shared/omlxRuntimeConfig'
 import { getDefaultReasoningSettings } from '@shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '@shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
@@ -363,6 +364,7 @@ const defaultSettings: AppSettings = {
   },
   ollama: getDefaultOllamaSettings(),
   lmstudio: getDefaultLmStudioSettings(),
+  omlx: getDefaultOmlxSettings(),
   ambientEffects: {
     enabled: true,
   },

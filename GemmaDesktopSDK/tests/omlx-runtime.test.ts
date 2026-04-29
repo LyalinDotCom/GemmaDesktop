@@ -329,4 +329,61 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
       },
     }));
   });
+
+  it("maps managed oMLX request options onto OpenAI-compatible chat", async () => {
+    let chatBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        chatBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            id: "chatcmpl_omlx",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "Ready from oMLX.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOmlxOpenAICompatibleAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      messages: [{
+        id: "msg_1",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        createdAt: new Date().toISOString(),
+      }],
+      settings: {
+        omlxOptions: {
+          max_context_window: 262144,
+          temperature: 0.8,
+          top_p: 0.9,
+          top_k: 64,
+          max_tokens: 2048,
+          seed: 42,
+        },
+      },
+    });
+
+    expect(chatBody).toEqual(expect.objectContaining({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      stream: false,
+      temperature: 0.8,
+      top_p: 0.9,
+      max_tokens: 2048,
+      seed: 42,
+    }));
+    expect(chatBody).not.toHaveProperty("max_context_window");
+    expect(chatBody).not.toHaveProperty("top_k");
+  });
 });

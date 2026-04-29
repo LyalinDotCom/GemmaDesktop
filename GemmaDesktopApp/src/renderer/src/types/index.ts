@@ -42,6 +42,7 @@ import type {
 } from '@shared/notifications'
 import type { AppOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import type { AppLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
+import type { AppOmlxSettings } from '@shared/omlxRuntimeConfig'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
 import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import type {
@@ -608,6 +609,7 @@ export interface AppSettings {
   reasoning: AppReasoningSettings
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
+  omlx: AppOmlxSettings
   ambientEffects: {
     enabled: boolean
   }

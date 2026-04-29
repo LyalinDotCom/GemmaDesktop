@@ -80,6 +80,8 @@ Each scenario emits JSON with the session turns, artifact directory, evaluator c
 - `--reasoning auto|on`: pass desktop-style reasoning metadata.
 - `--ollama-option key=value`: pass numeric Ollama request options such as `num_ctx=8192`.
 - `--ollama-keep-alive <value>`: pass the Ollama keep-alive value used by the request.
+- `--lmstudio-option key=value`: pass numeric LM Studio request options such as `temperature=0.8`.
+- `--omlx-option key=value`: pass numeric oMLX request options such as `max_tokens=4096`.
 - `--show-events`: mirror SDK events to stderr, or include them in JSON output.
 - `--debug-runtime`: mirror runtime debug records to stderr as JSON lines.
 
@@ -90,5 +92,6 @@ When endpoint flags are omitted, the CLI mirrors the desktop defaults:
 - Ollama: `http://127.0.0.1:11434`
 - LM Studio: `http://127.0.0.1:1234`
 - llama.cpp server: `http://127.0.0.1:8080`
+- oMLX: `http://127.0.0.1:8000`
 
-Override them with `--ollama-endpoint`, `--lmstudio-endpoint`, or `--llamacpp-endpoint`.
+Override them with `--ollama-endpoint`, `--lmstudio-endpoint`, `--llamacpp-endpoint`, or `--omlx-endpoint`.

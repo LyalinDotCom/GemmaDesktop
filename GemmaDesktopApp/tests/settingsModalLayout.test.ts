@@ -12,6 +12,7 @@ import {
 import type { AppSettings, BootstrapState, ModelSummary } from '../src/renderer/src/types'
 import { getDefaultLmStudioSettings } from '../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../src/shared/ollamaRuntimeConfig'
+import { getDefaultOmlxSettings } from '../src/shared/omlxRuntimeConfig'
 import { getDefaultReasoningSettings } from '../src/shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '../src/shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../src/shared/geminiModels'
@@ -61,6 +62,7 @@ function makeSettings(): AppSettings {
     reasoning: getDefaultReasoningSettings(),
     ollama: getDefaultOllamaSettings(),
     lmstudio: getDefaultLmStudioSettings(),
+    omlx: getDefaultOmlxSettings(),
     ambientEffects: {
       enabled: true,
     },

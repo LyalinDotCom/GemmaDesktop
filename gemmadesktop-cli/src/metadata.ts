@@ -8,6 +8,7 @@ export interface RequestPreferences {
   ollamaOptions?: Record<string, number>;
   ollamaKeepAlive?: string;
   lmstudioOptions?: Record<string, number>;
+  omlxOptions?: Record<string, number>;
 }
 
 export interface DesktopParitySessionMetadataOptions {
@@ -57,6 +58,7 @@ export function buildDesktopParitySessionMetadata(
     ollamaOptions: options.requestPreferences?.ollamaOptions,
     ollamaKeepAlive: options.requestPreferences?.ollamaKeepAlive,
     lmstudioOptions: options.requestPreferences?.lmstudioOptions,
+    omlxOptions: options.requestPreferences?.omlxOptions,
   });
 
   if (Object.keys(requestPreferences).length > 0) {

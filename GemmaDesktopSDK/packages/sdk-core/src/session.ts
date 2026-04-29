@@ -866,6 +866,10 @@ function buildRequestSettings(
   if (lmstudioOptions) {
     settings.lmstudioOptions = lmstudioOptions;
   }
+  const omlxOptions = normalizeRequestNumericOptions(preferences?.omlxOptions);
+  if (omlxOptions) {
+    settings.omlxOptions = omlxOptions;
+  }
   return settings;
 }
 

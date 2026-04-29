@@ -68,6 +68,10 @@ describe("session request reasoning settings", () => {
             top_p: 0.95,
             top_k: 64,
           },
+          omlxOptions: {
+            max_tokens: 4096,
+            temperature: 0.8,
+          },
         },
       },
     });
@@ -83,6 +87,10 @@ describe("session request reasoning settings", () => {
         temperature: 1,
         top_p: 0.95,
         top_k: 64,
+      },
+      omlxOptions: {
+        max_tokens: 4096,
+        temperature: 0.8,
       },
     }));
   });

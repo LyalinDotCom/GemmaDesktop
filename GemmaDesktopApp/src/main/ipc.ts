@@ -231,6 +231,16 @@ import {
   type LmStudioManagedModelProfile,
 } from '../shared/lmstudioRuntimeConfig'
 import {
+  buildOmlxDisplayOptionsRecord,
+  buildOmlxModelSettingsRecord,
+  buildOmlxRequestOptionsRecord,
+  getDefaultOmlxSettings,
+  normalizeOmlxSettings,
+  resolveManagedOmlxProfile,
+  type AppOmlxSettings,
+  type OmlxManagedModelProfile,
+} from '../shared/omlxRuntimeConfig'
+import {
   buildDoctorReport,
   collectDoctorCommandChecks,
 } from './doctor'
@@ -1682,6 +1692,7 @@ type AppSettingsRecord = {
   reasoning: AppReasoningSettings
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
+  omlx: AppOmlxSettings
   ambientEffects: {
     enabled: boolean
   }
@@ -2374,6 +2385,29 @@ async function isTrackedModelTargetResident(
     return true
   }
 
+  if (isOmlxModelRuntime(target.runtimeId)) {
+    const profile = resolveManagedOmlxLoadProfile(currentSettings, target)
+    const settingsPatch = buildOmlxModelSettingsRecord(profile)
+    const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
+    const modelStatus = await findOmlxModelStatus(
+      currentSettings.runtimes.omlx.endpoint,
+      apiKey,
+      target.modelId,
+    )
+
+    if (
+      modelStatus
+      && !omlxStatusMatchesManagedSettings(modelStatus, settingsPatch)
+    ) {
+      console.warn(
+        `[gemma-desktop] Tracked oMLX model ${target.modelId} is reporting settings that do not match the managed profile; resyncing it.`,
+      )
+      return false
+    }
+
+    return true
+  }
+
   return true
 }
 
@@ -2676,6 +2710,81 @@ async function requestJson(
   return await response.json() as Record<string, unknown>
 }
 
+function extractCookieHeader(response: Response): string | undefined {
+  const rawCookie = response.headers.get('set-cookie')
+  if (!rawCookie) {
+    return undefined
+  }
+  const cookie = rawCookie.split(';')[0]?.trim()
+  return cookie && cookie.length > 0 ? cookie : undefined
+}
+
+async function createOmlxAdminSessionCookie(
+  endpoint: string,
+  apiKey: string,
+): Promise<string | undefined> {
+  if (!apiKey) {
+    return undefined
+  }
+
+  const response = await fetch(`${endpoint.replace(/\/$/, '')}/admin/api/login`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      remember: false,
+    }),
+  })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
+  }
+
+  return extractCookieHeader(response)
+}
+
+async function putOmlxModelSettings(
+  endpoint: string,
+  modelId: string,
+  settingsPatch: Record<string, number>,
+  cookie?: string,
+): Promise<Response> {
+  return await fetch(`${endpoint.replace(/\/$/, '')}/admin/api/models/${encodeURIComponent(modelId)}/settings`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify(settingsPatch),
+  })
+}
+
+async function updateOmlxModelSettings(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+  settingsPatch: Record<string, number> | undefined,
+): Promise<void> {
+  if (!settingsPatch || Object.keys(settingsPatch).length === 0) {
+    return
+  }
+
+  let response = await putOmlxModelSettings(endpoint, modelId, settingsPatch)
+  if ((response.status === 401 || response.status === 403) && apiKey) {
+    const cookie = await createOmlxAdminSessionCookie(endpoint, apiKey)
+    response = await putOmlxModelSettings(endpoint, modelId, settingsPatch, cookie)
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
+  }
+}
+
 async function canReachOllama(endpoint: string): Promise<boolean> {
   try {
     await requestJson(`${endpoint.replace(/\/$/, '')}/api/version`)
@@ -2852,6 +2961,19 @@ function resolveManagedLmStudioLoadProfile(
   )
 }
 
+function resolveManagedOmlxLoadProfile(
+  currentSettings: AppSettingsRecord,
+  target: { modelId: string; runtimeId: string; displayName?: string },
+): OmlxManagedModelProfile | undefined {
+  return resolveManagedOmlxProfile(
+    currentSettings.omlx,
+    target.modelId,
+    target.runtimeId,
+    target.displayName,
+    os.totalmem(),
+  )
+}
+
 async function loadOllamaModel(
   endpoint: string,
   modelId: string,
@@ -2914,6 +3036,54 @@ function lmStudioLoadedConfigMatchesLoadOptions(
 
   const loadedContextLength = numericConfigValue(loadedConfig.context_length)
   return loadedContextLength == null || loadedContextLength === requestedContextLength
+}
+
+function omlxStatusMatchesManagedSettings(
+  modelStatus: Record<string, unknown>,
+  settingsPatch: Record<string, number> | undefined,
+): boolean {
+  if (!settingsPatch) {
+    return true
+  }
+
+  const requestedContextLength = numericConfigValue(settingsPatch.max_context_window)
+  const loadedContextLength = numericConfigValue(modelStatus.max_context_window)
+  if (
+    requestedContextLength != null
+    && loadedContextLength != null
+    && loadedContextLength !== requestedContextLength
+  ) {
+    return false
+  }
+
+  const requestedMaxTokens = numericConfigValue(settingsPatch.max_tokens)
+  const loadedMaxTokens = numericConfigValue(modelStatus.max_tokens)
+  if (
+    requestedMaxTokens != null
+    && loadedMaxTokens != null
+    && loadedMaxTokens !== requestedMaxTokens
+  ) {
+    return false
+  }
+
+  return true
+}
+
+async function findOmlxModelStatus(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+): Promise<Record<string, unknown> | undefined> {
+  const headers = apiKey
+    ? { authorization: `Bearer ${apiKey}` }
+    : undefined
+  const response = await requestJson(`${endpoint.replace(/\/$/, '')}/v1/models/status`, {
+    headers,
+  })
+  const models = Array.isArray(response.models)
+    ? response.models as Array<Record<string, unknown>>
+    : []
+  return models.find((model) => model.id === modelId)
 }
 
 async function loadLmStudioModel(
@@ -3065,6 +3235,18 @@ async function loadModelForRuntime(
     }
 
     if (isOmlxModelRuntime(target.runtimeId)) {
+      const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
+      const settingsPatch = buildOmlxModelSettingsRecord(
+        resolveManagedOmlxLoadProfile(currentSettings, target),
+      )
+      await updateOmlxModelSettings(
+        currentSettings.runtimes.omlx.endpoint,
+        apiKey,
+        target.modelId,
+        settingsPatch,
+      ).catch((error) => {
+        console.warn('[gemma-desktop] Failed to sync managed oMLX model settings before use:', error)
+      })
       return target
     }
 
@@ -3402,6 +3584,7 @@ function getDefaultSettings(): AppSettingsRecord {
     reasoning: getDefaultReasoningSettings(),
     ollama: getDefaultOllamaSettings(os.totalmem()),
     lmstudio: getDefaultLmStudioSettings(os.totalmem()),
+    omlx: getDefaultOmlxSettings(os.totalmem()),
     ambientEffects: {
       enabled: true,
     },
@@ -3618,6 +3801,10 @@ async function loadSettings(): Promise<AppSettingsRecord> {
       reusable.lmstudio,
       defaults.lmstudio,
     ),
+    omlx: normalizeOmlxSettings(
+      reusable.omlx,
+      defaults.omlx,
+    ),
     tools: {
       ...defaults.tools,
       ...(reusable.tools ?? {}),
@@ -3768,6 +3955,10 @@ async function saveSettings(
     lmstudio: normalizeLmStudioSettings(
       patch.lmstudio ?? current.lmstudio,
       current.lmstudio,
+    ),
+    omlx: normalizeOmlxSettings(
+      patch.omlx ?? current.omlx,
+      current.omlx,
     ),
     ambientEffects: {
       ...current.ambientEffects,
@@ -4219,6 +4410,21 @@ function resolveEffectiveLmStudioOptions(
   )
 }
 
+function resolveEffectiveOmlxOptions(
+  currentSettings: AppSettingsRecord,
+  target: { modelId: string; runtimeId: string; displayName?: string },
+): Record<string, number> | undefined {
+  return buildOmlxRequestOptionsRecord(
+    resolveManagedOmlxProfile(
+      currentSettings.omlx,
+      target.modelId,
+      target.runtimeId,
+      target.displayName,
+      os.totalmem(),
+    ),
+  )
+}
+
 function resolveBaseMode(mode: SessionSnapshot['mode']): BaseSessionMode {
   if (typeof mode === 'string') {
     if (mode === 'build') {
@@ -4530,6 +4736,7 @@ function withResolvedRequestPreferencesMetadata(
   const reasoningMode = resolveEffectiveReasoningMode(currentSettings, target)
   const ollamaOptions = resolveEffectiveOllamaOptions(currentSettings, target)
   const lmstudioOptions = resolveEffectiveLmStudioOptions(currentSettings, target)
+  const omlxOptions = resolveEffectiveOmlxOptions(currentSettings, target)
   const ollamaKeepAlive = resolveEffectiveOllamaKeepAlive(currentSettings, target)
   const currentPreferences = readRequestPreferences(metadata)
   const currentReasoningMode =
@@ -4548,12 +4755,16 @@ function withResolvedRequestPreferencesMetadata(
   const currentLmStudioOptions = normalizeRequestPreferenceNumericOptions(
     currentPreferences?.lmstudioOptions,
   )
+  const currentOmlxOptions = normalizeRequestPreferenceNumericOptions(
+    currentPreferences?.omlxOptions,
+  )
 
   if (
     currentReasoningMode === reasoningMode
     && currentOllamaKeepAlive === ollamaKeepAlive
     && sameNumericRecord(currentOllamaOptions, ollamaOptions)
     && sameNumericRecord(currentLmStudioOptions, lmstudioOptions)
+    && sameNumericRecord(currentOmlxOptions, omlxOptions)
   ) {
     return metadata
   }
@@ -4580,6 +4791,11 @@ function withResolvedRequestPreferencesMetadata(
     nextPreferences.lmstudioOptions = lmstudioOptions
   } else {
     delete nextPreferences.lmstudioOptions
+  }
+  if (omlxOptions) {
+    nextPreferences.omlxOptions = omlxOptions
+  } else {
+    delete nextPreferences.omlxOptions
   }
 
   if (Object.keys(nextPreferences).length > 0) {
@@ -12691,7 +12907,7 @@ type MappedModelSummary = {
 
 function mapModels(
   inspectionResults: Array<{ runtime: { id: string; displayName: string }; models: Array<{ id: string; runtimeId: string; kind: string; metadata: Record<string, unknown>; capabilities: Array<{ id: string; status: string; scope?: string; source?: string }> }>; loadedInstances: Array<{ modelId: string; status: string }> }>,
-  currentSettings?: Pick<AppSettingsRecord, 'ollama' | 'lmstudio'> | null,
+  currentSettings?: Pick<AppSettingsRecord, 'ollama' | 'lmstudio' | 'omlx'> | null,
 ): MappedModelSummary[] {
   const models: MappedModelSummary[] = []
   const pendingLoadTargets = listPendingModelLoadTargets()
@@ -12805,6 +13021,17 @@ function mapModels(
             ),
           )
         : undefined
+      const omlxRequestedOptions = currentSettings
+        ? buildOmlxDisplayOptionsRecord(
+            resolveManagedOmlxProfile(
+              currentSettings.omlx,
+              m.id,
+              m.runtimeId,
+              displayName,
+              os.totalmem(),
+            ),
+          )
+        : undefined
       const runtimeConfig =
         m.runtimeId === 'ollama-native' || m.runtimeId === 'ollama-openai'
           ? {
@@ -12839,6 +13066,7 @@ function mapModels(
               : m.runtimeId === 'omlx-openai'
                 ? {
                     provider: 'omlx' as const,
+                    requestedOptions: omlxRequestedOptions,
                     loadedOptions:
                       Object.keys(loadedConfig).length > 0
                         ? loadedConfig

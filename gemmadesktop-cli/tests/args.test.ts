@@ -33,6 +33,8 @@ describe("CLI argument parsing", () => {
       "num_ctx=8192",
       "--ollama-keep-alive",
       "24h",
+      "--omlx-option",
+      "temperature=0.8",
       "--omlx-endpoint",
       "http://localhost:8001",
       "--omlx-api-key",
@@ -59,6 +61,7 @@ describe("CLI argument parsing", () => {
       reasoningMode: "on",
       ollamaOptions: { num_ctx: 8192 },
       ollamaKeepAlive: "24h",
+      omlxOptions: { temperature: 0.8 },
     });
     expect(command.extraMetadata).toEqual({
       [REQUEST_PREFERENCES_METADATA_KEY]: { legacy: true },

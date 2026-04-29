@@ -78,6 +78,48 @@ function asMutableChatTemplateKwargs(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function normalizeFiniteNumberRecord(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, entry]) =>
+    typeof entry === "number" && Number.isFinite(entry)
+  );
+
+  return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
+}
+
+const OMLX_OPENAI_COMPATIBLE_OPTION_KEY_MAP: Record<string, string> = {
+  temperature: "temperature",
+  top_p: "top_p",
+  min_p: "min_p",
+  presence_penalty: "presence_penalty",
+  frequency_penalty: "frequency_penalty",
+  xtc_probability: "xtc_probability",
+  xtc_threshold: "xtc_threshold",
+  max_tokens: "max_tokens",
+  max_output_tokens: "max_tokens",
+  seed: "seed",
+  thinking_budget: "thinking_budget",
+};
+
+function resolveOmlxOpenAICompatibleOptions(
+  settings: ChatRequest["settings"],
+): Record<string, number> | undefined {
+  const source = normalizeFiniteNumberRecord(settings?.omlxOptions);
+  if (!source) {
+    return undefined;
+  }
+
+  const entries = Object.entries(source).flatMap(([key, value]) => {
+    const mappedKey = OMLX_OPENAI_COMPATIBLE_OPTION_KEY_MAP[key];
+    return mappedKey ? [[mappedKey, value] as const] : [];
+  });
+
+  return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
+}
+
 function shouldEnableOmlxReasoning(modelId: string, settings: ChatRequest["settings"]): boolean {
   return isGemma4ModelId(modelId)
     || settings?.reasoningMode === "on"
@@ -85,18 +127,32 @@ function shouldEnableOmlxReasoning(modelId: string, settings: ChatRequest["setti
 }
 
 function withOmlxOpenAICompatibleSettings(request: ChatRequest): ChatRequest {
+  const omlxOptions = resolveOmlxOpenAICompatibleOptions(request.settings);
+  const existingOpenAIOptions = asMutableOpenAIOptions(request.settings);
+  const openAICompatibleOptions = omlxOptions
+    ? { ...omlxOptions, ...existingOpenAIOptions }
+    : existingOpenAIOptions;
+  const baseRequest = omlxOptions
+    ? {
+        ...request,
+        settings: {
+          ...(request.settings ?? {}),
+          openAICompatibleOptions,
+        },
+      }
+    : request;
+
   if (!shouldEnableOmlxReasoning(request.model, request.settings)) {
-    return request;
+    return baseRequest;
   }
 
-  const openAICompatibleOptions = asMutableOpenAIOptions(request.settings);
   const chatTemplateKwargs = asMutableChatTemplateKwargs(openAICompatibleOptions.chat_template_kwargs);
   chatTemplateKwargs.enable_thinking = true;
 
   return {
-    ...request,
+    ...baseRequest,
     settings: {
-      ...(request.settings ?? {}),
+      ...(baseRequest.settings ?? {}),
       openAICompatibleOptions: {
         ...openAICompatibleOptions,
         chat_template_kwargs: chatTemplateKwargs,

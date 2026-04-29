@@ -190,6 +190,8 @@ describe("headless CLI", () => {
         "num_ctx=8192",
         "--ollama-keep-alive",
         "24h",
+        "--omlx-option",
+        "temperature=0.8",
       ],
       cwd: "/tmp/gemma-project",
       env: {},
@@ -228,6 +230,7 @@ describe("headless CLI", () => {
         reasoningMode: "on",
         ollamaOptions: { num_ctx: 8192 },
         ollamaKeepAlive: "24h",
+        omlxOptions: { temperature: 0.8 },
       },
     });
   });
