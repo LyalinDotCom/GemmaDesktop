@@ -659,7 +659,7 @@ describe("tool failure recovery", () => {
     );
   });
 
-  it("continues non-build turns when a post-tool reply only announces the next lookup", async () => {
+  it("does not auto-coach non-build turns when a post-tool reply only announces the next lookup", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({
         text: "I'll search for the flight first.",
@@ -740,20 +740,11 @@ describe("tool failure recovery", () => {
 
     const result = await engine.run("Check JetBlue 1707 on their website.");
 
-    expect(result.text).toContain("couldn't find tracking data");
-    expect(adapter.requests).toHaveLength(4);
-
-    const thirdRequest = adapter.requests[2];
-    expect(thirdRequest).toBeDefined();
-    expect(collectSystemText(thirdRequest?.messages ?? [])).toContain(
-      "You already used tools in this turn.",
-    );
-    expect(collectSystemText(thirdRequest?.messages ?? [])).toContain(
-      "If another materially different tool call is still needed, emit it now.",
-    );
+    expect(result.text).toContain("I'll try to look it up on a flight tracking service");
+    expect(adapter.requests).toHaveLength(2);
   });
 
-  it("continues build turns when a post-tool reply only narrates partial browser progress", async () => {
+  it("does not auto-coach build turns when a post-tool reply only narrates partial browser progress", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({
         text: "Opening JetBlue now.",
@@ -814,17 +805,8 @@ describe("tool failure recovery", () => {
 
     const result = await engine.run("Check JetBlue 1707 on their website.");
 
-    expect(result.text).toContain("en route to Las Vegas");
-    expect(adapter.requests).toHaveLength(4);
-
-    const thirdRequest = adapter.requests[2];
-    expect(thirdRequest).toBeDefined();
-    expect(collectSystemText(thirdRequest?.messages ?? [])).toContain(
-      "You already used tools in this turn.",
-    );
-    expect(collectSystemText(thirdRequest?.messages ?? [])).toContain(
-      "If another materially different tool call is still needed, emit it now.",
-    );
+    expect(result.text).toContain('I clicked on "Travel Info"');
+    expect(adapter.requests).toHaveLength(2);
   });
 
   it("throws a clear recovery-exhausted error after repeated tool failures", async () => {

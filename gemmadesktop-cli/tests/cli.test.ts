@@ -114,7 +114,7 @@ function makeDependencies(calls: {
   createOptions: CreateGemmaDesktopOptions[];
   sessionOptions: CreateSessionOptions[];
   inputs: unknown[];
-}): CliDependencies {
+}, turnResult?: TurnResult): CliDependencies {
   return {
     createGemmaDesktop: (options) => {
       calls.createOptions.push(options);
@@ -140,7 +140,7 @@ function makeDependencies(calls: {
               await Promise.resolve();
               yield event;
             })(),
-            completed: Promise.resolve(makeTurnResult({
+            completed: Promise.resolve(turnResult ?? makeTurnResult({
               events: [event],
             })),
           });
@@ -226,6 +226,65 @@ describe("headless CLI", () => {
         ollamaKeepAlive: "24h",
       },
     });
+  });
+
+  it("prints missing-verification build summaries without treating them as CLI failures", async () => {
+    const calls = {
+      createOptions: [] as CreateGemmaDesktopOptions[],
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+    const stderr = new MemoryStream();
+
+    const code = await runCli({
+      argv: [
+        "run",
+        "Create the file.",
+        "--model",
+        "gemma4:e2b",
+        "--runtime",
+        "ollama-native",
+        "--mode",
+        "build",
+        "--json",
+      ],
+      cwd: "/tmp/gemma-project",
+      env: {},
+      stdin: new MemoryStream(),
+      stdout,
+      stderr,
+      dependencies: makeDependencies(calls, makeTurnResult({
+        text: "I created the file.",
+        build: {
+          policy: {
+            samplingTurns: 30,
+            requireVerificationAfterMutation: true,
+            requireFinalizationAfterMutation: false,
+            completionVerifier: "off",
+            verificationContinuationLimit: 3,
+            finalizationContinuationLimit: 3,
+            verifierAttemptLimit: 2,
+          },
+          changedPaths: ["src/main.ts"],
+          verification: {
+            attempted: false,
+            passed: false,
+            changedPaths: ["src/main.ts"],
+            recommendedCommands: ["npm run build"],
+            rationale: "package.json exposes a build script",
+          },
+          browserEvidence: [],
+        },
+      })),
+    });
+
+    expect(code).toBe(0);
+    expect(stderr.text()).toBe("");
+    const output = JSON.parse(stdout.text()) as { result: TurnResult };
+    expect(output.result.text).toBe("I created the file.");
+    expect(output.result.build?.verification?.attempted).toBe(false);
+    expect(output.result.build?.verification?.recommendedCommands).toEqual(["npm run build"]);
   });
 
   it("prints JSON inspection output without creating a session", async () => {

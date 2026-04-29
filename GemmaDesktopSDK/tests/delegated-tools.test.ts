@@ -831,7 +831,7 @@ describe("delegated tool sessions", () => {
     expect(continuedSystemText).toContain("Before you end the turn, call at least one of these tools: prepare_plan_execution.");
   });
 
-  it("auto-continues build turns when the model only announces the next step after tool use", async () => {
+  it("does not auto-coach next-step text after successful tool use", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-sdk-"));
     await writeFile(path.join(tempDirectory, "penguin-unicycle.html"), "<html></html>\n", "utf8");
     const requests: Array<Record<string, unknown>> = [];
@@ -1137,23 +1137,15 @@ describe("delegated tool sessions", () => {
 
     const result = await session.run("Generate an SVG of a pelican riding a unicycle.");
 
-    expect(result.text).toContain("Created pelican-unicycle.svg, validated it with xmllint, and recorded completion evidence.");
-    expect(result.toolResults).toHaveLength(4);
+    expect(result.text).toContain("Now I'll create a new SVG pelican riding a unicycle");
+    expect(result.toolResults).toHaveLength(1);
     expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
       "read_file",
-      "write_file",
-      "exec_command",
-      FINALIZE_BUILD_TOOL_NAME,
     ]);
-    expect(await readFile(path.join(tempDirectory, "pelican-unicycle.svg"), "utf8")).toContain("<svg>");
-
-    const continuationSystemText = collectSystemText(
-      (requests[2]?.messages as Array<Record<string, unknown>>) ?? [],
-    );
-    expect(continuationSystemText).toContain("Do not stop at intent, promises, or next steps.");
+    expect(requests).toHaveLength(2);
   });
 
-  it("auto-continues when the model hides the next-step promise behind factual setup text", async () => {
+  it("does not auto-coach next-step text hidden behind factual setup", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-sdk-"));
     const requests: Array<Record<string, unknown>> = [];
 
@@ -1327,20 +1319,14 @@ describe("delegated tool sessions", () => {
 
     const result = await session.run("Build a simple solar system page in .tmp/solar3.");
 
-    expect(result.text).toContain("Created .tmp/solar3/index.html.");
+    expect(result.text).toContain("The folder doesn't exist yet.");
     expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
       "list_tree",
-      "write_file",
     ]);
-    expect(await readFile(path.join(tempDirectory, ".tmp", "solar3", "index.html"), "utf8")).toContain("solar");
-
-    const continuationSystemText = collectSystemText(
-      (requests[2]?.messages as Array<Record<string, unknown>>) ?? [],
-    );
-    expect(continuationSystemText).toContain("Do not stop at intent, promises, or next steps.");
+    expect(requests).toHaveLength(2);
   }, 10_000);
 
-  it("auto-continues build turns when the first reply only announces a read step", async () => {
+  it("does not auto-coach a first reply that only announces a read step", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-sdk-"));
     await writeFile(path.join(tempDirectory, "main.js"), "const planets = [];\n", "utf8");
     const requests: Array<Record<string, unknown>> = [];
@@ -1476,15 +1462,9 @@ describe("delegated tool sessions", () => {
 
     const result = await session.run("Can the planets load closer to where they really are based on date/time?");
 
-    expect(result.text).toContain("Checked main.js");
-    expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
-      "read_file",
-    ]);
-
-    const continuationSystemText = collectSystemText(
-      (requests[1]?.messages as Array<Record<string, unknown>>) ?? [],
-    );
-    expect(continuationSystemText).toContain("Do not stop at intent or next steps.");
+    expect(result.text).toContain("I will inspect main.js first");
+    expect(result.toolResults).toEqual([]);
+    expect(requests).toHaveLength(1);
   });
 
   it("includes exact user-provided paths in build-mode system guidance", async () => {

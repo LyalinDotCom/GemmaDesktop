@@ -7,6 +7,7 @@ export type BuildExecCommandPolicyResult = {
 
 const VERIFICATION_PATTERNS = [
   /\b(?:npm|pnpm)\s+run\s+(?:check|build|test|typecheck|lint|verify)\b/i,
+  /\b(?:npm|pnpm)\s+(?:check|build|test|typecheck|lint|verify)\b/i,
   /\byarn\s+(?:check|build|test|typecheck|lint|verify)\b/i,
   /\bbun\s+run\s+(?:check|build|test|typecheck|lint|verify)\b/i,
   /\bvitest\b/i,
@@ -94,6 +95,9 @@ const PROCESS_LAUNCH_PATTERNS = [
 ] as const
 
 const CHAIN_OR_REDIRECTION_PATTERN = /&&|\|\||[|<>;]|\r?\n/
+const SHELL_BACKGROUND_OPERATOR_PATTERN = /(?:^|[^&])&(?!&)/
+const BACKGROUNDED_STARTUP_PROBE_PATTERN =
+  /(?:^|[^&])&(?!&)[\s\S]*\b(?:sleep\s+\d+(?:\.\d+)?|curl|wget|nc|lsof)\b/i
 
 const HARD_DENY_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   {
@@ -197,6 +201,14 @@ function matchesProcessLaunch(command: string): boolean {
   return PROCESS_LAUNCH_PATTERNS.some((pattern) => pattern.test(command))
 }
 
+function usesShellBackgroundOperator(command: string): boolean {
+  return SHELL_BACKGROUND_OPERATOR_PATTERN.test(command)
+}
+
+function usesBackgroundedStartupProbe(command: string): boolean {
+  return BACKGROUNDED_STARTUP_PROBE_PATTERN.test(command)
+}
+
 function isSafeSedCommand(tokens: string[]): boolean {
   return !tokens.some((token) => /^-i(?:$|['"]?$)/i.test(token) || token === '--in-place')
 }
@@ -271,6 +283,30 @@ export function evaluateBuildExecCommandPolicy(command: string): BuildExecComman
         rootCommand,
         reason: entry.reason,
       }
+    }
+  }
+
+  if (
+    matchesProcessLaunch(normalizedCommand) &&
+    usesShellBackgroundOperator(normalizedCommand) &&
+    usesBackgroundedStartupProbe(normalizedCommand)
+  ) {
+    return {
+      kind: 'deny',
+      normalizedCommand,
+      rootCommand,
+      reason:
+        'Build mode refuses backgrounded dev-server startup probes in exec_command because "& sleep/curl" style checks can hide startup failures and leave untracked processes behind. Use the background process tools for dev servers or watchers, then inspect the tracked process output.',
+    }
+  }
+
+  if (matchesProcessLaunch(normalizedCommand) && usesShellBackgroundOperator(normalizedCommand)) {
+    return {
+      kind: 'ask',
+      normalizedCommand,
+      rootCommand,
+      reason:
+        'Build mode requires approval for shell-backgrounded process-launch commands. Prefer the background process tools for dev servers or watchers so startup output, failures, and cleanup stay tracked.',
     }
   }
 

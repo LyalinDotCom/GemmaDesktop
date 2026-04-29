@@ -153,6 +153,7 @@ const NODE_SCRIPT_PRIORITY = [
 
 const GENERIC_VERIFICATION_PATTERNS = [
   /\b(?:npm|pnpm)\s+run\s+(?:check|build|test|typecheck|lint|verify)\b/i,
+  /\b(?:npm|pnpm)\s+(?:check|build|test|typecheck|lint|verify)\b/i,
   /\b(?:npm|pnpm)\s+run\s+(?:dev|start|serve|preview)\b/i,
   /\byarn\s+(?:check|build|test|typecheck|lint|verify)\b/i,
   /\byarn\s+(?:dev|start|serve|preview)\b/i,
@@ -1221,21 +1222,6 @@ function formatBrowserEvidence(evidence: BuildBrowserEvidenceRecord): string {
   ]
     .filter(Boolean)
     .join(", ");
-}
-
-export function buildMissingBuildVerificationInstruction(
-  status: BuildValidationStatus,
-): string {
-  return [
-    "This act turn is not complete yet.",
-    `You changed files in this turn: ${formatChangedPaths(status.changedPaths)}.`,
-    status.recommendedCommands.length > 0
-      ? `Run a meaningful verification command now when one fits this workspace, or use an available browser/runtime verification step that directly validates the changed artifact. Recommended commands for this workspace: ${formatRecommendedCommands(status.recommendedCommands)}.`
-      : "Run a meaningful verification command now when one fits this workspace, or use the real build, check, typecheck, lint, test, runtime, or browser verification path that fits this workspace.",
-    "A command verifier must exit with code 0 and must not time out. A browser or runtime verifier must load the changed artifact successfully and report no relevant errors.",
-    "If verification fails, fix the issue and rerun verification. Only stop early if you explain the concrete blocker plainly.",
-    "Emit the next tool call now.",
-  ].join("\n");
 }
 
 export function buildFailedBuildVerificationInstruction(
