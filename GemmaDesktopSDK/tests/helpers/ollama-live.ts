@@ -138,6 +138,7 @@ async function ensureModelAvailability(
 
       for (const instance of loadedInstances) {
         await adapter.lifecycle.unloadModel(instance.modelId);
+        await waitForModelUnload(adapter, instance.modelId);
       }
 
       inspection = await adapter.inspect();
@@ -183,6 +184,38 @@ async function ensureModelAvailability(
   }
 }
 
+async function waitForModelUnload(
+  adapter: ReturnType<typeof createOllamaNativeAdapter>,
+  modelId: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastLoadedInstances: Array<{ modelId: string; status: string }> = [];
+
+  while (Date.now() < deadline) {
+    const inspection = await adapter.inspect();
+    lastLoadedInstances = inspection.loadedInstances
+      .filter((instance) => instance.status !== "unloaded")
+      .map((instance) => ({
+        modelId: instance.modelId,
+        status: instance.status,
+      }));
+
+    if (!lastLoadedInstances.some((instance) => instance.modelId === modelId)) {
+      return;
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(
+    [
+      `Model "${modelId}" still appeared loaded after unloadModel completed.`,
+      `Remaining instances: ${formatLoadedInstances(lastLoadedInstances)}`,
+    ].join(" "),
+  );
+}
+
 export async function withLoadedLiveOllamaModel<T>(
   options: LiveOllamaModelOptions,
   run: (lease: LiveOllamaModelLease) => Promise<T>,
@@ -224,15 +257,16 @@ export async function withLoadedLiveOllamaModel<T>(
 
   try {
     await adapter.lifecycle.unloadModel(options.modelId);
-    const inspection = await adapter.inspect();
-    const stillLoaded = inspection.loadedInstances.some(
-      (instance) =>
-        instance.modelId === options.modelId && instance.status !== "unloaded",
-    );
-    if (stillLoaded) {
-      throw new Error(
-        `Model "${options.modelId}" still appeared loaded after unloadModel completed.`,
+    await waitForModelUnload(adapter, options.modelId);
+    if (requireExclusiveMachine) {
+      const inspection = await adapter.inspect();
+      const remaining = inspection.loadedInstances.filter(
+        (instance) => instance.status !== "unloaded",
       );
+      for (const instance of remaining) {
+        await adapter.lifecycle.unloadModel(instance.modelId);
+        await waitForModelUnload(adapter, instance.modelId);
+      }
     }
   } catch (error) {
     cleanupError = error;

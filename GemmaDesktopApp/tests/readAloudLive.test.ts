@@ -42,18 +42,25 @@ describeLive('read aloud live Kokoro validation', () => {
       'assets',
       'Kokoro-82M-v1.0-ONNX',
     )
+    const preparedAssetRoot = path.resolve(
+      __dirname,
+      '..',
+      '.cache',
+      'read-aloud-assets',
+      'Kokoro-82M-v1.0-ONNX',
+    )
     const cacheRoot = await makeTempDir()
     const service = new ReadAloudService({
       supportedPlatform: 'darwin',
       cacheRoot,
-      assetRootCandidates: [installedAssetRoot],
+      assetRootCandidates: [installedAssetRoot, preparedAssetRoot],
     })
 
     const status = await service.inspect({ enabled: true })
     expect(status).toEqual(expect.objectContaining({
       state: 'loading',
-      assetRoot: installedAssetRoot,
     }))
+    expect([installedAssetRoot, preparedAssetRoot]).toContain(status.assetRoot)
 
     await service.warmup({ enabled: true })
     const result = await service.synthesize(

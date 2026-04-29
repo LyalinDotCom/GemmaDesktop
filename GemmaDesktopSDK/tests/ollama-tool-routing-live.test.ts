@@ -11,7 +11,7 @@ import {
 const itIfLive = isOllamaLiveEnabled() ? it : it.skip;
 
 function resolveConfiguredModel(): string {
-  return process.env.GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID?.trim() || "gemma4:e4b";
+  return process.env.GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID?.trim() || "gemma4:26b";
 }
 
 describe.sequential("ollama live tool routing", () => {
