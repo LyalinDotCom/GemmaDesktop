@@ -185,8 +185,10 @@ describe('SettingsModal layout', () => {
     const markup = renderSettingsModal()
 
     expect(markup).toContain('max-w-4xl')
+    expect(markup).toContain('h-[min(78vh,760px)]')
     expect(markup).toContain('aria-label="Settings sections"')
     expect(markup).toContain('w-44 shrink-0 overflow-y-auto border-r')
+    expect(markup).toContain('scrollbar-thin min-h-0 flex-1 overflow-y-auto')
     expect(markup).toContain('Integrations')
     expect(markup).toContain('aria-current="page"')
     expect(markup).not.toContain('border-b-2 pb-2.5 pt-3')

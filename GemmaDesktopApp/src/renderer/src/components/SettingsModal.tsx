@@ -529,6 +529,7 @@ export function SettingsModal({
   const [previewBusy, setPreviewBusy] = useState(false)
   const [installedTerminals, setInstalledTerminals] = useState<TerminalAppInfo[]>([])
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false)
+  const contentScrollRef = useRef<HTMLDivElement>(null)
 
   const commitUpdate = (patch: Partial<AppSettings>): void => {
     void Promise.resolve(onUpdate(patch)).catch((error) => {
@@ -561,6 +562,7 @@ export function SettingsModal({
 
   useEffect(() => { setLocal(settings) }, [settings])
   useEffect(() => { setActiveTab(initialTab) }, [initialTab])
+  useEffect(() => { contentScrollRef.current?.scrollTo({ top: 0 }) }, [activeTab])
 
   useEffect(() => {
     let cancelled = false
@@ -757,7 +759,7 @@ export function SettingsModal({
 
   return (
     <div className="absolute inset-x-0 bottom-0 top-12 z-50 flex items-center justify-center overflow-hidden bg-black/40 px-4 py-6 backdrop-blur-sm sm:px-6">
-      <div className="no-drag flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="no-drag flex h-[min(78vh,760px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-200">
@@ -797,7 +799,7 @@ export function SettingsModal({
           </nav>
 
           {/* Content */}
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+          <div ref={contentScrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
             <div className="space-y-6 px-8 py-6">
               {activeTab === 'general' && (
                 <>
