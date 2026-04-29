@@ -19,8 +19,8 @@ const notificationApi = (
 contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
   sidebar: {
     get: () => ipcRenderer.invoke('sidebar:get'),
-    pinSession: (sessionId: string) =>
-      ipcRenderer.invoke('sidebar:pin-session', sessionId),
+    pinSession: (sessionId: string, areaId: string) =>
+      ipcRenderer.invoke('sidebar:pin-session', sessionId, areaId),
     unpinSession: (sessionId: string) =>
       ipcRenderer.invoke('sidebar:unpin-session', sessionId),
     flagFollowUp: (sessionId: string) =>
@@ -31,6 +31,16 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
       ipcRenderer.invoke('sidebar:remember-active-session', sessionId),
     movePinnedSession: (sessionId: string, toIndex: number) =>
       ipcRenderer.invoke('sidebar:move-pinned-session', sessionId, toIndex),
+    createPinnedArea: (icon: string, sessionId: string | null) =>
+      ipcRenderer.invoke('sidebar:create-pinned-area', icon, sessionId),
+    deletePinnedArea: (areaId: string) =>
+      ipcRenderer.invoke('sidebar:delete-pinned-area', areaId),
+    updatePinnedAreaIcon: (areaId: string, icon: string) =>
+      ipcRenderer.invoke('sidebar:update-pinned-area-icon', areaId, icon),
+    setPinnedAreaCollapsed: (areaId: string, collapsed: boolean) =>
+      ipcRenderer.invoke('sidebar:set-pinned-area-collapsed', areaId, collapsed),
+    movePinnedArea: (areaId: string, direction: 'up' | 'down') =>
+      ipcRenderer.invoke('sidebar:move-pinned-area', areaId, direction),
     setSessionOrder: (sessionId: string, toIndex: number) =>
       ipcRenderer.invoke('sidebar:set-session-order', sessionId, toIndex),
     clearSessionOrder: (sessionId: string) =>

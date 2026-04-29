@@ -349,10 +349,14 @@ export function App() {
     installSkill,
     removeSkill,
     pinSession,
+    createPinnedArea,
+    deletePinnedArea,
+    updatePinnedAreaIcon,
+    setPinnedAreaCollapsed,
+    movePinnedArea,
     unpinSession,
     flagFollowUp,
     unflagFollowUp,
-    setSessionTags,
     movePinnedSession,
     setSessionOrder,
     clearSessionOrder,
@@ -2528,8 +2532,23 @@ export function App() {
           onDeleteSession={deleteSession}
           onRenameSession={renameSession}
           onCloseProcess={handleCloseBackgroundProcess}
-          onPinSession={(sessionId) => {
-            void pinSession(sessionId)
+          onPinSession={(sessionId, areaId) => {
+            void pinSession(sessionId, areaId)
+          }}
+          onCreatePinnedArea={(icon, sessionId) => {
+            void createPinnedArea(icon, sessionId)
+          }}
+          onDeletePinnedArea={(areaId) => {
+            void deletePinnedArea(areaId)
+          }}
+          onUpdatePinnedAreaIcon={(areaId, icon) => {
+            void updatePinnedAreaIcon(areaId, icon)
+          }}
+          onSetPinnedAreaCollapsed={(areaId, collapsed) => {
+            void setPinnedAreaCollapsed(areaId, collapsed)
+          }}
+          onMovePinnedArea={(areaId, direction) => {
+            void movePinnedArea(areaId, direction)
           }}
           onUnpinSession={(sessionId) => {
             void unpinSession(sessionId)
@@ -2539,9 +2558,6 @@ export function App() {
           }}
           onUnflagFollowUp={(sessionId) => {
             void unflagFollowUp(sessionId)
-          }}
-          onSetSessionTags={(sessionId, tags) => {
-            void setSessionTags(sessionId, tags)
           }}
           onMovePinnedSession={(sessionId, toIndex) => {
             void movePinnedSession(sessionId, toIndex)

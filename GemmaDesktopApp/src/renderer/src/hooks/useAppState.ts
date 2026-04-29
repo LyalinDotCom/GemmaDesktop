@@ -1,4 +1,8 @@
 import { useReducer, useEffect, useCallback, useRef, useMemo } from 'react'
+import {
+  DEFAULT_CONVERSATION_APPROVAL_MODE,
+  normalizeConversationApprovalMode,
+} from '@gemma-desktop/sdk-core/approvalMode'
 import { resolveAttachmentPreviewUrl } from '@/lib/inputAttachments'
 import {
   appendChatMessage,
@@ -439,6 +443,7 @@ const defaultSettings: AppSettings = {
 const initialState: AppState = {
   sidebar: {
     pinnedSessionIds: [],
+    pinnedAreas: [],
     followUpSessionIds: [],
     closedProjectPaths: [],
     projectPaths: [],
@@ -647,10 +652,15 @@ function sanitizeSessionDetail(
   if (streamingContent !== (session.streamingContent ?? null)) {
     changed = true
   }
+  const approvalMode = normalizeConversationApprovalMode(session.approvalMode)
+  if (approvalMode !== session.approvalMode) {
+    changed = true
+  }
 
   return changed
     ? {
         ...session,
+        approvalMode,
         messages,
         streamingContent,
       }
@@ -2064,8 +2074,41 @@ export function useAppState() {
     return skills
   }, [])
 
-  const pinSession = useCallback(async (sessionId: string) => {
-    const sidebar = await window.gemmaDesktopBridge.sidebar.pinSession(sessionId)
+  const pinSession = useCallback(async (sessionId: string, areaId: string) => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.pinSession(sessionId, areaId)
+    dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    return sidebar
+  }, [])
+
+  const createPinnedArea = useCallback(async (icon: string, sessionId: string | null) => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.createPinnedArea(icon, sessionId)
+    dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    return sidebar
+  }, [])
+
+  const deletePinnedArea = useCallback(async (areaId: string) => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.deletePinnedArea(areaId)
+    dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    return sidebar
+  }, [])
+
+  const updatePinnedAreaIcon = useCallback(async (areaId: string, icon: string) => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.updatePinnedAreaIcon(areaId, icon)
+    dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    return sidebar
+  }, [])
+
+  const setPinnedAreaCollapsed = useCallback(async (areaId: string, collapsed: boolean) => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.setPinnedAreaCollapsed(
+      areaId,
+      collapsed,
+    )
+    dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
+    return sidebar
+  }, [])
+
+  const movePinnedArea = useCallback(async (areaId: string, direction: 'up' | 'down') => {
+    const sidebar = await window.gemmaDesktopBridge.sidebar.movePinnedArea(areaId, direction)
     dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
     return sidebar
   }, [])
@@ -2590,6 +2633,11 @@ export function useAppState() {
     installSkill,
     removeSkill,
     pinSession,
+    createPinnedArea,
+    deletePinnedArea,
+    updatePinnedAreaIcon,
+    setPinnedAreaCollapsed,
+    movePinnedArea,
     unpinSession,
     flagFollowUp,
     unflagFollowUp,
@@ -2679,6 +2727,7 @@ function buildCreateSessionBridgeOptions(input: CreateSessionOpts): CreateSessio
     conversationKind: input.conversationKind,
     workMode: input.workMode,
     planMode: input.planMode,
+    approvalMode: input.approvalMode ?? DEFAULT_CONVERSATION_APPROVAL_MODE,
     selectedSkillIds: input.selectedSkillIds,
     selectedToolIds: input.selectedToolIds,
     workingDirectory: input.workingDirectory,

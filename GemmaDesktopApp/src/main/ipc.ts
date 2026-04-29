@@ -5629,6 +5629,7 @@ function sidebarStateToRecord(state: SidebarState): Record<string, unknown> {
   const nextState = cloneSidebarState(state)
   return {
     pinnedSessionIds: nextState.pinnedSessionIds,
+    pinnedAreas: nextState.pinnedAreas,
     followUpSessionIds: nextState.followUpSessionIds,
     closedProjectPaths: nextState.closedProjectPaths,
     projectPaths: nextState.projectPaths,
@@ -14891,9 +14892,10 @@ export function registerIpcHandlers(): void {
     return sidebarStateToRecord(await syncSidebarState())
   })
 
-  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string) => {
+  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string, areaId: string) => {
     const result = await getSidebarStateStore().pinSession(
       sessionId,
+      areaId,
       await listSidebarSessionReferences(),
     )
 
@@ -14965,6 +14967,90 @@ export function registerIpcHandlers(): void {
       const result = await getSidebarStateStore().movePinnedSession(
         sessionId,
         toIndex,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:create-pinned-area',
+    async (_, icon: string, sessionId: string | null) => {
+      const result = await getSidebarStateStore().createPinnedArea(
+        icon,
+        sessionId,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:delete-pinned-area',
+    async (_, areaId: string) => {
+      const result = await getSidebarStateStore().deletePinnedArea(
+        areaId,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:update-pinned-area-icon',
+    async (_, areaId: string, icon: string) => {
+      const result = await getSidebarStateStore().updatePinnedAreaIcon(
+        areaId,
+        icon,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:set-pinned-area-collapsed',
+    async (_, areaId: string, collapsed: boolean) => {
+      const result = await getSidebarStateStore().setPinnedAreaCollapsed(
+        areaId,
+        collapsed,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:move-pinned-area',
+    async (_, areaId: string, direction: 'up' | 'down') => {
+      const result = await getSidebarStateStore().movePinnedArea(
+        areaId,
+        direction,
         await listSidebarSessionReferences(),
       )
 

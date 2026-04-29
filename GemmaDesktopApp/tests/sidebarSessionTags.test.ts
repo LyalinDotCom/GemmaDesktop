@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { Sidebar } from '../src/renderer/src/components/Sidebar'
 import type {
   SessionSummary,
-  SessionTag,
   SystemStats,
 } from '../src/renderer/src/types'
 import type { SidebarState } from '../src/shared/sidebar'
@@ -69,9 +68,13 @@ function renderSidebar(sessions: SessionSummary[]): string {
       onCloseProcess: () => {},
       onPinSession: () => {},
       onUnpinSession: () => {},
+      onCreatePinnedArea: () => {},
+      onDeletePinnedArea: () => {},
+      onUpdatePinnedAreaIcon: () => {},
+      onSetPinnedAreaCollapsed: () => {},
+      onMovePinnedArea: () => {},
       onFlagFollowUp: () => {},
       onUnflagFollowUp: () => {},
-      onSetSessionTags: () => {},
       onMovePinnedSession: () => {},
       onMoveProjectSession: () => {},
       onClearSessionOrder: () => {},
@@ -93,20 +96,17 @@ function renderSidebar(sessions: SessionSummary[]): string {
 }
 
 describe('Sidebar session tags', () => {
-  it('renders tag chips with emoji and removable labels', () => {
-    const tags: SessionTag[] = [
+  it('does not render legacy conversation tag icons in the sidebar', () => {
+    const tags = [
       { id: 'tag-1', emoji: '⭐', name: 'favorite' },
       { id: 'tag-2', emoji: '🧪', name: 'Regression checks' },
     ]
 
     const markup = renderSidebar([makeSession({ sessionTags: tags })])
 
-    expect(markup).toContain('⭐')
-    expect(markup).toContain('🧪')
-    expect(markup).toContain('favorite')
-    expect(markup).toContain('Regression checks')
-    expect(markup).toContain('aria-label="Remove tag favorite"')
-    expect(markup).toContain('aria-label="Remove tag Regression checks"')
+    expect(markup).not.toContain('favorite')
+    expect(markup).not.toContain('Regression checks')
+    expect(markup).not.toContain('aria-label="Remove tag')
   })
 
   it('omits the tag chip row when the session has no tags', () => {
@@ -115,7 +115,7 @@ describe('Sidebar session tags', () => {
     expect(markup).not.toContain('aria-label="Remove tag')
   })
 
-  it('exposes the tag filter trigger when sessions carry at least one tag', () => {
+  it('does not expose legacy tag filtering when sessions carry tags', () => {
     const markup = renderSidebar([
       makeSession({
         id: 'session-a',
@@ -130,11 +130,7 @@ describe('Sidebar session tags', () => {
       }),
     ])
 
-    // The trigger lives inside the unified search pill — opening the popover
-    // (a click) is what actually surfaces the per-emoji buttons. Static markup
-    // only proves the entry point is wired up.
-    expect(markup).toContain('aria-label="Filter by tag"')
-    expect(markup).toContain('aria-haspopup="menu"')
+    expect(markup).not.toContain('aria-label="Filter by tag"')
   })
 
   it('hides the tag filter trigger when no open session has tags', () => {

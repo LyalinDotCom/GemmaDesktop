@@ -1,6 +1,7 @@
 import {
   applyOrderOverrides,
   normalizeSidebarProjectPath,
+  type PinnedArea,
   type SidebarState,
 } from '@shared/sidebar'
 import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '@shared/globalChat'
@@ -15,6 +16,7 @@ export interface SessionProjectGroup {
 }
 
 export interface SidebarModel {
+  pinnedAreas: Array<PinnedArea & { sessions: SessionSummary[] }>
   pinnedSessions: SessionSummary[]
   projectGroups: SessionProjectGroup[]
   visibleSessionIds: string[]
@@ -103,15 +105,22 @@ function buildProjectGroups(
   )
 }
 
-function buildPinnedSessions(
+function buildPinnedAreas(
   sessions: SessionSummary[],
   sidebarState: SidebarState,
-): SessionSummary[] {
+): Array<PinnedArea & { sessions: SessionSummary[] }> {
   const sessionsById = new Map(sessions.map((session) => [session.id, session]))
 
-  return sidebarState.pinnedSessionIds
-    .map((sessionId) => sessionsById.get(sessionId))
-    .filter((session): session is SessionSummary => Boolean(session))
+  return (sidebarState.pinnedAreas ?? []).map((area) => {
+    const areaSessions = area.sessionIds
+      .map((sessionId) => sessionsById.get(sessionId))
+      .filter((session): session is SessionSummary => Boolean(session))
+
+    return {
+      ...area,
+      sessions: areaSessions,
+    }
+  })
 }
 
 export function buildSidebarModel(
@@ -119,7 +128,8 @@ export function buildSidebarModel(
   sidebarState: SidebarState,
 ): SidebarModel {
   const visibleSessions = sessions.filter(isSidebarVisibleSession)
-  const pinnedSessions = buildPinnedSessions(visibleSessions, sidebarState)
+  const pinnedAreas = buildPinnedAreas(visibleSessions, sidebarState)
+  const pinnedSessions = pinnedAreas.flatMap((area) => area.sessions)
   const projectGroups = buildProjectGroups(visibleSessions, sidebarState)
   const visibleSessionIds: string[] = []
   const seen = new Set<string>()
@@ -141,6 +151,7 @@ export function buildSidebarModel(
   }
 
   return {
+    pinnedAreas,
     pinnedSessions,
     projectGroups,
     visibleSessionIds,

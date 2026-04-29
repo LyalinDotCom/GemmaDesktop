@@ -17,6 +17,7 @@ function makeSidebarState(overrides: Partial<SidebarState> = {}): SidebarState {
   return {
     ...EMPTY_SIDEBAR_STATE,
     pinnedSessionIds: [],
+    pinnedAreas: [],
     followUpSessionIds: [],
     closedProjectPaths: [],
     projectPaths: [],
@@ -63,7 +64,9 @@ describe('sidebar model', () => {
       makeSession('beta-chat', '/tmp/beta', 200),
     ]
     const sidebarState = makeSidebarState({
-      pinnedSessionIds: ['alpha-chat'],
+      pinnedAreas: [
+        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
+      ],
       projectPaths: ['/tmp/alpha', '/tmp/beta'],
     })
 
@@ -90,7 +93,14 @@ describe('sidebar model', () => {
       makeSession('alpha-chat', '/tmp/alpha', 100),
     ]
     const sidebarState = makeSidebarState({
-      pinnedSessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID, 'alpha-chat'],
+      pinnedAreas: [
+        {
+          id: 'area-1',
+          icon: '⭐',
+          collapsed: false,
+          sessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID, 'alpha-chat'],
+        },
+      ],
       projectPaths: [
         '/tmp/user-data/global-session-state/talk/workspace',
         '/tmp/alpha',
@@ -111,7 +121,9 @@ describe('sidebar model', () => {
       makeSession('gamma-chat', '/tmp/gamma', 100),
     ]
     const sidebarState = makeSidebarState({
-      pinnedSessionIds: ['gamma-chat'],
+      pinnedAreas: [
+        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['gamma-chat'] },
+      ],
       closedProjectPaths: ['/tmp/alpha'],
       projectPaths: ['/tmp/alpha', '/tmp/beta', '/tmp/gamma'],
     })
@@ -133,7 +145,9 @@ describe('sidebar model', () => {
       makeSession('gamma-chat', '/tmp/gamma', 200),
     ]
     const sidebarState = makeSidebarState({
-      pinnedSessionIds: ['pinned-delta'],
+      pinnedAreas: [
+        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['pinned-delta'] },
+      ],
       closedProjectPaths: ['/tmp/alpha'],
       projectPaths: ['/tmp/alpha', '/tmp/delta', '/tmp/beta', '/tmp/gamma'],
     })

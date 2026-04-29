@@ -43,6 +43,7 @@ import type {
 import type { AppOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import type { AppLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
+import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import type {
   GlobalChatOpenInAppRequest,
   GlobalChatState,
@@ -97,6 +98,7 @@ export interface SessionSummary {
   conversationKind: ConversationKind
   workMode: WorkMode
   planMode: boolean
+  approvalMode?: ConversationApprovalMode
   selectedSkillIds: string[]
   selectedSkillNames: string[]
   selectedToolIds: string[]
@@ -869,6 +871,7 @@ export interface CreateSessionOpts {
   conversationKind: ConversationKind
   workMode?: WorkMode
   planMode?: boolean
+  approvalMode?: ConversationApprovalMode
   selectedSkillIds?: string[]
   selectedToolIds?: string[]
   workingDirectory?: string
@@ -878,6 +881,7 @@ export interface CreateSessionOpts {
 export interface UpdateSessionOpts {
   workMode?: WorkMode
   planMode?: boolean
+  approvalMode?: ConversationApprovalMode
   modelId?: string
   runtimeId?: string
   selectedSkillIds?: string[]
@@ -940,12 +944,17 @@ export interface MenuBarPopupState {
 export interface GemmaDesktopBridge {
   sidebar: {
     get(): Promise<SidebarState>
-    pinSession(sessionId: string): Promise<SidebarState>
+    pinSession(sessionId: string, areaId: string): Promise<SidebarState>
     unpinSession(sessionId: string): Promise<SidebarState>
     flagFollowUp(sessionId: string): Promise<SidebarState>
     unflagFollowUp(sessionId: string): Promise<SidebarState>
     rememberActiveSession(sessionId: string | null): Promise<SidebarState>
     movePinnedSession(sessionId: string, toIndex: number): Promise<SidebarState>
+    createPinnedArea(icon: string, sessionId: string | null): Promise<SidebarState>
+    deletePinnedArea(areaId: string): Promise<SidebarState>
+    updatePinnedAreaIcon(areaId: string, icon: string): Promise<SidebarState>
+    setPinnedAreaCollapsed(areaId: string, collapsed: boolean): Promise<SidebarState>
+    movePinnedArea(areaId: string, direction: 'up' | 'down'): Promise<SidebarState>
     setSessionOrder(sessionId: string, toIndex: number): Promise<SidebarState>
     clearSessionOrder(sessionId: string): Promise<SidebarState>
     setProjectOrder(projectPath: string, toIndex: number): Promise<SidebarState>
