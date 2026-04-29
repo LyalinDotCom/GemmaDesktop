@@ -89,6 +89,29 @@ function resolveOptionalEnvValue(value: string | undefined): string | undefined 
   return value && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+type ToolPermissionPolicy = NonNullable<CreateGemmaDesktopOptions["toolPolicy"]>;
+
+function createCliToolPermissionPolicy(): ToolPermissionPolicy {
+  return {
+    authorize({ permission }) {
+      if (permission?.kind !== "workspace_escape") {
+        return { allowed: true };
+      }
+
+      return {
+        allowed: false,
+        reason: [
+          "CLI blocks tool calls that target paths outside the session workspace because they require explicit user approval.",
+          permission.reason,
+          `Workspace: ${permission.details.workingDirectory}`,
+          `Requested path: ${permission.details.requestedPath}`,
+          `Resolved path: ${permission.details.resolvedPath}`,
+        ].join(" "),
+      };
+    },
+  };
+}
+
 function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtime: CliRuntime): Promise<GemmaDesktopLike> {
   const dependencies = runtime.dependencies ?? DEFAULT_DEPENDENCIES;
   return dependencies.createGemmaDesktop({
@@ -98,6 +121,7 @@ function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtim
     }),
     geminiApiKey: command.geminiApiKey ?? resolveOptionalEnvValue(runtime.env.GEMINI_API_KEY),
     geminiApiModel: command.geminiApiModel ?? resolveOptionalEnvValue(runtime.env.GEMMA_DESKTOP_GEMINI_API_MODEL),
+    toolPolicy: createCliToolPermissionPolicy(),
   });
 }
 

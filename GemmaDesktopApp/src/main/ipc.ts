@@ -5061,12 +5061,35 @@ function normalizeRuntimeForSessionMode(
 
 function createAppToolPermissionPolicy(): ToolPermissionPolicy {
   return {
-    async authorize({ tool, toolCall, context }) {
+    async authorize({ tool, toolCall, context, permission }) {
       const sessionConfig = getSessionConfigFromMetadata(
         context.sessionMetadata,
         resolveBaseMode(context.mode),
       )
       const currentSettings = await getSettingsState()
+
+      if (permission?.kind === 'workspace_escape') {
+        const approved = await requestToolApproval({
+          sessionId: context.sessionId,
+          signal: context.signal,
+          turnId: context.turnId,
+          toolName: tool.name,
+          argumentsSummary: [
+            `Workspace: ${permission.details.workingDirectory}`,
+            `Requested path: ${permission.details.requestedPath}`,
+            `Resolved path: ${permission.details.resolvedPath}`,
+          ].join('\n'),
+          reason: permission.reason,
+        })
+
+        if (!approved) {
+          return {
+            allowed: false,
+            reason:
+              'Out-of-workspace tool access was denied by the user.',
+          }
+        }
+      }
 
       if (CHROME_BROWSER_TOOL_NAME_SET.has(tool.name)) {
         return { allowed: true }
