@@ -746,9 +746,54 @@ const MAX_STEP_FINALIZATION_WARNING =
   "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
 const REPEATED_TOOL_FAILURE_THRESHOLD = 3;
 const REPEATED_TOOL_CALL_THRESHOLD = 3;
+const REPEATED_TEXT_ONLY_CONTINUATION_OVERLAP = 0.7;
 
 const TOOL_SURFACE_REGISTRATION_ERROR_PATTERN =
   /^Tool "([^"]+)" is not registered in the active tool surface\.$/;
+
+function normalizeContinuationText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\bi['’]ve\b/g, "i have")
+    .replace(/\bi['’]m\b/g, "i am")
+    .replace(/\bi['’]ll\b/g, "i will")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeRepeatedTextOnlyContinuation(
+  previousText: string | undefined,
+  currentText: string,
+): boolean {
+  if (!previousText) {
+    return false;
+  }
+
+  const previous = normalizeContinuationText(previousText);
+  const current = normalizeContinuationText(currentText);
+  if (previous.length < 12 || current.length < 12) {
+    return false;
+  }
+  if (previous.includes(current) || current.includes(previous)) {
+    return true;
+  }
+
+  const previousWords = new Set(previous.split(" ").filter((word) => word.length > 3));
+  const currentWords = new Set(current.split(" ").filter((word) => word.length > 3));
+  const smallerSize = Math.min(previousWords.size, currentWords.size);
+  if (smallerSize === 0) {
+    return false;
+  }
+
+  let shared = 0;
+  for (const word of previousWords) {
+    if (currentWords.has(word)) {
+      shared += 1;
+    }
+  }
+  return shared / smallerSize >= REPEATED_TEXT_ONLY_CONTINUATION_OVERLAP;
+}
 
 function buildRequiredToolContinuationInstruction(requiredTools: readonly string[]): string {
   return [
@@ -1973,6 +2018,7 @@ export class SessionEngine {
     let continuationInstruction: string | undefined;
     let continuationAttempts = 0;
     let buildValidationContinuationAttempts = 0;
+    let lastBuildValidationTextOnlyContinuationText: string | undefined;
     let buildFinalizationContinuationAttempts = 0;
     let buildVerifierAttempts = 0;
     let latestBuildVerifierResult: BuildCompletionVerifierResult | undefined;
@@ -2092,6 +2138,26 @@ export class SessionEngine {
             && buildValidationContinuationAttempts < (turnBuildPolicy?.verificationContinuationLimit ?? 2)
             && step < maxSteps
           ) {
+            if (
+              response.text.trim().length > 0
+              && looksLikeRepeatedTextOnlyContinuation(
+                lastBuildValidationTextOnlyContinuationText,
+                response.text,
+              )
+            ) {
+              const warning =
+                "Assistant kept replying with text instead of running required build verification. Stopping automatic continuation to avoid a repeat loop.";
+              warnings.push(warning);
+              this.emit(queue, turnId, "warning.raised", {
+                step,
+                warning,
+              });
+              break;
+            }
+
+            if (response.text.trim().length > 0) {
+              lastBuildValidationTextOnlyContinuationText = response.text;
+            }
             buildValidationContinuationAttempts += 1;
             continuationInstruction = buildMissingBuildVerificationInstruction(buildValidationStatus);
             this.emit(queue, turnId, "build.validation.required", {
@@ -2472,6 +2538,7 @@ export class SessionEngine {
       }
 
       continuationAttempts = 0;
+      lastBuildValidationTextOnlyContinuationText = undefined;
 
       let repeatedToolCall:
         | { toolName: string; inputPreview: string; count: number }

@@ -61,8 +61,12 @@ export interface BuildBrowserEvidenceRecord {
   toolName: string;
   url?: string;
   status?: string;
+  readyState?: string;
   matchCount?: number;
   errorCount?: number;
+  consoleErrorCount?: number;
+  timedOut?: boolean;
+  lastError?: string;
 }
 
 export interface BuildTurnState {
@@ -87,6 +91,7 @@ export interface BuildValidationStatus {
   passed: boolean;
   changedPaths: string[];
   latestAttempt?: BuildCommandExecutionRecord;
+  latestBrowserEvidence?: BuildBrowserEvidenceRecord;
   recommendedCommands: string[];
   rationale: string;
 }
@@ -389,16 +394,36 @@ function extractBrowserEvidenceRecord(
     typeof structured.status === "string" && structured.status.trim().length > 0
       ? structured.status.trim()
       : undefined;
+  const readyState =
+    typeof structured.readyState === "string" && structured.readyState.trim().length > 0
+      ? structured.readyState.trim()
+      : undefined;
   const matches = Array.isArray(structured.matches) ? structured.matches : undefined;
   const errors = Array.isArray(structured.errors) ? structured.errors : undefined;
+  const consoleErrorCount =
+    typeof structured.consoleErrorCount === "number"
+      ? structured.consoleErrorCount
+      : undefined;
+  const timedOut =
+    typeof structured.timedOut === "boolean"
+      ? structured.timedOut
+      : undefined;
+  const lastError =
+    typeof structured.lastError === "string" && structured.lastError.trim().length > 0
+      ? structured.lastError.trim()
+      : undefined;
 
   return {
     sequence: nextSequence(state),
     toolName: toolResult.toolName,
     ...(url ? { url } : {}),
     ...(status ? { status } : {}),
+    ...(readyState ? { readyState } : {}),
     ...(matches ? { matchCount: matches.length } : {}),
     ...(errors ? { errorCount: errors.length } : {}),
+    ...(typeof consoleErrorCount === "number" ? { consoleErrorCount } : {}),
+    ...(typeof timedOut === "boolean" ? { timedOut } : {}),
+    ...(lastError ? { lastError } : {}),
   };
 }
 
@@ -584,6 +609,61 @@ function commandsReferToSameValidation(claimedCommand: string, observedCommand: 
   );
 }
 
+function browserEvidenceHasFailure(evidence: BuildBrowserEvidenceRecord): boolean {
+  return (
+    evidence.timedOut === true
+    || Boolean(evidence.lastError)
+    || (typeof evidence.consoleErrorCount === "number" && evidence.consoleErrorCount > 0)
+    || (typeof evidence.errorCount === "number" && evidence.errorCount > 0)
+  );
+}
+
+function isPassingBrowserEvidence(evidence: BuildBrowserEvidenceRecord): boolean {
+  if (browserEvidenceHasFailure(evidence)) {
+    return false;
+  }
+
+  const readyState = evidence.readyState?.toLowerCase();
+  if (readyState && readyState !== "complete" && readyState !== "interactive") {
+    return false;
+  }
+
+  if (evidence.toolName === "open_project_browser") {
+    return (
+      readyState === "complete"
+      && typeof evidence.consoleErrorCount === "number"
+      && evidence.consoleErrorCount === 0
+    );
+  }
+
+  if (evidence.toolName === "get_project_browser_errors") {
+    return typeof evidence.errorCount === "number" && evidence.errorCount === 0;
+  }
+
+  if (evidence.toolName === "search_project_browser_dom") {
+    return typeof evidence.matchCount === "number" && evidence.matchCount > 0;
+  }
+
+  return false;
+}
+
+function validationClaimMatchesBrowserEvidence(
+  claimedCommand: string,
+  evidence: BuildBrowserEvidenceRecord,
+): boolean {
+  const claimed = normalizeCommand(claimedCommand);
+  if (!claimed) {
+    return false;
+  }
+
+  const url = evidence.url ? normalizeCommand(evidence.url) : "";
+  return (
+    claimed.includes("browser")
+    || claimed.includes(normalizeCommand(evidence.toolName))
+    || (url.length > 0 && (claimed.includes(url) || url.includes(claimed)))
+  );
+}
+
 function finalizationListsObservedPassingValidation(
   state: BuildTurnState,
   finalization: BuildFinalizationRecord,
@@ -608,6 +688,12 @@ function finalizationListsObservedPassingValidation(
     observedPassingCommands.some((observedCommand) =>
       commandsReferToSameValidation(claimedCommand, observedCommand)
     )
+    || state.browserEvidence
+      .filter((evidence) =>
+        evidence.sequence > latestMutationSequence
+        && isPassingBrowserEvidence(evidence)
+      )
+      .some((evidence) => validationClaimMatchesBrowserEvidence(claimedCommand, evidence))
   );
 }
 
@@ -995,18 +1081,31 @@ export function summarizeBuildValidation(
     execution.sequence > latestMutationSequence
     && looksLikeVerificationCommand(execution.command, plan.commands),
   );
+  const browserAttempts = state.browserEvidence.filter((evidence) =>
+    evidence.sequence > latestMutationSequence
+    && (
+      isPassingBrowserEvidence(evidence)
+      || browserEvidenceHasFailure(evidence)
+    )
+  );
   const latestAttempt = attempts.at(-1);
-  const passed = Boolean(
+  const latestBrowserEvidence = browserAttempts.at(-1);
+  const commandPassed = Boolean(
     latestAttempt
     && latestAttempt.exitCode === 0
     && latestAttempt.timedOut === false,
   );
+  const browserPassed = Boolean(
+    latestBrowserEvidence
+    && isPassingBrowserEvidence(latestBrowserEvidence),
+  );
 
   return {
-    attempted: attempts.length > 0,
-    passed,
+    attempted: attempts.length > 0 || browserAttempts.length > 0,
+    passed: commandPassed || browserPassed,
     changedPaths,
-    latestAttempt,
+    ...(latestAttempt ? { latestAttempt } : {}),
+    ...(latestBrowserEvidence ? { latestBrowserEvidence } : {}),
     recommendedCommands: plan.commands,
     rationale: plan.rationale,
   };
@@ -1106,6 +1205,24 @@ function formatRecommendedCommands(commands: readonly string[]): string {
   return commands.join(" | ");
 }
 
+function formatBrowserEvidence(evidence: BuildBrowserEvidenceRecord): string {
+  return [
+    evidence.toolName,
+    evidence.url ? `url=${evidence.url}` : undefined,
+    evidence.readyState ? `readyState=${evidence.readyState}` : undefined,
+    typeof evidence.consoleErrorCount === "number"
+      ? `consoleErrors=${evidence.consoleErrorCount}`
+      : undefined,
+    typeof evidence.errorCount === "number"
+      ? `errors=${evidence.errorCount}`
+      : undefined,
+    evidence.timedOut ? "timedOut=true" : undefined,
+    evidence.lastError ? `lastError=${truncateText(evidence.lastError, 120)}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 export function buildMissingBuildVerificationInstruction(
   status: BuildValidationStatus,
 ): string {
@@ -1113,9 +1230,9 @@ export function buildMissingBuildVerificationInstruction(
     "This act turn is not complete yet.",
     `You changed files in this turn: ${formatChangedPaths(status.changedPaths)}.`,
     status.recommendedCommands.length > 0
-      ? `Run a meaningful verification command now. Recommended commands for this workspace: ${formatRecommendedCommands(status.recommendedCommands)}.`
-      : "Run a meaningful verification command now using the real build, check, typecheck, lint, or test command that fits this workspace.",
-    "A verification command must exit with code 0 and must not time out before you can treat the task as complete.",
+      ? `Run a meaningful verification command now when one fits this workspace, or use an available browser/runtime verification step that directly validates the changed artifact. Recommended commands for this workspace: ${formatRecommendedCommands(status.recommendedCommands)}.`
+      : "Run a meaningful verification command now when one fits this workspace, or use the real build, check, typecheck, lint, test, runtime, or browser verification path that fits this workspace.",
+    "A command verifier must exit with code 0 and must not time out. A browser or runtime verifier must load the changed artifact successfully and report no relevant errors.",
     "If verification fails, fix the issue and rerun verification. Only stop early if you explain the concrete blocker plainly.",
     "Emit the next tool call now.",
   ].join("\n");
@@ -1125,6 +1242,7 @@ export function buildFailedBuildVerificationInstruction(
   status: BuildValidationStatus,
 ): string {
   const attempt = status.latestAttempt;
+  const browserEvidence = status.latestBrowserEvidence;
   const outputSnippet = attempt
     ? truncateText([attempt.stdout.trim(), attempt.stderr.trim()].filter(Boolean).join("\n"), 320)
     : undefined;
@@ -1134,7 +1252,9 @@ export function buildFailedBuildVerificationInstruction(
     `You changed files in this turn: ${formatChangedPaths(status.changedPaths)}.`,
     attempt
       ? `The latest verification command failed: ${attempt.command} (exit ${attempt.exitCode ?? "null"}${attempt.timedOut ? ", timed out" : ""}).`
-      : "The latest verification command failed.",
+      : browserEvidence
+        ? `The latest browser/runtime verification failed or was inconclusive: ${formatBrowserEvidence(browserEvidence)}.`
+        : "The latest verification step failed.",
     outputSnippet && outputSnippet.length > 0
       ? `Latest verification output:\n${outputSnippet}`
       : undefined,

@@ -174,6 +174,62 @@ function createPeekBackgroundProcessTool(
   };
 }
 
+function createOpenProjectBrowserTool(
+  result: {
+    title?: string;
+    url?: string;
+    readyState?: string;
+    excerpt?: string;
+    consoleErrorCount?: number;
+    timedOut?: boolean;
+    lastError?: string | null;
+  } = {},
+): RegisteredTool<{ url: string }> {
+  return {
+    name: "open_project_browser",
+    description: "Open the project browser.",
+    inputSchema: {
+      type: "object",
+      required: ["url"],
+      properties: {
+        url: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    async execute(input) {
+      const url = result.url ?? input.url;
+      const title = result.title ?? "Black Hole Simulation";
+      const readyState = result.readyState ?? "complete";
+      const consoleErrorCount = result.consoleErrorCount ?? 0;
+      const timedOut = result.timedOut ?? false;
+      const excerpt = result.excerpt ?? "Black Hole Simulation";
+      return {
+        output: [
+          `Opened Project Browser at ${url}.`,
+          `Title: ${title}`,
+          `Ready state: ${readyState}`,
+          timedOut ? "Loading did not finish." : "Page load finished.",
+          `Recent console errors: ${consoleErrorCount}`,
+          "",
+          "Visible text excerpt:",
+          excerpt,
+        ].join("\n"),
+        structuredOutput: {
+          action: "open",
+          title,
+          url,
+          readyState,
+          excerpt,
+          excerptTruncated: false,
+          consoleErrorCount,
+          timedOut,
+          lastError: result.lastError ?? null,
+        },
+      };
+    },
+  };
+}
+
 function createExecCommandTool(
   execute: (input: { command: string; cwd?: string }) => ShellCommandResult | Promise<ShellCommandResult>,
 ): RegisteredTool<{ command: string; cwd?: string }> {
@@ -313,8 +369,57 @@ describe("build mode verification enforcement", () => {
       "This act turn is not complete yet.",
     );
     expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-      "Run a meaningful verification command now.",
+      "Run a meaningful verification command now when one fits this workspace",
     );
+  });
+
+  it("stops automatic build-validation continuation after repeated text-only replies", async () => {
+    const workingDirectory = await createWorkspaceWithPackageJson({
+      build: "vite build",
+    });
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the file.",
+        toolName: "write_file",
+        toolInput: {
+          path: "src/main.ts",
+          content: "console.log('hi');",
+        },
+      }),
+      createTextResponse("I created the file."),
+      createTextResponse("I created the file and it is ready."),
+      createTextResponse("This response should not be requested."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool());
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "built",
+      stderr: "",
+      timedOut: false,
+    })));
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 8,
+    });
+
+    const result = await engine.run("Create the file.");
+
+    expect(result.text).toBe("I created the file and it is ready.");
+    expect(adapter.requests).toHaveLength(3);
+    expect(result.warnings).toContain(
+      "Assistant kept replying with text instead of running required build verification. Stopping automatic continuation to avoid a repeat loop.",
+    );
+    expect(result.build?.verification?.attempted).toBe(false);
   });
 
   it("detects verification scripts in a nested npm project created during the turn", async () => {
@@ -609,7 +714,7 @@ describe("build mode verification enforcement", () => {
       expect(result.text).toBe("Done. svg4/cat-bicycle.svg was created and xmllint passed.");
       expect(adapter.requests).toHaveLength(6);
       expect(collectSystemText(adapter.requests[4]?.messages ?? [])).toContain(
-        "Run a meaningful verification command now.",
+        "Run a meaningful verification command now when one fits this workspace",
       );
       expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
         "write_file",
@@ -1381,6 +1486,71 @@ describe("build mode verification enforcement", () => {
       expect(result.build?.verification?.passed).toBe(true);
       expect(result.build?.verification?.latestAttempt?.command).toBe("cd black && npm run dev");
       expect(result.build?.finalization?.passed).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it("accepts successful Project Browser evidence after mutation as passing build validation", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the nested web app.",
+        toolName: "write_file",
+        toolInput: {
+          path: "black/package.json",
+          content: JSON.stringify({
+            scripts: { build: "vite build" },
+          }),
+        },
+      }),
+      createToolCallResponse({
+        text: "I will verify it in the Project Browser.",
+        toolName: "open_project_browser",
+        toolInput: {
+          url: "http://localhost:5173/",
+        },
+      }),
+      createTextResponse("Done. The web app loads in the Project Browser with no console errors."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool({ writeToDisk: true }));
+    registry.register(createOpenProjectBrowserTool());
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    })));
+
+    const originalCwd = process.cwd();
+    process.chdir(workingDirectory);
+    try {
+      const engine = new SessionEngine({
+        adapter,
+        model: "mock-model",
+        mode: "build",
+        workingDirectory,
+        tools: new ToolRuntime({ registry }),
+        maxSteps: 4,
+      });
+
+      const result = await engine.run("Create a nested web app in black.");
+
+      expect(result.text).toBe("Done. The web app loads in the Project Browser with no console errors.");
+      expect(adapter.requests).toHaveLength(3);
+      expect(result.build?.verification?.passed).toBe(true);
+      expect(result.build?.verification?.latestAttempt).toBeUndefined();
+      expect(result.build?.verification?.latestBrowserEvidence).toMatchObject({
+        toolName: "open_project_browser",
+        readyState: "complete",
+        consoleErrorCount: 0,
+        timedOut: false,
+      });
     } finally {
       process.chdir(originalCwd);
     }
