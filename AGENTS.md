@@ -183,6 +183,8 @@ Helpful hints:
 
 The repo has local models available, so do not under-test major changes just to save runtime. Slow validation is preferable to shipping regressions in real app behavior.
 
+Live scenario results require human review of the generated artifacts, not just a green process exit. When running live scenario tests, inspect the saved JSON, tool trace, final answer, evaluator notes, and any attachments or generated files against the scenario's actual goal. Report whether the run was practically useful, partially useful, or misleading, even if the automated evaluator passed.
+
 ## Git And GitHub Flow
 
 This repository uses direct-to-`main` publishing by default.
