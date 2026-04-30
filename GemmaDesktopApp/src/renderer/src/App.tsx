@@ -29,10 +29,12 @@ import { AmbientMood } from '@/components/AmbientMood'
 import { DoctorPanel } from '@/components/DoctorPanel'
 import { StartupLoadingOverlay } from '@/components/StartupLoadingOverlay'
 import { StartupRiskDialog } from '@/components/StartupRiskDialog'
+import { FirstRunModelSetup } from '@/components/FirstRunModelSetup'
 import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
+  AppSettings,
   BootstrapState,
   FileAttachment,
   MessageContent,
@@ -72,6 +74,10 @@ import {
   canQueueMessageWhileBusy,
   getBusyQueueBlockedReason,
 } from '@/lib/sessionQueuePolicy'
+import {
+  FIRST_RUN_MODEL_SETUP_DISMISSED_KEY,
+  shouldShowFirstRunModelSetup,
+} from '@/lib/firstRunModelSetup'
 import {
   getCoBrowseTakeControlDisabledReason,
   getCoBrowseUserControlComposerLockReason,
@@ -299,6 +305,13 @@ function findBootstrapModelAvailabilityIssue(
 export function App() {
   const [startupRiskAccepted, setStartupRiskAccepted] = useState(false)
   const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(false)
+  const [firstRunModelSetupDismissed, setFirstRunModelSetupDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(FIRST_RUN_MODEL_SETUP_DISMISSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [doctorOpen, setDoctorOpen] = useState(false)
   const [statusBarTarget, setStatusBarTarget] = useState<HTMLDivElement | null>(null)
   const [assistantHomeVisible, setAssistantHomeVisible] = useState(true)
@@ -1416,6 +1429,58 @@ export function App() {
     setSettingsInitialTab(tab)
     dispatch({ type: 'SET_SETTINGS_OPEN', open: true })
   }
+  const dismissFirstRunModelSetup = useCallback(() => {
+    try {
+      window.localStorage.setItem(FIRST_RUN_MODEL_SETUP_DISMISSED_KEY, '1')
+    } catch {
+      // Ignore storage failures; the modal will stay session-scoped in that case.
+    }
+    setFirstRunModelSetupDismissed(true)
+  }, [])
+  const handleFirstRunModelChoice = useCallback(async (target: {
+    mainModel: { modelId: string; runtimeId: string }
+    helperModel: { modelId: string; runtimeId: string }
+    runtimeSettings?: Partial<AppSettings['runtimes']>
+  }) => {
+    const modelSelection = {
+      mainModel: { ...target.mainModel },
+      helperModel: { ...target.helperModel },
+    }
+    const updated = await window.gemmaDesktopBridge.settings.update({
+      ...(target.runtimeSettings ? { runtimes: { ...state.settings.runtimes, ...target.runtimeSettings } } : {}),
+      modelSelection,
+    })
+    dispatch({ type: 'SET_SETTINGS', settings: updated })
+    dismissFirstRunModelSetup()
+    await window.gemmaDesktopBridge.environment.inspect().then(({ runtimes, models, bootstrap }) => {
+      dispatch({ type: 'SET_RUNTIMES', runtimes })
+      dispatch({ type: 'SET_MODELS', models })
+      dispatch({ type: 'SET_BOOTSTRAP_STATE', bootstrapState: bootstrap })
+    }).catch((error) => {
+      console.warn('Failed to refresh environment after first-run model setup:', error)
+    })
+  }, [dismissFirstRunModelSetup, dispatch, state.settings.runtimes])
+  const handleFirstRunModelRefresh = useCallback(async (
+    runtimeSettings?: Partial<AppSettings['runtimes']>,
+  ) => {
+    if (runtimeSettings) {
+      const updated = await window.gemmaDesktopBridge.settings.update({
+        runtimes: { ...state.settings.runtimes, ...runtimeSettings },
+      })
+      dispatch({ type: 'SET_SETTINGS', settings: updated })
+    }
+    const { runtimes, models, bootstrap } = await window.gemmaDesktopBridge.environment.inspect()
+    dispatch({ type: 'SET_RUNTIMES', runtimes })
+    dispatch({ type: 'SET_MODELS', models })
+    dispatch({ type: 'SET_BOOTSTRAP_STATE', bootstrapState: bootstrap })
+  }, [dispatch, state.settings.runtimes])
+  const showFirstRunModelSetup = shouldShowFirstRunModelSetup({
+    startupRiskAccepted,
+    dismissed: firstRunModelSetupDismissed,
+    bootstrapState: state.bootstrapState,
+    sidebar: state.sidebar,
+    sessions: state.sessions,
+  })
   const preferredTerminalWorkingDirectory =
     state.activeSession?.workingDirectory.trim()
     || state.settings.defaultProjectDirectory.trim()
@@ -2942,6 +3007,19 @@ export function App() {
         onOpenVoiceSettings={() => openSettings('voice')}
         onTestReadAloud={readAloudPlayer.playTest}
       />
+
+      {showFirstRunModelSetup && (
+        <FirstRunModelSetup
+          runtimes={state.runtimes}
+          models={state.models}
+          runtimeSettings={state.settings.runtimes}
+          gemmaInstallStates={state.gemmaInstallStates}
+          onChoose={handleFirstRunModelChoice}
+          onDismiss={dismissFirstRunModelSetup}
+          onEnsureGemmaModel={ensureGemmaModel}
+          onRefreshModels={handleFirstRunModelRefresh}
+        />
+      )}
 
       <StartupLoadingOverlay
         bootstrap={state.bootstrapState}

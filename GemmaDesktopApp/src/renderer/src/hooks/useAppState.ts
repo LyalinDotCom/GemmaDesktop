@@ -461,7 +461,7 @@ const initialState: AppState = {
   bootstrapState: {
     status: 'idle',
     ready: false,
-    message: 'Preparing local models…',
+    message: 'Local models will be prepared when needed.',
     helperModelId: DEFAULT_HELPER_GEMMA_TAG,
     helperRuntimeId: 'ollama-native',
     requiredPrimaryModelIds: [DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.modelId],

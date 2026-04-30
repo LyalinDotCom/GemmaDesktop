@@ -1671,7 +1671,7 @@ function recordSessionTokens(
 let bootstrapState: BootstrapStateRecord = {
   status: 'idle',
   ready: false,
-  message: 'Preparing local models…',
+  message: 'Local models will be prepared when needed.',
   ...resolveBootstrapTargets(),
   modelAvailabilityIssues: [],
   updatedAt: Date.now(),
@@ -10107,11 +10107,6 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
   )
 
   if (!persisted) {
-    const bootstrap = await ensureBootstrapReady()
-    if (!bootstrap.ready) {
-      throw new Error(bootstrap.error ?? bootstrap.message)
-    }
-
     const defaultTarget = buildDefaultSessionPrimaryTarget(talkConfig, settings)
     const composition = await resolveSessionComposition({
       snapshot: null,
@@ -13542,7 +13537,7 @@ export async function initializeGemmaDesktop(): Promise<void> {
   bootstrapState = {
     status: 'idle',
     ready: false,
-    message: 'Preparing local models…',
+    message: 'Local models will be prepared when needed.',
     ...resolveBootstrapTargets(currentSettings),
     modelAvailabilityIssues: [],
     updatedAt: Date.now(),
@@ -13631,9 +13626,6 @@ export async function initializeGemmaDesktop(): Promise<void> {
     void checkDueAutomations()
   }, 15_000)
   void checkDueAutomations()
-  void ensureBootstrapReady().catch((error) => {
-    console.error('[gemma-desktop] Bootstrap failed:', error)
-  })
 }
 
 type SendSessionMessageOptions = {

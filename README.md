@@ -52,7 +52,7 @@ First launch drops you into **Assistant Home** with the Nebula welcome surface â
 - Turn on **assistant narration** if you want spoken commentary while the model works
 - Walk through a startup risk dialog that's blunt about what alpha software can and can't promise
 
-If Ollama isn't running yet, the bootstrap layer pulls the default model and warms a small helper for auxiliary tasks (titles, summaries, narration) before handing you the keys.
+First launch no longer pulls a default model on your behalf. Gemma Desktop asks you to pick an inference provider first, then lets you choose an existing model or explicitly start a guided Ollama download.
 
 ---
 
