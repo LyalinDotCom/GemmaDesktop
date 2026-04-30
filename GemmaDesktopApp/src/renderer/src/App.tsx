@@ -1567,6 +1567,15 @@ export function App() {
       return
     }
 
+    if (coBrowseActive) {
+      setCoBrowseActive(false)
+      setCoBrowseControlBusy(false)
+      setCoBrowseControlError(null)
+      void window.gemmaDesktopBridge.browser.close().catch((error) => {
+        console.error('Failed to close Project Browser before pinning Assistant Chat:', error)
+      })
+    }
+
     if (state.currentView !== 'chat') {
       dispatch({ type: 'SET_VIEW', view: 'chat' })
     }
@@ -1575,7 +1584,7 @@ export function App() {
     setGlobalChatPinnedToDock(true)
     setRightDockView('assistant')
     setGlobalComposerFocusKey((current) => current + 1)
-  }, [dispatch, globalChatPinnedToDock, state.currentView])
+  }, [coBrowseActive, dispatch, globalChatPinnedToDock, state.currentView])
 
   useEffect(() => {
     void window.gemmaDesktopBridge.browser.getState()
@@ -2554,6 +2563,8 @@ export function App() {
       onTogglePin={toggleGlobalChatDockPin}
     />
   )
+  const globalChatSwitchBarLeftOffset =
+    !assistantHomeVisible && state.sidebarOpen ? sidebarResize.width : 0
   const globalChatSessionControlsSlot = globalChatSession.targetKind === 'fallback' ? (
     <AssistantHomeSessionControls
       sessions={globalChatSession.talkSessions}
@@ -2637,6 +2648,13 @@ export function App() {
       />
       {/* Title bar drag region */}
       <div className="drag-region fixed inset-x-0 top-0 z-50 h-12" />
+
+      <div
+        className="no-drag pointer-events-none fixed right-0 top-0 z-[95] h-12"
+        style={{ left: globalChatSwitchBarLeftOffset }}
+      >
+        {globalChatSwitchBar}
+      </div>
 
       {/* Zone 1: Sidebar */}
       <div
@@ -2750,8 +2768,6 @@ export function App() {
 
       {/* Main content area */}
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {globalChatSwitchBar}
-
         <div className="pointer-events-none absolute right-0 top-1/2 z-[60] -translate-y-1/2">
           <div className="pointer-events-auto rounded-l-2xl border border-r-0 border-slate-200 bg-white/95 py-2 pl-2 pr-1 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
             <RightDockRail

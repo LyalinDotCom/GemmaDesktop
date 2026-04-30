@@ -31,7 +31,10 @@ export function GlobalChatSwitchBar({
 
   return (
     <div className="no-drag pointer-events-none absolute inset-x-0 top-0 z-[95] flex justify-center px-4">
-      <div className="no-drag pointer-events-auto flex h-12 w-full max-w-3xl items-center rounded-b-[28px] border border-t-0 border-white/10 bg-[#050817]/95 px-3 text-zinc-200 shadow-[0_24px_70px_-36px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+      <div
+        className="no-drag pointer-events-auto flex h-12 w-full max-w-3xl items-center rounded-b-[28px] border border-t-0 border-white/10 bg-[#050817]/95 px-3 text-zinc-200 shadow-[0_24px_70px_-36px_rgba(0,0,0,0.85)] backdrop-blur-xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <button
           type="button"
           onClick={onToggleHome}
@@ -56,7 +59,7 @@ export function GlobalChatSwitchBar({
             aria-pressed={pinnedToDock}
             aria-label={basePinLabel}
             title={basePinLabel}
-            className={`no-drag rounded-xl p-1.5 transition-colors ${
+            className={`no-drag cursor-pointer rounded-xl p-1.5 transition-colors ${
               pinnedToDock
                 ? 'bg-cyan-400/15 text-cyan-200 ring-1 ring-cyan-300/30 hover:bg-cyan-400/25'
                 : 'text-zinc-200 hover:bg-white/5 hover:text-white'

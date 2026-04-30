@@ -136,23 +136,101 @@ function normalizeFiniteNumberRecord(
   return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
 }
 
-function resolveLmStudioReasoningControlValue(modelId: string, settings: ChatRequest["settings"]): "on" | undefined {
-  if (isGemma4ModelId(modelId)) {
-    return "on";
+function nativeModelIdentifiers(raw: Record<string, unknown>): string[] {
+  const identifiers = new Set<string>();
+  const addIdentifier = (value: unknown): void => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      identifiers.add(value.trim());
+    }
+  };
+
+  addIdentifier(raw.key);
+  addIdentifier(raw.id);
+  addIdentifier(raw.selected_variant);
+
+  if (Array.isArray(raw.variants)) {
+    for (const variant of raw.variants) {
+      addIdentifier(variant);
+    }
   }
-  const reasoningMode = settings?.reasoningMode;
-  if (reasoningMode === "on") {
-    return reasoningMode;
+
+  if (Array.isArray(raw.loaded_instances)) {
+    for (const instance of raw.loaded_instances as Array<Record<string, unknown>>) {
+      addIdentifier(instance.id);
+    }
   }
-  return undefined;
+
+  return [...identifiers];
 }
 
-function resolveLmStudioNativeRequestOptions(
+function nativeModelMatches(raw: Record<string, unknown>, modelId: string): boolean {
+  return nativeModelIdentifiers(raw).includes(modelId);
+}
+
+function nativeModelExposesReasoningControl(raw: Record<string, unknown>): boolean {
+  const capabilities =
+    raw.capabilities && typeof raw.capabilities === "object" && !Array.isArray(raw.capabilities)
+      ? raw.capabilities as Record<string, unknown>
+      : {};
+  const reasoning = capabilities.reasoning;
+
+  if (typeof reasoning === "boolean") {
+    return reasoning;
+  }
+
+  if (!reasoning || typeof reasoning !== "object" || Array.isArray(reasoning)) {
+    return false;
+  }
+
+  const reasoningRecord = reasoning as Record<string, unknown>;
+  const allowedOptions = Array.isArray(reasoningRecord.allowed_options)
+    ? reasoningRecord.allowed_options
+    : [];
+  return allowedOptions.some((option) => option === "on")
+    || reasoningRecord.default === "on";
+}
+
+async function modelSupportsLmStudioNativeReasoningControl(
+  baseUrl: string,
+  apiKey: string | undefined,
+  modelId: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const modelList = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/v1/models`, {
+    signal,
+    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+  }).catch(() => undefined);
+  const models = Array.isArray(modelList?.models) ? (modelList.models as Array<Record<string, unknown>>) : [];
+  const matchedModel = models.find((model) => nativeModelMatches(model, modelId));
+  return matchedModel ? nativeModelExposesReasoningControl(matchedModel) : false;
+}
+
+async function resolveLmStudioReasoningControlValue(
   modelId: string,
   settings: ChatRequest["settings"],
-): Record<string, unknown> | undefined {
+  baseUrl: string,
+  apiKey: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<"on" | undefined> {
+  const wantsReasoning = isGemma4ModelId(modelId) || settings?.reasoningMode === "on";
+  if (!wantsReasoning) {
+    return undefined;
+  }
+
+  return await modelSupportsLmStudioNativeReasoningControl(baseUrl, apiKey, modelId, signal)
+    ? "on"
+    : undefined;
+}
+
+async function resolveLmStudioNativeRequestOptions(
+  modelId: string,
+  settings: ChatRequest["settings"],
+  baseUrl: string,
+  apiKey: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<Record<string, unknown> | undefined> {
   const options = normalizeFiniteNumberRecord(settings?.lmstudioOptions, LMSTUDIO_NATIVE_REQUEST_OPTION_KEYS);
-  const reasoning = resolveLmStudioReasoningControlValue(modelId, settings);
+  const reasoning = await resolveLmStudioReasoningControlValue(modelId, settings, baseUrl, apiKey, signal);
   if (!options && !reasoning) {
     return undefined;
   }
@@ -626,11 +704,18 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
     async generate(request: ChatRequest): Promise<ChatResponse> {
       const url = `${baseUrl}/api/v1/chat`;
       const input = await buildNativeInput(request.messages);
+      const requestOptions = await resolveLmStudioNativeRequestOptions(
+        request.model,
+        request.settings,
+        baseUrl,
+        options.apiKey,
+        request.signal,
+      );
       const body = {
         model: request.model,
         input,
         stream: false,
-        ...resolveLmStudioNativeRequestOptions(request.model, request.settings),
+        ...(requestOptions ?? {}),
       };
       request.debug?.({
         stage: "request",
@@ -675,11 +760,18 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
     async *stream(request: ChatRequest) {
       const url = `${baseUrl}/api/v1/chat`;
       const input = await buildNativeInput(request.messages);
+      const requestOptions = await resolveLmStudioNativeRequestOptions(
+        request.model,
+        request.settings,
+        baseUrl,
+        options.apiKey,
+        request.signal,
+      );
       const body = {
         model: request.model,
         input,
         stream: true,
-        ...resolveLmStudioNativeRequestOptions(request.model, request.settings),
+        ...(requestOptions ?? {}),
       };
       request.debug?.({
         stage: "request",

@@ -26,6 +26,22 @@ describe("LM Studio runtime options", () => {
   it("passes managed inference options to the native chat endpoint", async () => {
     let capturedBody: Record<string, unknown> | undefined;
     const server = await createMockServer((request) => {
+      if (request.path === "/api/v1/models") {
+        return {
+          json: {
+            models: [{
+              key: "google/gemma-4-26b-a4b",
+              capabilities: {
+                reasoning: {
+                  allowed_options: ["off", "on"],
+                  default: "on",
+                },
+              },
+            }],
+          },
+        };
+      }
+
       if (request.path === "/api/v1/chat") {
         capturedBody = request.bodyJson as Record<string, unknown>;
         return {
@@ -42,7 +58,7 @@ describe("LM Studio runtime options", () => {
 
     const adapter = createLmStudioNativeAdapter({ baseUrl: server.url });
     await adapter.generate({
-      model: "google/gemma-4-26b",
+      model: "google/gemma-4-26b-a4b",
       messages: [userMessage("Say done.")],
       settings: {
         reasoningMode: "off",
@@ -58,7 +74,7 @@ describe("LM Studio runtime options", () => {
     });
 
     expect(capturedBody).toEqual(expect.objectContaining({
-      model: "google/gemma-4-26b",
+      model: "google/gemma-4-26b-a4b",
       stream: false,
       context_length: 65536,
       temperature: 0.7,
@@ -68,6 +84,54 @@ describe("LM Studio runtime options", () => {
       max_output_tokens: 2048,
       reasoning: "on",
     }));
+  });
+
+  it("does not send native reasoning options for LM Studio models that do not expose them", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/v1/models") {
+        return {
+          json: {
+            models: [{
+              key: "gemma-4-31b-it-mlx",
+              display_name: "Gemma 4 31B Instruct",
+              capabilities: {
+                vision: true,
+                trained_for_tool_use: true,
+              },
+            }],
+          },
+        };
+      }
+
+      if (request.path === "/api/v1/chat") {
+        capturedBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            response_id: "resp_1",
+            output: [{ type: "message", content: "Done." }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioNativeAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma-4-31b-it-mlx",
+      messages: [userMessage("Say done.")],
+      settings: {
+        reasoningMode: "on",
+      },
+    });
+
+    expect(capturedBody).toEqual(expect.objectContaining({
+      model: "gemma-4-31b-it-mlx",
+      stream: false,
+    }));
+    expect(capturedBody).not.toHaveProperty("reasoning");
   });
 
   it("maps managed inference options onto LM Studio OpenAI-compatible chat", async () => {
