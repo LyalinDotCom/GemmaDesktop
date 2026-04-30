@@ -145,6 +145,16 @@ function renderSettingsModal(
       bootstrapState,
       onClose: () => {},
       onUpdate: () => {},
+      onLoadDefaultModels: async () => ({
+        ok: true,
+        message: 'Loaded 2 of 2 default models.',
+        selection: makeSettings().modelSelection,
+        targets: [],
+        unloaded: [],
+        loaded: [],
+        skipped: [],
+        errors: [],
+      }),
       onEnsureGemmaModel: async (tag: string) => ({
         ok: true,
         tag,
@@ -217,6 +227,8 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('aria-label="Default main model"')
     expect(markup).toContain('aria-label="Default helper model"')
     expect(markup).toContain('aria-haspopup="listbox"')
+    expect(markup).toContain('Load Models')
+    expect(markup).toContain('Unload other supported runtime models and load the saved defaults')
     expect(markup).toContain('gemma4:26b')
     expect(markup).toContain('Ollama · Native API')
     expect(markup).not.toContain('<optgroup')

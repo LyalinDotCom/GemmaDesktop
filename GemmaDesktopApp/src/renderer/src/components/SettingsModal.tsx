@@ -8,6 +8,7 @@ import {
   EyeOff,
   FolderOpen,
   Loader2,
+  Power,
   RotateCcw,
   Search,
   X,
@@ -41,6 +42,10 @@ import {
 } from '@shared/reasoningSettings'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
 import { normalizeProviderRuntimeId } from '@shared/sessionModelDefaults'
+import type {
+  DefaultModelLifecycleStepResult,
+  LoadDefaultModelsResult,
+} from '@shared/modelLifecycle'
 import {
   Button,
   MetaList,
@@ -63,6 +68,9 @@ interface SettingsModalProps {
   bootstrapState: BootstrapState
   onClose: () => void
   onUpdate: (patch: Partial<AppSettings>) => void | Promise<void>
+  onLoadDefaultModels: (
+    modelSelection: AppSettings['modelSelection'],
+  ) => Promise<LoadDefaultModelsResult>
   onEnsureGemmaModel: (tag: string) => Promise<{
     ok: boolean
     tag: string
@@ -553,6 +561,26 @@ export function DefaultModelTargetPicker({
   )
 }
 
+type DefaultModelLoadFeedback = {
+  tone: 'info' | 'success' | 'error'
+  message: string
+  details: string[]
+}
+
+function formatDefaultModelLoadStep(
+  step: DefaultModelLifecycleStepResult,
+): string {
+  const target = step.runtimeId && step.modelId
+    ? `${step.runtimeId}/${step.modelId}`
+    : ''
+  const roles = step.roles && step.roles.length > 0
+    ? `${step.roles.join(' + ')} default`
+    : ''
+  const label = [roles, target].filter(Boolean).join(' · ')
+  const body = step.error ?? step.message ?? 'Operation did not complete.'
+  return label ? `${label}: ${body}` : body
+}
+
 export function SettingsModal({
   settings,
   defaultModelSelection,
@@ -560,6 +588,7 @@ export function SettingsModal({
   bootstrapState,
   onClose,
   onUpdate,
+  onLoadDefaultModels,
   initialTab = 'general',
   speechStatus,
   readAloudStatus,
@@ -574,6 +603,9 @@ export function SettingsModal({
   const [local, setLocal] = useState(settings)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [defaultModelsLoading, setDefaultModelsLoading] = useState(false)
+  const [defaultModelLoadFeedback, setDefaultModelLoadFeedback] =
+    useState<DefaultModelLoadFeedback | null>(null)
   const [installedTerminals, setInstalledTerminals] = useState<TerminalAppInfo[]>([])
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -787,6 +819,7 @@ export function SettingsModal({
       ...local.modelSelection,
       [key]: normalizedTarget,
     }
+    setDefaultModelLoadFeedback(null)
     setLocal({ ...local, modelSelection })
     commitUpdate({ modelSelection })
   }
@@ -802,8 +835,52 @@ export function SettingsModal({
       mainModel: { ...defaultModelSelection.mainModel },
       helperModel: { ...defaultModelSelection.helperModel },
     }
+    setDefaultModelLoadFeedback(null)
     setLocal({ ...local, modelSelection })
     commitUpdate({ modelSelection })
+  }
+
+  const handleLoadDefaultModels = async () => {
+    const modelSelection = {
+      mainModel: {
+        ...local.modelSelection.mainModel,
+        runtimeId: normalizeProviderRuntimeId(local.modelSelection.mainModel.runtimeId),
+      },
+      helperModel: {
+        ...local.modelSelection.helperModel,
+        runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
+      },
+    }
+
+    setDefaultModelsLoading(true)
+    setDefaultModelLoadFeedback({
+      tone: 'info',
+      message: 'Loading default models...',
+      details: [],
+    })
+
+    try {
+      const result = await onLoadDefaultModels(modelSelection)
+      const details = [
+        ...result.errors.map(formatDefaultModelLoadStep),
+        ...result.skipped.map(formatDefaultModelLoadStep),
+      ]
+      setDefaultModelLoadFeedback({
+        tone: result.ok ? 'success' : 'error',
+        message: result.message,
+        details,
+      })
+    } catch (error) {
+      setDefaultModelLoadFeedback({
+        tone: 'error',
+        message: error instanceof Error && error.message.trim().length > 0
+          ? error.message.trim()
+          : 'Could not load the default models.',
+        details: [],
+      })
+    } finally {
+      setDefaultModelsLoading(false)
+    }
   }
 
   const previewButtonLabel =
@@ -923,15 +1000,28 @@ export function SettingsModal({
                     title="Default Models"
                     description="Main is the saved default for new conversations, research, and automations. Helper is the saved default for lightweight background work."
                     trailing={
-                      <Button
-                        variant="secondary"
-                        disabled={modelSelectionMatchesBuiltIn}
-                        onClick={resetModelSelection}
-                        title="Restore the built-in Gemma defaults"
-                      >
-                        <RotateCcw size={12} />
-                        Reset Defaults
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="primary"
+                          disabled={defaultModelsLoading}
+                          onClick={() => { void handleLoadDefaultModels() }}
+                          title="Unload other supported runtime models and load the saved defaults"
+                        >
+                          {defaultModelsLoading
+                            ? <Loader2 size={12} className="animate-spin" />
+                            : <Power size={12} />}
+                          {defaultModelsLoading ? 'Loading...' : 'Load Models'}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={modelSelectionMatchesBuiltIn || defaultModelsLoading}
+                          onClick={resetModelSelection}
+                          title="Restore the built-in Gemma defaults"
+                        >
+                          <RotateCcw size={12} />
+                          Reset Defaults
+                        </Button>
+                      </div>
                     }
                   >
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -973,6 +1063,27 @@ export function SettingsModal({
                         />
                       </SettingsField>
                     </div>
+                    {defaultModelLoadFeedback && (
+                      <div
+                        aria-live="polite"
+                        className={`rounded-md border px-3 py-2 text-xs leading-5 ${
+                          defaultModelLoadFeedback.tone === 'success'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+                            : defaultModelLoadFeedback.tone === 'error'
+                              ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
+                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
+                        }`}
+                      >
+                        <div className="font-medium">{defaultModelLoadFeedback.message}</div>
+                        {defaultModelLoadFeedback.details.length > 0 && (
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                            {defaultModelLoadFeedback.details.map((detail, index) => (
+                              <li key={`${detail}-${index}`}>{detail}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                   </SettingsSection>
 
                   <SettingsSection

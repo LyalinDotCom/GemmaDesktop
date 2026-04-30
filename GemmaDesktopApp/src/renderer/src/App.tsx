@@ -92,6 +92,10 @@ import {
   buildSidebarModel,
   findReopenSessionForProject,
 } from '@/lib/sidebarModel'
+import {
+  LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY,
+  type LoadDefaultModelsResult,
+} from '@shared/modelLifecycle'
 import type {
   NotificationActivationTarget,
   NotificationPermissionState,
@@ -2972,6 +2976,43 @@ export function App() {
           onRequestNotificationPermission={requestNotificationPermission}
           onSendTestNotification={sendTestNotification}
           onClose={() => dispatch({ type: 'SET_SETTINGS_OPEN', open: false })}
+          onLoadDefaultModels={async (modelSelection) => {
+            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
+              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
+            }
+
+            const result = await window.gemmaDesktopBridge.settings.update({
+              modelSelection,
+              [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
+            } as unknown as Partial<typeof state.settings>) as unknown
+            const updatedSettings = await window.gemmaDesktopBridge.settings.get()
+            dispatch({ type: 'SET_SETTINGS', settings: updatedSettings })
+
+            if (
+              result
+              && typeof result === 'object'
+              && typeof (result as Partial<LoadDefaultModelsResult>).ok === 'boolean'
+              && typeof (result as Partial<LoadDefaultModelsResult>).message === 'string'
+              && Array.isArray((result as Partial<LoadDefaultModelsResult>).targets)
+            ) {
+              return result as LoadDefaultModelsResult
+            }
+
+            return {
+              ok: false,
+              message: 'Gemma Desktop needs an app restart before this model loader can run from Settings.',
+              selection: modelSelection,
+              targets: [],
+              unloaded: [],
+              loaded: [],
+              skipped: [],
+              errors: [{
+                action: 'prepare',
+                ok: false,
+                error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Models again.',
+              }],
+            }
+          }}
           onUpdate={async (patch) => {
             const updated = await window.gemmaDesktopBridge.settings.update(patch)
             dispatch({ type: 'SET_SETTINGS', settings: updated })

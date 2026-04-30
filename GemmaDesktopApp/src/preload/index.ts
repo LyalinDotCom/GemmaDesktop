@@ -134,6 +134,8 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
     inspect: () => ipcRenderer.invoke('environment:inspect'),
     listModels: () => ipcRenderer.invoke('environment:models'),
     listRuntimes: () => ipcRenderer.invoke('environment:runtimes'),
+    loadDefaultModels: (modelSelection: unknown) =>
+      ipcRenderer.invoke('environment:load-default-models', modelSelection),
     getBootstrapState: () => ipcRenderer.invoke('environment:bootstrap-state'),
     retryBootstrap: () => ipcRenderer.invoke('environment:retry-bootstrap'),
     ensureGemmaModel: (tag: string) =>

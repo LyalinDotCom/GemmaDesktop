@@ -296,6 +296,15 @@ import {
   resolveSavedDefaultSessionPrimaryTarget,
   type AppModelSelectionSettings,
 } from '../shared/sessionModelDefaults'
+import type {
+  DefaultModelLifecycleStepResult,
+  DefaultModelLoadTarget,
+  DefaultModelLoadTargetRole,
+  LoadDefaultModelsResult,
+} from '../shared/modelLifecycle'
+import {
+  LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY,
+} from '../shared/modelLifecycle'
 import {
   buildConversationExecutionBlockedMessage,
   findBlockingConversationExecution,
@@ -1385,6 +1394,8 @@ interface PrimaryModelTarget {
   loadedInstanceId?: string
 }
 
+type EnvironmentInspection = Awaited<ReturnType<GemmaDesktop['inspectEnvironment']>>
+
 interface PrimaryModelAvailabilityIssue {
   modelId: string
   runtimeId: string
@@ -2283,6 +2294,410 @@ function getErrorDisplayMessage(error: unknown): string {
   }
 
   return rawMessage
+}
+
+function supportsExplicitModelLoad(target: Pick<PrimaryModelTarget, 'runtimeId'>): boolean {
+  return (
+    isOllamaModelRuntime(target.runtimeId)
+    || isLmStudioModelRuntime(target.runtimeId)
+    || target.runtimeId === 'llamacpp-server'
+  )
+}
+
+function supportsExplicitModelUnload(target: Pick<PrimaryModelTarget, 'runtimeId'>): boolean {
+  return (
+    isOllamaModelRuntime(target.runtimeId)
+    || isLmStudioModelRuntime(target.runtimeId)
+    || isOmlxModelRuntime(target.runtimeId)
+    || target.runtimeId === 'llamacpp-server'
+  )
+}
+
+function createDefaultModelTargetEntries(
+  modelSelection: AppModelSelectionSettings,
+): Array<{ target: PrimaryModelTarget; roles: DefaultModelLoadTargetRole[] }> {
+  const byKey = new Map<string, { target: PrimaryModelTarget; roles: DefaultModelLoadTargetRole[] }>()
+  const addTarget = (
+    role: DefaultModelLoadTargetRole,
+    inputTarget: PrimaryModelTarget,
+  ) => {
+    const target = normalizePrimaryModelTarget(inputTarget)
+    const key = modelTargetKey(target)
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.roles = [...new Set([...existing.roles, role])]
+      return
+    }
+    byKey.set(key, {
+      target,
+      roles: [role],
+    })
+  }
+
+  addTarget('main', modelSelection.mainModel)
+  addTarget('helper', modelSelection.helperModel)
+  return [...byKey.values()]
+}
+
+function toDefaultModelLoadTargets(
+  entries: Array<{ target: PrimaryModelTarget; roles: DefaultModelLoadTargetRole[] }>,
+): DefaultModelLoadTarget[] {
+  return entries.map((entry) => ({
+    modelId: entry.target.modelId,
+    runtimeId: entry.target.runtimeId,
+    roles: entry.roles,
+  }))
+}
+
+function createLifecycleStepResult(input: DefaultModelLifecycleStepResult): DefaultModelLifecycleStepResult {
+  return input
+}
+
+function createLifecycleError(input: Omit<DefaultModelLifecycleStepResult, 'ok'>): DefaultModelLifecycleStepResult {
+  return {
+    ...input,
+    ok: false,
+  }
+}
+
+function isResidentLoadedModelInstance(
+  instance: EnvironmentInspection['runtimes'][number]['loadedInstances'][number],
+): boolean {
+  return instance.status !== 'unloaded'
+}
+
+function loadedInstanceToPrimaryTarget(
+  runtimeId: string,
+  instance: EnvironmentInspection['runtimes'][number]['loadedInstances'][number],
+): PrimaryModelTarget {
+  return normalizePrimaryModelTarget({
+    modelId: instance.modelId,
+    runtimeId: instance.runtimeId || runtimeId,
+    loadedInstanceId: instance.id,
+  })
+}
+
+function listResidentLoadedModelTargets(
+  inspection: EnvironmentInspection,
+): PrimaryModelTarget[] {
+  const targets: PrimaryModelTarget[] = []
+  for (const runtimeInspection of inspection.runtimes) {
+    for (const instance of runtimeInspection.loadedInstances) {
+      if (!isResidentLoadedModelInstance(instance)) {
+        continue
+      }
+      targets.push(loadedInstanceToPrimaryTarget(runtimeInspection.runtime.id, instance))
+    }
+  }
+  return targets
+}
+
+function formatPrimaryModelTarget(target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>): string {
+  return `${normalizeProviderRuntimeId(target.runtimeId)} / ${target.modelId}`
+}
+
+function collectResidentModelTargetKeys(inspection: EnvironmentInspection): Set<string> {
+  return new Set(
+    listResidentLoadedModelTargets(inspection).map((target) => modelTargetKey(target)),
+  )
+}
+
+async function unloadResidentModelTargetsBeforeLoad(input: {
+  protectedTargets: PrimaryModelTarget[]
+  reason: string
+}): Promise<{
+  unloaded: DefaultModelLifecycleStepResult[]
+  skipped: DefaultModelLifecycleStepResult[]
+  errors: DefaultModelLifecycleStepResult[]
+}> {
+  const unloaded: DefaultModelLifecycleStepResult[] = []
+  const skipped: DefaultModelLifecycleStepResult[] = []
+  const errors: DefaultModelLifecycleStepResult[] = []
+  const protectedTargetKeys = new Set(
+    input.protectedTargets.map((target) => modelTargetKey(target)),
+  )
+
+  let inspection: EnvironmentInspection
+  try {
+    inspection = await gemmaDesktop.inspectEnvironment()
+  } catch (error) {
+    errors.push(createLifecycleError({
+      action: 'inspect',
+      error: `Could not inspect loaded models before ${input.reason}: ${getErrorDisplayMessage(error)}`,
+    }))
+    return { unloaded, skipped, errors }
+  }
+
+  const unloadOperationKeys = new Set<string>()
+  for (const target of listResidentLoadedModelTargets(inspection)) {
+    if (protectedTargetKeys.has(modelTargetKey(target))) {
+      continue
+    }
+
+    const operationKey = `${modelTargetKey(target)}::${target.loadedInstanceId ?? target.modelId}`
+    if (unloadOperationKeys.has(operationKey)) {
+      continue
+    }
+    unloadOperationKeys.add(operationKey)
+
+    if (!supportsExplicitModelUnload(target)) {
+      const message = `${getLocalRuntimeDisplayName(target.runtimeId)} does not expose an explicit unload operation for ${target.modelId}.`
+      skipped.push(createLifecycleStepResult({
+        action: 'skip',
+        ok: true,
+        modelId: target.modelId,
+        runtimeId: target.runtimeId,
+        message,
+      }))
+      errors.push(createLifecycleError({
+        action: 'unload',
+        modelId: target.modelId,
+        runtimeId: target.runtimeId,
+        error: `Blocked ${input.reason}: ${message}`,
+      }))
+      continue
+    }
+
+    try {
+      await unloadModelForRuntime(target)
+      if (primaryTargetsMatch(activePrimaryModelTarget, target)) {
+        activePrimaryModelTarget = null
+      }
+      unloaded.push(createLifecycleStepResult({
+        action: 'unload',
+        ok: true,
+        modelId: target.modelId,
+        runtimeId: target.runtimeId,
+      }))
+    } catch (error) {
+      errors.push(createLifecycleError({
+        action: 'unload',
+        modelId: target.modelId,
+        runtimeId: target.runtimeId,
+        error: `Could not unload ${formatPrimaryModelTarget(target)} before ${input.reason}: ${getErrorDisplayMessage(error)}`,
+      }))
+    }
+  }
+
+  return { unloaded, skipped, errors }
+}
+
+function summarizeLifecycleErrors(
+  errors: DefaultModelLifecycleStepResult[],
+): string {
+  return errors
+    .map((error) => {
+      const target = error.runtimeId && error.modelId
+        ? `${formatPrimaryModelTarget({ runtimeId: error.runtimeId, modelId: error.modelId })}: `
+        : ''
+      return `${target}${error.error ?? error.message ?? 'Operation failed.'}`
+    })
+    .join(' ')
+}
+
+function buildLoadDefaultModelsMessage(input: {
+  targetCount: number
+  loaded: DefaultModelLifecycleStepResult[]
+  unloaded: DefaultModelLifecycleStepResult[]
+  skipped: DefaultModelLifecycleStepResult[]
+  errors: DefaultModelLifecycleStepResult[]
+}): string {
+  const failedLoadKeys = new Set(
+    input.errors
+      .filter((error) =>
+        error.action === 'load'
+        && error.modelId
+        && error.runtimeId,
+      )
+      .map((error) => modelTargetKey({
+        modelId: error.modelId!,
+        runtimeId: error.runtimeId!,
+      })),
+  )
+  const loadedCount = input.loaded.filter((step) => {
+    if (!step.modelId || !step.runtimeId) {
+      return step.ok
+    }
+    return step.ok && !failedLoadKeys.has(modelTargetKey({
+      modelId: step.modelId,
+      runtimeId: step.runtimeId,
+    }))
+  }).length
+  const loadedPhrase = `${loadedCount} of ${input.targetCount} default model${input.targetCount === 1 ? '' : 's'}`
+  const unloadPhrase = input.unloaded.length > 0
+    ? ` Unloaded ${input.unloaded.length} other model${input.unloaded.length === 1 ? '' : 's'}.`
+    : ''
+  const skippedPhrase = input.skipped.length > 0
+    ? ` Skipped ${input.skipped.length} unsupported unload${input.skipped.length === 1 ? '' : 's'}.`
+    : ''
+
+  if (input.errors.length === 0) {
+    return `Loaded ${loadedPhrase}.${unloadPhrase}${skippedPhrase}`.trim()
+  }
+
+  return `Could not finish loading defaults. Loaded ${loadedPhrase}; ${input.errors.length} operation${input.errors.length === 1 ? '' : 's'} need attention.${unloadPhrase}${skippedPhrase}`.trim()
+}
+
+function buildLoadDefaultModelsResult(input: {
+  selection: AppModelSelectionSettings
+  targetEntries: Array<{ target: PrimaryModelTarget; roles: DefaultModelLoadTargetRole[] }>
+  unloaded: DefaultModelLifecycleStepResult[]
+  loaded: DefaultModelLifecycleStepResult[]
+  skipped: DefaultModelLifecycleStepResult[]
+  errors: DefaultModelLifecycleStepResult[]
+}): LoadDefaultModelsResult {
+  return {
+    ok: input.errors.length === 0,
+    message: buildLoadDefaultModelsMessage({
+      targetCount: input.targetEntries.length,
+      loaded: input.loaded,
+      unloaded: input.unloaded,
+      skipped: input.skipped,
+      errors: input.errors,
+    }),
+    selection: input.selection,
+    targets: toDefaultModelLoadTargets(input.targetEntries),
+    unloaded: input.unloaded,
+    loaded: input.loaded,
+    skipped: input.skipped,
+    errors: input.errors,
+  }
+}
+
+async function loadDefaultModelSelection(
+  modelSelectionInput: unknown,
+): Promise<LoadDefaultModelsResult> {
+  const currentSettings = await getSettingsState()
+  const selection = normalizeAppModelSelectionSettings(
+    modelSelectionInput,
+    currentSettings.modelSelection,
+  )
+  const targetEntries = createDefaultModelTargetEntries(selection)
+  const unloaded: DefaultModelLifecycleStepResult[] = []
+  const loaded: DefaultModelLifecycleStepResult[] = []
+  const skipped: DefaultModelLifecycleStepResult[] = []
+  const errors: DefaultModelLifecycleStepResult[] = []
+  const finish = () => buildLoadDefaultModelsResult({
+    selection,
+    targetEntries,
+    unloaded,
+    loaded,
+    skipped,
+    errors,
+  })
+
+  try {
+    assertNoConversationExecutionRunning()
+  } catch (error) {
+    errors.push(createLifecycleError({
+      action: 'prepare',
+      error: getErrorDisplayMessage(error),
+    }))
+    return finish()
+  }
+
+  if (currentPrimaryHoldCount() > 0 || currentHelperHoldCount() > 0) {
+    errors.push(createLifecycleError({
+      action: 'prepare',
+      error: 'Stop the active model turn before loading defaults.',
+    }))
+    return finish()
+  }
+
+  if (primaryModelLoadPromise) {
+    errors.push(createLifecycleError({
+      action: 'prepare',
+      error: 'A model load is already in progress. Wait for it to finish before loading defaults.',
+    }))
+    return finish()
+  }
+
+  const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+    protectedTargets: targetEntries.map((entry) => entry.target),
+    reason: 'loading default models',
+  })
+  unloaded.push(...unloadResult.unloaded)
+  skipped.push(...unloadResult.skipped)
+  errors.push(...unloadResult.errors)
+
+  if (unloadResult.errors.length > 0) {
+    broadcastEnvironmentModelsChanged()
+    return finish()
+  }
+
+  for (const entry of targetEntries) {
+    if (!supportsExplicitModelLoad(entry.target)) {
+      errors.push(createLifecycleError({
+        action: 'load',
+        modelId: entry.target.modelId,
+        runtimeId: entry.target.runtimeId,
+        roles: entry.roles,
+        error: `${getLocalRuntimeDisplayName(entry.target.runtimeId)} does not expose an explicit load operation for ${entry.target.modelId}.`,
+      }))
+      continue
+    }
+
+    try {
+      const loadedTarget = await loadModelForRuntime(entry.target)
+      primaryModelAvailabilityIssues.delete(modelTargetKey(loadedTarget))
+      if (entry.roles.includes('main')) {
+        activePrimaryModelTarget = loadedTarget
+      }
+      loaded.push(createLifecycleStepResult({
+        action: 'load',
+        ok: true,
+        modelId: loadedTarget.modelId,
+        runtimeId: loadedTarget.runtimeId,
+        roles: entry.roles,
+      }))
+    } catch (error) {
+      errors.push(createLifecycleError({
+        action: 'load',
+        modelId: entry.target.modelId,
+        runtimeId: entry.target.runtimeId,
+        roles: entry.roles,
+        error: getErrorDisplayMessage(error),
+      }))
+    }
+  }
+
+  const loadedTargetKeys = new Set(
+    loaded
+      .filter((step) => step.ok && step.modelId && step.runtimeId)
+      .map((step) => modelTargetKey({
+        modelId: step.modelId!,
+        runtimeId: step.runtimeId!,
+      })),
+  )
+
+  if (loadedTargetKeys.size > 0) {
+    try {
+      const postLoadInspection = await gemmaDesktop.inspectEnvironment()
+      const residentTargetKeys = collectResidentModelTargetKeys(postLoadInspection)
+      for (const entry of targetEntries) {
+        const key = modelTargetKey(entry.target)
+        if (!loadedTargetKeys.has(key) || residentTargetKeys.has(key)) {
+          continue
+        }
+
+        errors.push(createLifecycleError({
+          action: 'load',
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          error: `${getLocalRuntimeDisplayName(entry.target.runtimeId)} accepted the load request, but ${entry.target.modelId} was not reported loaded afterward. Check the runtime model capacity settings.`,
+        }))
+      }
+    } catch (error) {
+      errors.push(createLifecycleError({
+        action: 'inspect',
+        error: `Could not verify loaded models after loading: ${getErrorDisplayMessage(error)}`,
+      }))
+    }
+  }
+
+  broadcastEnvironmentModelsChanged()
+  return finish()
 }
 
 function describePrimaryModelLoadFailure(
@@ -17563,6 +17978,13 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle(
+    'environment:load-default-models',
+    async (_, modelSelection: unknown): Promise<LoadDefaultModelsResult> => {
+      return await loadDefaultModelSelection(modelSelection)
+    },
+  )
+
   ipcMain.handle('environment:bootstrap-state', async () => {
     return bootstrapState
   })
@@ -18388,26 +18810,40 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'settings:update',
     async (_, patch: Record<string, unknown>) => {
-      let nextSettings = await saveSettings(patch as Partial<AppSettingsRecord>)
-      await refreshBootstrapModelSelection(nextSettings, patch)
+      const loadDefaultModelsRequested =
+        patch[LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY] === true
+      const settingsPatch = { ...patch }
+      delete settingsPatch[LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]
+
+      let nextSettings = await saveSettings(settingsPatch as Partial<AppSettingsRecord>)
+      if (loadDefaultModelsRequested) {
+        const result = await loadDefaultModelSelection(nextSettings.modelSelection)
+        nextSettings = await getSettingsState()
+        broadcastSettingsChanged(nextSettings)
+        broadcastSpeechStatusChanged(await inspectSpeechStatus())
+        broadcastReadAloudStatusChanged(await inspectReadAloudStatus())
+        return result
+      }
+
+      await refreshBootstrapModelSelection(nextSettings, settingsPatch)
       nextSettings = await getSettingsState()
       if (
-        Object.prototype.hasOwnProperty.call(patch, 'toolPolicy')
-        || Object.prototype.hasOwnProperty.call(patch, 'skills')
-        || Object.prototype.hasOwnProperty.call(patch, 'tools')
+        Object.prototype.hasOwnProperty.call(settingsPatch, 'toolPolicy')
+        || Object.prototype.hasOwnProperty.call(settingsPatch, 'skills')
+        || Object.prototype.hasOwnProperty.call(settingsPatch, 'tools')
       ) {
         await refreshSessionPolicies()
       }
-      if (Object.prototype.hasOwnProperty.call(patch, 'tools')) {
+      if (Object.prototype.hasOwnProperty.call(settingsPatch, 'tools')) {
         await reconfigureBrowserToolManager(nextSettings)
       }
-      if (Object.prototype.hasOwnProperty.call(patch, 'integrations')) {
+      if (Object.prototype.hasOwnProperty.call(settingsPatch, 'integrations')) {
         gemmaDesktop?.updateIntegrations({
           geminiApiKey: nextSettings.integrations.geminiApi.apiKey,
           geminiApiModel: nextSettings.integrations.geminiApi.model,
         })
       }
-      if (Object.prototype.hasOwnProperty.call(patch, 'runtimes')) {
+      if (Object.prototype.hasOwnProperty.call(settingsPatch, 'runtimes')) {
         gemmaDesktop?.updateAdapters(createConfiguredRuntimeAdapters(nextSettings))
         broadcastEnvironmentModelsChanged()
       }
