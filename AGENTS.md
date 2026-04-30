@@ -205,6 +205,7 @@ Treat live-model cleanup as a hard safety requirement, not a nice-to-have. Loadi
 - prefer exclusive live-test execution or another guard that prevents multiple heavy live-model tests from overlapping
 - if another Ollama model is already resident, resolve that intentionally before starting another heavy live-model test
 - assume live-model tests may need to unload a model that was already warm; do not run them casually alongside other local inference work
+- oMLX live validation can use the OpenAI-compatible API key saved in Gemma Desktop app settings. When a local run needs it, read it from `~/Library/Application Support/Gemma Desktop/settings.json` or pass it through `GEMMA_DESKTOP_OMLX_API_KEY`, but never print, hard-code, or commit the secret.
 
 ## User-Curated Data Safety
 

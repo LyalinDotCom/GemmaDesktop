@@ -52,6 +52,7 @@ interface ScenarioTurnRecord {
   warnings?: string[];
   toolNames?: string[];
   build?: TurnResult["build"];
+  performance?: ScenarioTurnPerformance;
   compaction?: {
     status: "completed" | "unavailable" | "error";
     compactedAt?: string;
@@ -64,6 +65,16 @@ interface ScenarioTurnRecord {
   eventCounts?: Record<string, number>;
   recentEvents?: ScenarioEventSummary[];
   error?: string;
+}
+
+interface ScenarioTurnPerformance {
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  timeToFirstTokenMs?: number;
+  timeToFirstAssistantTokenMs?: number;
+  tokenEventCount: number;
+  outputCharacters: number;
 }
 
 interface ScenarioEventSummary {
@@ -535,8 +546,64 @@ function countEvents(events: readonly GemmaDesktopEvent[]): Record<string, numbe
   return counts;
 }
 
+function eventTimestampMs(event: GemmaDesktopEvent): number | undefined {
+  const parsed = Date.parse(event.timestamp);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function eventPayloadRecord(event: GemmaDesktopEvent): Record<string, unknown> {
   return event.payload;
+}
+
+function buildTurnPerformance(input: {
+  startedAtMs: number;
+  completedAtMs: number;
+  events: readonly GemmaDesktopEvent[];
+  outputText?: string;
+}): ScenarioTurnPerformance {
+  let firstTokenAtMs: number | undefined;
+  let firstAssistantTokenAtMs: number | undefined;
+  let tokenEventCount = 0;
+
+  for (const event of input.events) {
+    if (event.type !== "content.delta") {
+      continue;
+    }
+    const payload = eventPayloadRecord(event);
+    const delta = typeof payload.delta === "string" ? payload.delta : "";
+    if (delta.length === 0) {
+      continue;
+    }
+    const channel = typeof payload.channel === "string" ? payload.channel : undefined;
+    if (channel !== "assistant" && channel !== "reasoning" && channel !== undefined) {
+      continue;
+    }
+    tokenEventCount += 1;
+    const timestampMs = eventTimestampMs(event);
+    if (timestampMs == null) {
+      continue;
+    }
+    if (firstTokenAtMs == null) {
+      firstTokenAtMs = timestampMs;
+    }
+    if (firstAssistantTokenAtMs == null && (channel === "assistant" || channel === undefined)) {
+      firstAssistantTokenAtMs = timestampMs;
+    }
+  }
+
+  return {
+    startedAt: new Date(input.startedAtMs).toISOString(),
+    completedAt: new Date(input.completedAtMs).toISOString(),
+    durationMs: Math.max(input.completedAtMs - input.startedAtMs, 1),
+    ...(firstTokenAtMs != null
+      ? { timeToFirstTokenMs: Math.max(firstTokenAtMs - input.startedAtMs, 0) }
+      : {}),
+    ...(firstAssistantTokenAtMs != null
+      ? { timeToFirstAssistantTokenMs: Math.max(firstAssistantTokenAtMs - input.startedAtMs, 0) }
+      : {}),
+    tokenEventCount,
+    outputCharacters: input.outputText?.length ?? 0,
+  };
 }
 
 function previewValue(value: unknown, maxLength = 300): string | undefined {
@@ -1304,6 +1371,7 @@ async function runScenarioTurn(input: {
   runtime: ScenarioRuntimeLike;
 }): Promise<{ record: ScenarioTurnRecord; result?: TurnResult }> {
   const events: GemmaDesktopEvent[] = [];
+  const startedAtMs = Date.now();
   const timeoutController = new AbortController();
   const relayAbort = () => {
     timeoutController.abort(input.runtime.signal?.reason);
@@ -1341,6 +1409,13 @@ async function runScenarioTurn(input: {
     }
 
     const result = await streamed.completed;
+    const completedAtMs = Date.now();
+    const performance = buildTurnPerformance({
+      startedAtMs,
+      completedAtMs,
+      events,
+      outputText: result.text,
+    });
     const recentEvents = summarizeRecentEvents(events);
     return {
       result,
@@ -1353,6 +1428,7 @@ async function runScenarioTurn(input: {
         warnings: result.warnings,
         toolNames: result.toolResults.map((toolResult) => toolResult.toolName),
         build: result.build,
+        performance,
         eventCounts: countEvents(events),
         ...(hasDiagnosticEvents(events) && recentEvents.length > 0 ? { recentEvents } : {}),
       },
@@ -1361,12 +1437,19 @@ async function runScenarioTurn(input: {
     const toolNames = toolNamesFromEvents(events);
     const warnings = warningsFromEvents(events);
     const recentEvents = summarizeRecentEvents(events);
+    const completedAtMs = Date.now();
+    const performance = buildTurnPerformance({
+      startedAtMs,
+      completedAtMs,
+      events,
+    });
     return {
       record: {
         index: input.index,
         prompt: input.promptSummary,
         ...(toolNames.length > 0 ? { toolNames } : {}),
         ...(warnings.length > 0 ? { warnings } : {}),
+        performance,
         eventCounts: countEvents(events),
         ...(recentEvents.length > 0 ? { recentEvents } : {}),
         error: formatError(error),

@@ -42,10 +42,27 @@ interface ScenarioDiagnostic {
   stdout: string;
   stderr: string;
   failureReason?: string;
+  performance?: ScenarioPerformanceSummary;
   output?: unknown;
 }
 
 type LiveScenarioStatus = "running" | "passed" | "failed" | "timed_out" | "error";
+
+interface LiveScenarioTarget {
+  runtimeId: string;
+  modelId: string;
+  scenarioIds: ScenarioId[];
+}
+
+interface ScenarioPerformanceSummary {
+  wallClockDurationMs: number;
+  turnCount?: number;
+  turnDurationMs?: number;
+  timeToFirstTokenMs?: number;
+  timeToFirstAssistantTokenMs?: number;
+  tokenEventCount?: number;
+  outputCharacters?: number;
+}
 
 interface LiveRunSummary {
   runId: string;
@@ -58,13 +75,16 @@ interface LiveRunSummary {
   resultsDirectory: string;
   eventLogPath: string;
   scenarios: ScenarioId[];
+  targets: LiveScenarioTarget[];
   diagnostics: Array<{
     scenarioId: ScenarioId;
+    runtimeId: string;
     modelId: string;
     status: LiveScenarioStatus;
     durationMs?: number;
     exitCode?: number | null;
     failureReason?: string;
+    performance?: ScenarioPerformanceSummary;
   }>;
 }
 
@@ -150,6 +170,73 @@ function groupScenariosByModel(scenarios: ScenarioId[]): Map<string, ScenarioId[
   return groups;
 }
 
+function parseLiveScenarioTargets(raw: string): Array<Omit<LiveScenarioTarget, "scenarioIds">> {
+  return raw
+    .split(/[;,\n]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("=");
+      if (separator <= 0 || separator === entry.length - 1) {
+        throw new Error(
+          `Invalid live scenario target "${entry}". Use runtimeId=modelId, separated by semicolons for multiple targets.`,
+        );
+      }
+      return {
+        runtimeId: entry.slice(0, separator).trim(),
+        modelId: entry.slice(separator + 1).trim(),
+      };
+    });
+}
+
+function resolveScenarioTargets(scenarios: ScenarioId[]): LiveScenarioTarget[] {
+  const rawTargets = configuredEnvValue(
+    "GEMMA_DESKTOP_CLI_SCENARIO_TARGETS",
+    "GEMMA_DESKTOP_LIVE_TARGETS",
+  );
+  if (rawTargets) {
+    return parseLiveScenarioTargets(rawTargets).map((target) => ({
+      ...target,
+      scenarioIds: scenarios,
+    }));
+  }
+
+  const runtimeId = configuredEnvValue(
+    "GEMMA_DESKTOP_CLI_SCENARIO_RUNTIME_ID",
+    "GEMMA_DESKTOP_LIVE_RUNTIME_ID",
+  ) ?? "ollama-native";
+  return Array.from(groupScenariosByModel(scenarios).entries()).map(([modelId, scenarioIds]) => ({
+    runtimeId,
+    modelId,
+    scenarioIds,
+  }));
+}
+
+function runtimeIdForTargets(targets: readonly LiveScenarioTarget[]): string {
+  const runtimeIds = Array.from(new Set(targets.map((target) => target.runtimeId)));
+  return runtimeIds.length === 1 ? runtimeIds[0] ?? "unknown" : "matrix";
+}
+
+function plannedScenarioCount(targets: readonly LiveScenarioTarget[]): number {
+  return targets.reduce((sum, target) => sum + target.scenarioIds.length, 0);
+}
+
+function safeLogFileSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "target";
+}
+
+function scenarioDiagnosticFileName(input: {
+  scenarioId: ScenarioId;
+  runtimeId: string;
+  modelId: string;
+}): string {
+  return [
+    safeLogFileSegment(input.runtimeId),
+    safeLogFileSegment(input.modelId),
+    input.scenarioId,
+  ].join("__");
+}
+
 function shouldUseYolo(scenarioId: ScenarioId): boolean {
   return scenarioId.startsWith("act-") || scenarioId === "pdf-attention-authors" || scenarioId === "research-gemma4-availability";
 }
@@ -216,6 +303,73 @@ function issuesFromOutput(output: unknown): string[] {
     : [];
 }
 
+function numberProperty(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function firstNumberProperty(records: readonly Record<string, unknown>[], key: string): number | undefined {
+  for (const record of records) {
+    const value = numberProperty(record, key);
+    if (value != null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function sumNumberProperty(records: readonly Record<string, unknown>[], key: string): number | undefined {
+  const values = records
+    .map((record) => numberProperty(record, key))
+    .filter((value): value is number => value != null);
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : undefined;
+}
+
+function performanceSummaryFromOutput(
+  output: unknown,
+  wallClockDurationMs: number,
+): ScenarioPerformanceSummary {
+  const summary: ScenarioPerformanceSummary = { wallClockDurationMs };
+  if (!isRecord(output) || !Array.isArray(output.turns)) {
+    return summary;
+  }
+
+  const turnPerformanceRecords = output.turns
+    .map((turn) => (isRecord(turn) && isRecord(turn.performance) ? turn.performance : undefined))
+    .filter((performance): performance is Record<string, unknown> => performance != null);
+  if (turnPerformanceRecords.length === 0) {
+    return summary;
+  }
+
+  const turnDurationMs = sumNumberProperty(turnPerformanceRecords, "durationMs");
+  const timeToFirstTokenMs = firstNumberProperty(turnPerformanceRecords, "timeToFirstTokenMs");
+  const timeToFirstAssistantTokenMs = firstNumberProperty(turnPerformanceRecords, "timeToFirstAssistantTokenMs");
+  const tokenEventCount = sumNumberProperty(turnPerformanceRecords, "tokenEventCount");
+  const outputCharacters = sumNumberProperty(turnPerformanceRecords, "outputCharacters");
+  return {
+    ...summary,
+    turnCount: turnPerformanceRecords.length,
+    ...(turnDurationMs != null ? { turnDurationMs } : {}),
+    ...(timeToFirstTokenMs != null ? { timeToFirstTokenMs } : {}),
+    ...(timeToFirstAssistantTokenMs != null ? { timeToFirstAssistantTokenMs } : {}),
+    ...(tokenEventCount != null ? { tokenEventCount } : {}),
+    ...(outputCharacters != null ? { outputCharacters } : {}),
+  };
+}
+
+function formatPerformanceSummary(performance?: ScenarioPerformanceSummary): string {
+  if (!performance) {
+    return "";
+  }
+  const ttft = performance.timeToFirstTokenMs != null
+    ? `${performance.timeToFirstTokenMs}ms`
+    : "n/a";
+  const assistantTtft = performance.timeToFirstAssistantTokenMs != null
+    ? `${performance.timeToFirstAssistantTokenMs}ms`
+    : "n/a";
+  return `, ttft ${ttft}, assistant-ttft ${assistantTtft}, completion ${performance.wallClockDurationMs}ms`;
+}
+
 function scenarioTimedOut(stdout: string, stderr: string): boolean {
   return /timed out after \d+ms|timeout|timed out/i.test(`${stdout}\n${stderr}`);
 }
@@ -253,11 +407,13 @@ function diagnosticSummary(diagnostic: ScenarioDiagnostic): LiveRunSummary["diag
   const failureReason = failureReasonForDiagnostic(diagnostic);
   return {
     scenarioId: diagnostic.scenarioId,
+    runtimeId: diagnostic.runtimeId,
     modelId: diagnostic.modelId,
     status: diagnostic.status,
     durationMs: diagnostic.durationMs,
     exitCode: diagnostic.exitCode,
     ...(failureReason ? { failureReason } : {}),
+    ...(diagnostic.performance ? { performance: diagnostic.performance } : {}),
   };
 }
 
@@ -268,13 +424,14 @@ function summarizeDiagnostics(diagnostics: ScenarioDiagnostic[]): LiveRunSummary
 async function writeRunSummary(input: {
   logRoot: string;
   runtimeId: string;
+  targets: LiveScenarioTarget[];
   harnessRoot: string;
   resultsDirectory: string;
   scenarios: ScenarioId[];
   diagnostics: ScenarioDiagnostic[];
   startedAt: string;
 }): Promise<void> {
-  const allFinished = input.diagnostics.length === input.scenarios.length
+  const allFinished = input.diagnostics.length === plannedScenarioCount(input.targets)
     && input.diagnostics.every((diagnostic) => diagnostic.status !== "running");
   const failed = input.diagnostics.some((diagnostic) => diagnostic.status !== "passed");
   const summary: LiveRunSummary = {
@@ -288,6 +445,7 @@ async function writeRunSummary(input: {
     resultsDirectory: input.resultsDirectory,
     eventLogPath: path.join(input.logRoot, "events.ndjson"),
     scenarios: input.scenarios,
+    targets: input.targets,
     diagnostics: summarizeDiagnostics(input.diagnostics),
   };
   await writeFile(
@@ -303,7 +461,7 @@ async function runScenario(input: {
   modelId: string;
   harnessRoot: string;
 }): Promise<ScenarioDiagnostic> {
-  const workingDirectory = path.join(input.harnessRoot, input.scenarioId);
+  const workingDirectory = path.join(input.harnessRoot, scenarioDiagnosticFileName(input));
   await mkdir(workingDirectory, { recursive: true });
   const stdout = new MemoryStream();
   const stderr = new MemoryStream();
@@ -357,6 +515,8 @@ async function runScenario(input: {
       : scenarioTimedOut(stdoutText, stderrText)
         ? "timed_out"
         : "failed";
+    const durationMs = Date.now() - startedAt;
+    const performance = performanceSummaryFromOutput(output, durationMs);
     const diagnostic: ScenarioDiagnostic = {
       scenarioId: input.scenarioId,
       runtimeId: input.runtimeId,
@@ -364,10 +524,11 @@ async function runScenario(input: {
       status,
       startedAt: startedAtIso,
       completedAt: currentIsoTime(),
-      durationMs: Date.now() - startedAt,
+      durationMs,
       exitCode,
       stdout: stdoutText,
       stderr: stderrText,
+      performance,
       output,
     };
     const failureReason = failureReasonForDiagnostic(diagnostic);
@@ -376,6 +537,7 @@ async function runScenario(input: {
       ...(failureReason ? { failureReason } : {}),
     };
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
     return {
       scenarioId: input.scenarioId,
       runtimeId: input.runtimeId,
@@ -383,10 +545,11 @@ async function runScenario(input: {
       status: "error",
       startedAt: startedAtIso,
       completedAt: currentIsoTime(),
-      durationMs: Date.now() - startedAt,
+      durationMs,
       exitCode: null,
       stdout: stdout.text(),
       stderr: stderr.text(),
+      performance: { wallClockDurationMs: durationMs },
       failureReason: error instanceof Error ? error.message : String(error),
     };
   }
@@ -413,18 +576,68 @@ describe("CLI live scenario logging", () => {
 
     expect(failureReasonForDiagnostic(diagnostic)).toContain("timeout");
   });
+
+  it("parses provider/model matrix targets for comparative live runs", () => {
+    expect(
+      parseLiveScenarioTargets(
+        [
+          "ollama-native=gemma4:26b-mlx-bf16",
+          "lmstudio-openai=supergemma4-26b-uncensored-mlx-v2",
+          "omlx-openai=gemma-4-26b-a4b-it-nvfp4",
+        ].join(";"),
+      ),
+    ).toEqual([
+      { runtimeId: "ollama-native", modelId: "gemma4:26b-mlx-bf16" },
+      { runtimeId: "lmstudio-openai", modelId: "supergemma4-26b-uncensored-mlx-v2" },
+      { runtimeId: "omlx-openai", modelId: "gemma-4-26b-a4b-it-nvfp4" },
+    ]);
+  });
+
+  it("summarizes turn-level TTFT and completion timings from scenario JSON", () => {
+    const performance = performanceSummaryFromOutput(
+      {
+        turns: [
+          {
+            performance: {
+              durationMs: 1_200,
+              timeToFirstTokenMs: 310,
+              timeToFirstAssistantTokenMs: 420,
+              tokenEventCount: 3,
+              outputCharacters: 24,
+            },
+          },
+          {
+            performance: {
+              durationMs: 800,
+              timeToFirstTokenMs: 200,
+              tokenEventCount: 2,
+              outputCharacters: 10,
+            },
+          },
+        ],
+      },
+      2_400,
+    );
+
+    expect(performance).toEqual({
+      wallClockDurationMs: 2_400,
+      turnCount: 2,
+      turnDurationMs: 2_000,
+      timeToFirstTokenMs: 310,
+      timeToFirstAssistantTokenMs: 420,
+      tokenEventCount: 5,
+      outputCharacters: 34,
+    });
+  });
 });
 
 describe.sequential("CLI live headless scenarios", () => {
   itIfLive(
     "runs selected real-world scenarios and writes agent-reviewable diagnostics",
     async () => {
-      const runtimeId = configuredEnvValue(
-        "GEMMA_DESKTOP_CLI_SCENARIO_RUNTIME_ID",
-        "GEMMA_DESKTOP_LIVE_RUNTIME_ID",
-      ) ?? "ollama-native";
       const scenarios = parseScenarioSelection();
-      const grouped = groupScenariosByModel(scenarios);
+      const targets = resolveScenarioTargets(scenarios);
+      const runtimeId = runtimeIdForTargets(targets);
       const harnessRoot = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-live-scenarios-"));
       const logRoot = await createLiveRunLogRoot();
       const resultsDirectory = path.join(harnessRoot, "results");
@@ -433,14 +646,17 @@ describe.sequential("CLI live headless scenarios", () => {
       const startedAt = currentIsoTime();
 
       expect(scenarios.length).toBeGreaterThan(0);
+      expect(targets.length).toBeGreaterThan(0);
       await appendRunEvent(logRoot, "run_started", {
         runtimeId,
+        targets,
         harnessRoot,
         scenarios,
       });
       await writeRunSummary({
         logRoot,
         runtimeId,
+        targets,
         harnessRoot,
         resultsDirectory,
         scenarios,
@@ -448,14 +664,16 @@ describe.sequential("CLI live headless scenarios", () => {
         startedAt,
       });
 
-      for (const [modelId, scenarioIds] of grouped.entries()) {
-        await withLiveRuntimeModel({ runtimeId, modelId }, async () => {
-          for (const scenarioId of scenarioIds) {
-            console.log(`[cli-live-scenarios] starting ${scenarioId} with ${modelId}`);
+      for (const target of targets) {
+        await withLiveRuntimeModel({ runtimeId: target.runtimeId, modelId: target.modelId }, async () => {
+          for (const scenarioId of target.scenarioIds) {
+            console.log(
+              `[cli-live-scenarios] starting ${scenarioId} with ${target.runtimeId}/${target.modelId}`,
+            );
             const runningDiagnostic: ScenarioDiagnostic = {
               scenarioId,
-              runtimeId,
-              modelId,
+              runtimeId: target.runtimeId,
+              modelId: target.modelId,
               status: "running",
               startedAt: currentIsoTime(),
               completedAt: "",
@@ -467,11 +685,13 @@ describe.sequential("CLI live headless scenarios", () => {
             diagnostics.push(runningDiagnostic);
             await appendRunEvent(logRoot, "scenario_started", {
               scenarioId,
-              modelId,
+              runtimeId: target.runtimeId,
+              modelId: target.modelId,
             });
             await writeRunSummary({
               logRoot,
               runtimeId,
+              targets,
               harnessRoot,
               resultsDirectory,
               scenarios,
@@ -480,32 +700,36 @@ describe.sequential("CLI live headless scenarios", () => {
             });
             const diagnostic = await runScenario({
               scenarioId,
-              runtimeId,
-              modelId,
+              runtimeId: target.runtimeId,
+              modelId: target.modelId,
               harnessRoot,
             });
             diagnostics.splice(diagnostics.indexOf(runningDiagnostic), 1, diagnostic);
+            const diagnosticFileName = `${scenarioDiagnosticFileName(diagnostic)}.json`;
             await writeFile(
-              path.join(resultsDirectory, `${scenarioId}.json`),
+              path.join(resultsDirectory, diagnosticFileName),
               `${JSON.stringify(diagnostic, null, 2)}\n`,
               "utf8",
             );
             await writeFile(
-              path.join(logRoot, `${scenarioId}.json`),
+              path.join(logRoot, diagnosticFileName),
               `${JSON.stringify(diagnostic, null, 2)}\n`,
               "utf8",
             );
             await appendRunEvent(logRoot, "scenario_completed", {
               scenarioId,
-              modelId,
+              runtimeId: target.runtimeId,
+              modelId: target.modelId,
               status: diagnostic.status,
               durationMs: diagnostic.durationMs,
+              performance: diagnostic.performance,
               exitCode: diagnostic.exitCode,
               failureReason: failureReasonForDiagnostic(diagnostic),
             });
             await writeRunSummary({
               logRoot,
               runtimeId,
+              targets,
               harnessRoot,
               resultsDirectory,
               scenarios,
@@ -513,7 +737,13 @@ describe.sequential("CLI live headless scenarios", () => {
               startedAt,
             });
             console.log(
-              `[cli-live-scenarios] completed ${scenarioId} in ${diagnostic.durationMs}ms with ${diagnostic.status} exit ${diagnostic.exitCode}`,
+              [
+                `[cli-live-scenarios] completed ${scenarioId}`,
+                `with ${diagnostic.runtimeId}/${diagnostic.modelId}`,
+                `in ${diagnostic.durationMs}ms`,
+                `status ${diagnostic.status}`,
+                `exit ${diagnostic.exitCode}${formatPerformanceSummary(diagnostic.performance)}`,
+              ].join(" "),
             );
           }
         });
@@ -526,6 +756,7 @@ describe.sequential("CLI live headless scenarios", () => {
         path.join(resultsDirectory, "summary.json"),
         `${JSON.stringify({
           runtimeId,
+          targets,
           harnessRoot,
           logRoot,
           scenarios,
@@ -536,6 +767,7 @@ describe.sequential("CLI live headless scenarios", () => {
       await writeRunSummary({
         logRoot,
         runtimeId,
+        targets,
         harnessRoot,
         resultsDirectory,
         scenarios,
