@@ -1310,13 +1310,13 @@ export function App() {
     setFirstRunModelSetupDismissed(true)
   }, [])
   const handleFirstRunModelChoice = useCallback(async (target: {
-    modelId: string
-    runtimeId: string
+    mainModel: { modelId: string; runtimeId: string }
+    helperModel: { modelId: string; runtimeId: string }
     runtimeSettings?: Partial<AppSettings['runtimes']>
   }) => {
     const modelSelection = {
-      mainModel: { modelId: target.modelId, runtimeId: target.runtimeId },
-      helperModel: { modelId: target.modelId, runtimeId: target.runtimeId },
+      mainModel: { ...target.mainModel },
+      helperModel: { ...target.helperModel },
     }
     const updated = await window.gemmaDesktopBridge.settings.update({
       ...(target.runtimeSettings ? { runtimes: { ...state.settings.runtimes, ...target.runtimeSettings } } : {}),

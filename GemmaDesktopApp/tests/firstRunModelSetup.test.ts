@@ -87,6 +87,7 @@ describe('FirstRunModelSetup', () => {
     expect(markup).toContain('Gemma 4 26B')
     expect(markup).toContain('Optional guided Gemma downloads')
     expect(markup).toContain('Refresh Models')
+    expect(markup).toContain('Use the main model for helper tasks')
     expect(markup).toContain('Decide Later')
   })
 
