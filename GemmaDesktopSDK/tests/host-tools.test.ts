@@ -864,4 +864,18 @@ describe("host tools", () => {
     expect(result.timedOut).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
+
+  it("runs shell commands without starting a login shell", async () => {
+    const workingDirectory = await createWorkspace();
+    const result = await runShellCommand(
+      "if [[ -o login ]]; then echo login; else echo non-login; fi",
+      {
+        cwd: workingDirectory,
+        timeoutMs: 1_000,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("non-login");
+  });
 });

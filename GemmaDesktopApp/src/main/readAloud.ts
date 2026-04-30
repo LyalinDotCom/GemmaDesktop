@@ -53,6 +53,27 @@ const READ_ALOUD_REMOTE_ASSETS = [
   },
 ] as const
 
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'name' in error
+    && (error as { name?: unknown }).name === 'AbortError',
+  )
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+function warnReadAloudCleanupFailure(action: string, error: unknown): void {
+  if (isAbortError(error) || isMissingPathError(error)) {
+    return
+  }
+
+  console.warn(`[gemma-desktop] ${action}:`, error)
+}
+
 interface ReadAloudManifest {
   version: number
   modelId: string
@@ -372,15 +393,21 @@ async function downloadReadAloudAsset(
       })
     })
   } catch (error) {
-    await reader.cancel().catch(() => {})
+    await reader.cancel().catch((cancelError) => {
+      warnReadAloudCleanupFailure(`Failed to cancel download reader for ${asset.path}`, cancelError)
+    })
     stream.destroy()
-    await fs.rm(tempPath, { force: true }).catch(() => {})
+    await fs.rm(tempPath, { force: true }).catch((cleanupError) => {
+      warnReadAloudCleanupFailure(`Failed to remove partial read-aloud asset ${tempPath}`, cleanupError)
+    })
     throw error
   }
 
   const sha256 = hash.digest('hex')
   if (sha256 !== asset.sha256 || downloadedBytes !== asset.sizeBytes) {
-    await fs.rm(tempPath, { force: true }).catch(() => {})
+    await fs.rm(tempPath, { force: true }).catch((cleanupError) => {
+      warnReadAloudCleanupFailure(`Failed to remove invalid read-aloud asset ${tempPath}`, cleanupError)
+    })
     throw new Error(
       `Downloaded ${asset.path}, but its checksum did not match the pinned Kokoro asset manifest.`,
     )
@@ -907,7 +934,9 @@ export class ReadAloudService {
 
     if (input.useCache !== false && await pathExists(cachePath)) {
       const now = new Date()
-      await fs.utimes(cachePath, now, now).catch(() => {})
+      await fs.utimes(cachePath, now, now).catch((error) => {
+        warnReadAloudCleanupFailure(`Failed to refresh read-aloud cache timestamp for ${cachePath}`, error)
+      })
       const cachedDurationMs = await parseWavDurationFromFile(cachePath)
       return {
         audioPath: cachePath,

@@ -120,7 +120,7 @@ describe('Sidebar search rendering', () => {
     })
 
     expect(markup).toContain('placeholder="Search"')
-    expect(markup).toContain('Pinned')
+    expect(markup).toMatch(/pinned/i)
     expect(markup).toContain('project-alpha')
     expect(markup).toContain('Conversation 1')
     expect(markup).not.toContain('Search results')

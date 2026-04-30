@@ -307,6 +307,16 @@ export function Sidebar({
     () => buildSidebarModel(sessions, sidebarState),
     [sessions, sidebarState],
   )
+  const visiblePinnedAreas = useMemo(
+    () => sidebarModel.pinnedAreas.filter(
+      (area) => !(isDefaultPinnedArea(area.id) && area.sessions.length === 0),
+    ),
+    [sidebarModel.pinnedAreas],
+  )
+  const activePinnedSessionHighlighted = Boolean(
+    activeSessionId
+    && sidebarModel.pinnedSessions.some((session) => session.id === activeSessionId),
+  )
   const pinnedSessionIds = useMemo(
     () => new Set((sidebarState.pinnedAreas ?? []).flatMap((area) => area.sessionIds)),
     [sidebarState.pinnedAreas],
@@ -477,6 +487,9 @@ export function Sidebar({
   const quickCreateMenuClassName = quickCreateMenuPinned
     ? 'pointer-events-auto translate-y-0 opacity-100'
     : 'pointer-events-none translate-y-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'
+  const createPinnedAreaButtonVisibilityClassName = activePinnedSessionHighlighted
+    ? 'opacity-100'
+    : 'opacity-0 group-hover/pinned:opacity-100 group-focus-within/pinned:opacity-100 group-hover/pinned-section:opacity-100 group-focus-within/pinned-section:opacity-100'
   const filteredPinnedAreaEmojis = useMemo(() => {
     const query = pinnedAreaIconSearch.trim().toLowerCase()
     if (!query) {
@@ -1124,14 +1137,14 @@ export function Sidebar({
   }
 
   const renderPinnedAreas = () => (
-    <section className="mb-4">
+    <section className="group/pinned-section mb-4">
       <div className="group/pinned mb-1 flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
         <Pin size={12} />
-        <span className="min-w-0 flex-1">Pinned</span>
+        <span className="min-w-0 flex-1">PINNED</span>
         <button
           type="button"
           onClick={() => openCreatePinnedAreaDialog(null)}
-          className="rounded-md p-1 text-zinc-400 opacity-0 transition-all hover:bg-zinc-200 hover:text-zinc-700 group-hover/pinned:opacity-100 group-focus-within/pinned:opacity-100 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          className={`rounded-md p-1 text-zinc-400 transition-all hover:bg-zinc-200 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 ${createPinnedAreaButtonVisibilityClassName}`}
           title="Create pinned area"
           aria-label="Create pinned area"
         >
@@ -1139,23 +1152,19 @@ export function Sidebar({
         </button>
       </div>
 
-      {sidebarModel.pinnedAreas.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-200/80 px-3 py-3 text-xs text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
-          No pinned areas yet.
-        </div>
-      ) : (
+      {visiblePinnedAreas.length > 0 && (
         <div className="space-y-2">
-          {sidebarModel.pinnedAreas.map((area, index) => {
+          {visiblePinnedAreas.map((area, index) => {
             const ChevronIcon = area.collapsed ? ChevronRight : ChevronDown
             const defaultArea = isDefaultPinnedArea(area.id)
-            const previousArea = sidebarModel.pinnedAreas[index - 1]
+            const previousArea = visiblePinnedAreas[index - 1]
             const canMoveUp =
               !defaultArea
               && index > 0
               && !isDefaultPinnedArea(previousArea?.id ?? '')
             const canMoveDown =
               !defaultArea
-              && index < sidebarModel.pinnedAreas.length - 1
+              && index < visiblePinnedAreas.length - 1
 
             return (
               <div key={area.id}>

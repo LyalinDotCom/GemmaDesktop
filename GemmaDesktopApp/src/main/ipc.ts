@@ -8,32 +8,15 @@ import {
   systemPreferences,
 } from 'electron'
 import { execFile, spawn } from 'child_process'
-import { createHash, randomUUID } from 'crypto'
+import { randomUUID } from 'crypto'
 import os from 'os'
 import fs from 'fs/promises'
 import fsSync from 'fs'
 import path from 'path'
-import { fileURLToPath, pathToFileURL } from 'url'
+import { pathToFileURL } from 'url'
 import {
   createGemmaDesktop,
-  extractPdfText,
-  inspectPdfDocument,
-  renderPdfPages,
 } from '@gemma-desktop/sdk-node'
-import {
-  createLlamaCppServerAdapter,
-} from '@gemma-desktop/sdk-runtime-llamacpp'
-import {
-  createLmStudioNativeAdapter,
-  createLmStudioOpenAICompatibleAdapter,
-} from '@gemma-desktop/sdk-runtime-lmstudio'
-import {
-  createOmlxOpenAICompatibleAdapter,
-} from '@gemma-desktop/sdk-runtime-omlx'
-import {
-  createOllamaNativeAdapter,
-  createOllamaOpenAICompatibleAdapter,
-} from '@gemma-desktop/sdk-runtime-ollama'
 import type {
   GemmaDesktop,
   GemmaDesktopSession,
@@ -42,7 +25,6 @@ import type {
   SessionDebugSnapshot,
 } from '@gemma-desktop/sdk-node'
 import type {
-  CapabilityRecord,
   ConversationApprovalMode,
   SessionSnapshot,
   GemmaDesktopEvent,
@@ -61,9 +43,6 @@ import {
 } from '@gemma-desktop/sdk-core'
 import {
   createHostTools,
-  createWorkspaceSearchBackend,
-  renderWorkspaceReadFile,
-  renderWorkspaceReadFiles,
   type RegisteredTool,
 } from '@gemma-desktop/sdk-tools'
 import {
@@ -76,21 +55,15 @@ import {
   removeInstalledSkill,
   renderSkillCatalogInstructions,
   renderSkillSystemInstructions,
-  resolveInstalledSkill,
   searchSkillsCatalog,
   type InstalledSkillRecord,
-  skillActivationId,
 } from './skills'
 import type { ToolPermissionPolicy } from '@gemma-desktop/sdk-tools'
 import {
   type AppSessionMode,
   ACTIVATE_SKILL_TOOL,
-  ASK_USER_TOOL,
   CONFIGURABLE_TOOL_NAMES,
   CONFIGURABLE_TOOL_NAME_SET,
-  EXIT_PLAN_MODE_TOOL,
-  LEGACY_ASK_PLAN_QUESTION_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
   type AppToolPolicyConfig,
   type BaseSessionMode,
   applyCoBrowseToolRoutingToModeSelection,
@@ -102,21 +75,15 @@ import {
   extractPlanBuildToolFromSurfaceError,
   getDefaultToolPolicySettings,
   normalizeAppSessionMode,
-  isBaseSessionMode,
   resolveAppSessionMode,
   isToolAllowedByPolicy,
-  normalizePlanExitInput,
-  normalizePlanQuestionInput,
-  normalizeSkillActivationInput,
   normalizeToolPolicySettings,
-  resolveBackgroundProcessWorkingDirectory,
   resolveToolPolicyMode,
   SEARCH_WEB_TOOL,
   sessionModeToConfig,
   toSdkSessionMode,
   isCoBrowseSessionMetadata,
   withCoBrowseSessionMetadata,
-  withoutCoBrowseSessionMetadata,
   type ConversationKind,
 } from './tooling'
 import { isManagedPendingAttachmentPath } from './pendingAttachments'
@@ -156,7 +123,6 @@ import {
   buildOptimisticUserMessageContent,
   buildSessionInputFromUserMessage,
   buildUserMessageContent,
-  PDF_RENDER_SCALE,
   planPdfAttachmentProcessing,
   persistIncomingAttachments,
   summarizeMessageForDebug,
@@ -169,8 +135,6 @@ import {
   getPersistedSessionAssetDirectory,
   getPersistedSessionFilePath,
   getPersistedSessionsDirectory,
-  listPersistedSessionFilePaths,
-  relocatePersistedSessionArtifacts,
 } from './sessionPersistence'
 import {
   SESSION_TITLE_RESPONSE_FORMAT,
@@ -180,7 +144,6 @@ import {
 } from './sessionTitles'
 import {
   TALK_SESSION_ID,
-  TALK_SESSION_RUNTIME_ID,
   TALK_SESSION_TITLE,
   getGlobalSessionStateDirectory,
   getTalkSessionConversationStorageDirectory,
@@ -188,13 +151,8 @@ import {
   getTalkSessionIndexFilePath,
   getTalkSessionStorageDirectory,
   getTalkSessionWorkspaceDirectory,
-  isHiddenSessionVisibility,
   isTalkSessionId,
   isTalkSessionSurface,
-  listTalkSessionConversationFilePaths,
-  normalizeAppSessionStorageScope,
-  normalizeAppSessionSurface,
-  normalizeAppSessionVisibility,
   type AppSessionStorageScope,
   type AppSessionSurface,
   type AppSessionVisibility,
@@ -211,7 +169,6 @@ import {
   type GlobalChatConversationSummary,
   type GlobalChatState,
 } from '../shared/globalChat'
-import type { FileEditContentBlock } from '../shared/fileEdits'
 import {
   sanitizeRenderableContentBlocks,
   stripAssistantTransportArtifacts,
@@ -239,7 +196,6 @@ import {
   type LmStudioManagedModelProfile,
 } from '../shared/lmstudioRuntimeConfig'
 import {
-  buildOmlxDisplayOptionsRecord,
   buildOmlxModelSettingsRecord,
   buildOmlxRequestOptionsRecord,
   getDefaultOmlxSettings,
@@ -371,8 +327,6 @@ import {
   buildFailedAssistantMessage,
   buildInterruptedAssistantMessage,
   buildRecoveredFailedAssistantMessage,
-  CANCELLED_TURN_ID_SUFFIX,
-  CANCELLED_TURN_WARNING,
   INTERRUPTED_TURN_ID_SUFFIX,
   resolveInterruptedTurnTimestamp,
 } from './interruptedTurns'
@@ -391,7 +345,6 @@ import {
   createInitialSessionLiveActivity,
   refreshLiveActivityFromToolBlocks,
   type SessionLiveActivity,
-  type ToolCallProgressBlock,
   type ToolProgressEntry,
 } from './toolProgress'
 import { SpeechRuntimeManager } from './speechRuntime'
@@ -415,9 +368,7 @@ import {
   toLocalRuntimeUnavailableError,
 } from './localRuntimeErrors'
 import {
-  askGeminiCli,
   ASK_GEMINI_DEFAULT_MODEL,
-  ASK_GEMINI_TOOL_NAME,
 } from './geminiCli'
 import {
   buildProjectBrowserGoogleSearchUrl,
@@ -435,14 +386,10 @@ import {
 import {
   type RunningBackgroundProcessSummary,
   BACKGROUND_PROCESS_TOOL_NAMES,
-  PEEK_BACKGROUND_PROCESS_TOOL,
-  START_BACKGROUND_PROCESS_TOOL,
-  TERMINATE_BACKGROUND_PROCESS_TOOL,
 } from '../shared/backgroundProcesses'
 import {
   normalizeSessionTags,
   sessionTagsEqual,
-  type SessionTag,
 } from '../shared/sessionTags'
 import {
   ASK_GEMINI_SESSION_TOOL_ID,
@@ -464,12 +411,10 @@ import {
   type SidebarState,
 } from '../shared/sidebar'
 import {
-  DEFAULT_SHELL_PEEK_CHARS,
   appendShellTranscript,
   formatShellCommandForChat,
   isShellSessionContentBlock,
   normalizePersistedShellBlock,
-  peekShellTranscript,
   summarizeShellTranscript,
   type ShellSessionContentBlock,
 } from '../shared/shellSession'
@@ -479,28 +424,64 @@ import {
   normalizeStoredSidebarProjectPath,
   readSidebarStateFileSync,
 } from './sidebarState'
+import { writeFileAtomic } from './atomicWrite'
+import {
+  createSmartContentService,
+} from './smartContent'
+import {
+  createConfiguredRuntimeAdapters,
+  mapModels as mapEnvironmentModels,
+  mapRuntimes,
+  type MappedModelSummary,
+} from './modelMapping'
+import {
+  createAppTools as createAppToolsFromDependencies,
+} from './appTools'
+import {
+  SessionStore,
+  type AppMessage,
+  type DebugLogEntry,
+  type PendingCompaction,
+  type PendingPlanExit,
+  type PendingPlanQuestion,
+  type PendingToolApproval,
+  type PendingTurn,
+  type PlanExitTarget,
+  type PersistedSession,
+  type SessionMeta,
+} from './sessionStore'
+import {
+  appendStreamingDelta,
+  appMessageContentMatches,
+  buildCancelledAssistantMessage,
+  buildCompletedAssistantMessageFromBlocks,
+  buildFallbackStreamingBlocks,
+  buildUserMessagePreviewText,
+  finalizeStreamingBlocks,
+  isErroredToolResult,
+  isStreamingToolCallBlock,
+  normalizeUnknownRecord,
+  serializeStreamingBlocks,
+  type StreamingContentBlock,
+  type StreamingToolCallBlock,
+} from './streamingMessages'
+import {
+  buildTalkSessionConfig,
+  createSessionMetadata,
+  getSessionConfig,
+  getSessionConfigFromMetadata,
+  isHiddenSessionConfig,
+  isHiddenSessionSnapshot,
+  isTalkSessionConfig,
+  isTalkSessionSnapshot,
+  normalizeConversationKind,
+  normalizePersistedSessionData,
+  normalizeSessionConfig,
+  resolveBaseMode,
+  type AppSessionConfig,
+} from './sessionConfig'
 
 // ── Types for IPC serialization ──
-
-interface SessionMeta {
-  id: string
-  title: string
-  titleSource: 'auto' | 'user'
-  lastMessage: string
-  createdAt: number
-  updatedAt: number
-  sessionTags: SessionTag[]
-}
-
-interface AppMessage {
-  id: string
-  role: string
-  content: Array<Record<string, unknown>>
-  timestamp: number
-  durationMs?: number
-  primaryModelId?: string
-  primaryRuntimeId?: string
-}
 
 function attachPrimaryModelMetadataToAppMessage(
   message: AppMessage,
@@ -528,726 +509,24 @@ function attachPrimaryModelMetadataToNullableAppMessage(
     : null
 }
 
-interface DebugLogEntry {
-  id: string
-  sessionId: string
-  timestamp: number
-  layer: 'ipc' | 'sdk' | 'runtime'
-  direction: 'renderer->main' | 'main->renderer' | 'sdk->app' | 'app->sdk' | 'sdk->runtime' | 'runtime->sdk'
-  event: string
-  summary: string
-  turnId?: string
-  data: unknown
-}
-
-interface PersistedSession {
-  meta: SessionMeta
-  snapshot: SessionSnapshot
-  draftText?: string
-  appMessages?: AppMessage[]
-  pendingTurn?: PendingTurn
-  pendingCompaction?: PendingCompaction
-  pendingPlanQuestion?: PendingPlanQuestion
-  pendingPlanExit?: PendingPlanExit
-  pendingPlanExecution?: LegacyPendingPlanExecution
-  pendingToolApproval?: PendingToolApproval
-  debugLogs?: DebugLogEntry[]
-}
-
-interface PendingTurn {
-  turnId: string
-  content: Array<Record<string, unknown>>
-  startedAt: number
-}
-
-interface PendingCompaction {
-  required: boolean
-  status: 'pending' | 'running'
-  trigger: 'manual' | 'auto' | 'retry'
-  reason: string
-  requestedAt: number
-  thresholdPercent?: number
-  lastError?: string
-}
-
-interface PendingPlanQuestion {
-  id: string
-  turnId?: string
-  question: string
-  details?: string
-  options: string[]
-  placeholder?: string
-  askedAt: number
-}
-
-interface LegacyPendingPlanExecution {
-  id: string
-  turnId?: string
-  createdAt: number
-  recommendedTarget: 'current_session' | 'fresh_session'
-  recommendedMode: AppSessionMode
-  summary: string
-  executionPrompt: string
-  assumptions: string[]
-  openQuestions: string[]
-  source?: 'model' | 'synthetic'
-  trigger?: 'prepare_plan_execution' | 'approval_phrase' | 'blocked_build_tool'
-  attentionToken?: number
-}
-
-interface PendingPlanExit {
-  id: string
-  turnId?: string
-  createdAt: number
-  workMode: AppSessionMode
-  summary: string
-  details?: string
-  source?: 'model' | 'synthetic'
-  trigger?: 'exit_plan_mode' | 'legacy_prepare_plan_execution' | 'blocked_build_tool'
-  attentionToken?: number
-}
-
-type PlanExitTarget = 'current' | 'fresh_summary'
-
-interface PendingToolApproval {
-  id: string
-  turnId?: string
-  toolName: string
-  argumentsSummary: string
-  reason: string
-  requestedAt: number
-}
-
-interface AppSessionConfig {
-  conversationKind: ConversationKind
-  baseMode: BaseSessionMode
-  planMode: boolean
-  preferredRuntimeId: string
-  selectedSkillIds: string[]
-  selectedSkillNames: string[]
-  selectedToolIds: string[]
-  selectedToolNames: string[]
-  approvalMode: ConversationApprovalMode
-  surface: AppSessionSurface
-  visibility: AppSessionVisibility
-  storageScope: AppSessionStorageScope
-}
-
-function normalizeConversationKind(value: unknown): ConversationKind {
-  return value === 'research' ? 'research' : 'normal'
-}
-
-function normalizeSessionConfig(config: AppSessionConfig): AppSessionConfig {
-  const conversationKind = normalizeConversationKind(config.conversationKind)
-  const baseMode = normalizeAppSessionMode(config.baseMode, 'explore')
-
-  return {
-    ...config,
-    conversationKind,
-    baseMode,
-    planMode:
-      conversationKind === 'normal' && baseMode === 'build'
-        ? Boolean(config.planMode)
-        : false,
-    preferredRuntimeId: normalizeProviderRuntimeId(config.preferredRuntimeId),
-    approvalMode: normalizeConversationApprovalMode(config.approvalMode),
-    surface: normalizeAppSessionSurface(config.surface),
-    visibility: normalizeAppSessionVisibility(config.visibility),
-    storageScope: normalizeAppSessionStorageScope(config.storageScope),
-  }
-}
-
-// ── Session Store (disk-backed) ──
-
-class SessionStore {
-  private meta = new Map<string, SessionMeta>()
-  private snapshots = new Map<string, SessionSnapshot>()
-  private sessionProjectPaths = new Map<string, string>()
-  private sessionStorageScopes = new Map<string, AppSessionStorageScope>()
-  private sessionStorageDirectories = new Map<string, string>()
-  private draftTexts = new Map<string, string>()
-  private appMessages = new Map<string, AppMessage[]>()
-  private pendingTurns = new Map<string, PendingTurn | null>()
-  private pendingCompactions = new Map<string, PendingCompaction | null>()
-  private pendingPlanQuestions = new Map<string, PendingPlanQuestion | null>()
-  private pendingPlanExits = new Map<string, PendingPlanExit | null>()
-  private pendingToolApprovals = new Map<string, PendingToolApproval | null>()
-  private debugLogs = new Map<string, DebugLogEntry[]>()
-  private pendingWrites = new Map<string, Promise<void>>()
-
-  async init(projectPaths: string[]): Promise<void> {
-    this.meta.clear()
-    this.snapshots.clear()
-    this.sessionProjectPaths.clear()
-    this.sessionStorageScopes.clear()
-    this.sessionStorageDirectories.clear()
-    this.draftTexts.clear()
-    this.appMessages.clear()
-    this.pendingTurns.clear()
-    this.pendingCompactions.clear()
-    this.pendingPlanQuestions.clear()
-    this.pendingPlanExits.clear()
-    this.pendingToolApprovals.clear()
-    this.debugLogs.clear()
-    this.pendingWrites.clear()
-
-    const normalizedProjectPaths = [...new Set(
-      projectPaths
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0)
-        .map((entry) => path.resolve(entry)),
-    )]
-
-    for (const projectPath of normalizedProjectPaths) {
-      await this.loadProject(projectPath)
-    }
-
-    await this.loadGlobalTalkSessions()
-  }
-
-  private cachePersistedSession(
-    data: PersistedSession,
-    input: {
-      workingDirectory: string
-      storageScope?: AppSessionStorageScope
-      storageDirectory?: string
-    },
-  ): PersistedSession {
-    const migratedData = normalizePersistedSessionData(data)
-    const normalizedWorkingDirectory = path.resolve(input.workingDirectory)
-    const normalizedMeta = normalizeSessionMeta(
-      migratedData.meta?.id ?? migratedData.snapshot.sessionId,
-      migratedData.meta,
-    )
-    const normalizedData =
-      migratedData.snapshot.workingDirectory === normalizedWorkingDirectory
-        ? migratedData
-        : {
-            ...migratedData,
-            meta: normalizedMeta,
-            snapshot: {
-              ...migratedData.snapshot,
-              workingDirectory: normalizedWorkingDirectory,
-            },
-          }
-    const cachedData =
-      normalizedData.meta === normalizedMeta
-        ? normalizedData
-        : {
-            ...normalizedData,
-            meta: normalizedMeta,
-          }
-    const normalizedAppMessages = normalizePersistedAppMessages(
-      cachedData.appMessages,
-    )
-    const nextCachedData =
-      normalizedAppMessages === cachedData.appMessages
-        ? cachedData
-        : {
-            ...cachedData,
-            appMessages: normalizedAppMessages,
-          }
-    const config = getSessionConfig(nextCachedData.snapshot)
-    const storageScope =
-      isTalkSessionId(nextCachedData.meta.id) || isTalkSessionConfig(config)
-        ? 'global'
-        : normalizeAppSessionStorageScope(input.storageScope ?? config.storageScope)
-    const storageDirectory = path.resolve(
-      input.storageDirectory
-      ?? resolveSessionStorageDirectory(
-        nextCachedData.meta.id,
-        nextCachedData.snapshot,
-        storageScope,
-      ),
-    )
-
-    this.sessionProjectPaths.set(nextCachedData.meta.id, normalizedWorkingDirectory)
-    this.sessionStorageScopes.set(nextCachedData.meta.id, storageScope)
-    this.sessionStorageDirectories.set(nextCachedData.meta.id, storageDirectory)
-    this.meta.set(nextCachedData.meta.id, nextCachedData.meta)
-    this.snapshots.set(nextCachedData.meta.id, nextCachedData.snapshot)
-    this.draftTexts.set(nextCachedData.meta.id, nextCachedData.draftText ?? '')
-    this.appMessages.set(nextCachedData.meta.id, nextCachedData.appMessages ?? [])
-    this.pendingTurns.set(nextCachedData.meta.id, nextCachedData.pendingTurn ?? null)
-    this.pendingCompactions.set(
-      nextCachedData.meta.id,
-      nextCachedData.pendingCompaction
-        ? {
-            ...nextCachedData.pendingCompaction,
-            status:
-              nextCachedData.pendingCompaction.status === 'running'
-                ? 'pending'
-                : nextCachedData.pendingCompaction.status,
-            required: true,
-          }
-        : null,
-    )
-    this.pendingPlanQuestions.set(
-      nextCachedData.meta.id,
-      nextCachedData.pendingPlanQuestion ?? null,
-    )
-    this.pendingPlanExits.set(nextCachedData.meta.id, nextCachedData.pendingPlanExit ?? null)
-    this.pendingToolApprovals.set(
-      nextCachedData.meta.id,
-      nextCachedData.pendingToolApproval ?? null,
-    )
-    this.debugLogs.set(nextCachedData.meta.id, nextCachedData.debugLogs ?? [])
-
-    return nextCachedData
-  }
-
-  private clearCachedSession(sessionId: string): void {
-    this.meta.delete(sessionId)
-    this.snapshots.delete(sessionId)
-    this.sessionProjectPaths.delete(sessionId)
-    this.sessionStorageScopes.delete(sessionId)
-    this.sessionStorageDirectories.delete(sessionId)
-    this.draftTexts.delete(sessionId)
-    this.appMessages.delete(sessionId)
-    this.pendingTurns.delete(sessionId)
-    this.pendingCompactions.delete(sessionId)
-    this.pendingPlanQuestions.delete(sessionId)
-    this.pendingPlanExits.delete(sessionId)
-    this.pendingToolApprovals.delete(sessionId)
-    this.debugLogs.delete(sessionId)
-  }
-
-  private async loadProject(workingDirectory: string): Promise<void> {
-    const sessionFilePaths = await listPersistedSessionFilePaths(workingDirectory)
-    for (const sessionFilePath of sessionFilePaths) {
-      try {
-        const raw = await fs.readFile(sessionFilePath, 'utf-8')
-        const data = JSON.parse(raw) as PersistedSession
-        this.cachePersistedSession(data, {
-          workingDirectory,
-          storageScope: 'project',
-          storageDirectory: path.dirname(sessionFilePath),
-        })
-      } catch (error) {
-        console.warn(
-          `[gemma-desktop] Failed to load persisted session from ${sessionFilePath}:`,
-          error,
-        )
-        // Skip corrupted files
-      }
-    }
-  }
-
-  private async loadGlobalTalkSessions(): Promise<void> {
-    currentTalkSessionId = await readCurrentTalkSessionIdFromDisk()
-    const sessionFilePaths = await listTalkSessionConversationFilePaths(
-      app.getPath('userData'),
-    )
-
-    for (const sessionFilePath of sessionFilePaths) {
-      try {
-        const raw = await fs.readFile(sessionFilePath, 'utf-8')
-        const data = JSON.parse(raw) as PersistedSession
-        this.cachePersistedSession(data, {
-          workingDirectory:
-            data.snapshot.workingDirectory
-            || getTalkSessionConversationWorkspaceDirectory(
-              app.getPath('userData'),
-              data.meta?.id ?? data.snapshot.sessionId,
-            ),
-          storageScope: 'global',
-          storageDirectory: path.dirname(sessionFilePath),
-        })
-      } catch (error) {
-        console.warn(
-          `[gemma-desktop] Failed to load persisted talk session from ${sessionFilePath}:`,
-          error,
-        )
-      }
-    }
-
-    if (currentTalkSessionId && !this.snapshots.has(currentTalkSessionId)) {
-      currentTalkSessionId = null
-    }
-  }
-
-  private getSessionFilePath(sessionId: string): string | null {
-    const storageDirectory = this.sessionStorageDirectories.get(sessionId)
-    if (!storageDirectory) {
-      return null
-    }
-
-    return path.join(storageDirectory, 'session.json')
-  }
-
-  private async queueWrite(
-    sessionId: string,
-    write: () => Promise<void>,
-  ): Promise<void> {
-    const previousWrite = this.pendingWrites.get(sessionId) ?? Promise.resolve()
-    const nextWrite = previousWrite
-      .catch(() => {})
-      .then(write)
-    const trackedWrite = nextWrite.finally(() => {
-      if (this.pendingWrites.get(sessionId) === trackedWrite) {
-        this.pendingWrites.delete(sessionId)
-      }
-    })
-    this.pendingWrites.set(sessionId, trackedWrite)
-    await trackedWrite
-  }
-
-  private async waitForPendingWrite(sessionId: string): Promise<void> {
-    const pendingWrite = this.pendingWrites.get(sessionId)
-    if (!pendingWrite) {
-      return
-    }
-
-    try {
-      await pendingWrite
-    } catch {
-      // The caller will surface the underlying read or write problem if it persists.
-    }
-  }
-
-  private async readSessionFile(
-    sessionId: string,
-    options?: { waitForPendingWrite?: boolean },
-  ): Promise<PersistedSession | null> {
-    if (options?.waitForPendingWrite !== false) {
-      await this.waitForPendingWrite(sessionId)
-    }
-
-    const filePath = this.getSessionFilePath(sessionId)
-    const workingDirectory = this.sessionProjectPaths.get(sessionId)
-    if (!filePath || !workingDirectory) {
-      return null
-    }
-
-    try {
-      const raw = await fs.readFile(filePath, 'utf-8')
-      return this.cachePersistedSession(
-        JSON.parse(raw) as PersistedSession,
-        {
-          workingDirectory,
-          storageScope: this.sessionStorageScopes.get(sessionId),
-          storageDirectory: path.dirname(filePath),
-        },
-      )
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`[gemma-desktop] Failed to read session file ${sessionId}:`, error)
-      }
-      return null
-    }
-  }
-
-  private buildCachedSession(sessionId: string): PersistedSession | null {
-    const meta = this.meta.get(sessionId)
-    const snapshot = this.snapshots.get(sessionId)
-
-    if (!meta || !snapshot) {
-      return null
-    }
-
-    return {
-      meta,
-      snapshot,
-      draftText: this.draftTexts.get(sessionId) ?? '',
-      appMessages: this.appMessages.get(sessionId),
-      pendingTurn: this.pendingTurns.get(sessionId) ?? undefined,
-      pendingCompaction: this.pendingCompactions.get(sessionId) ?? undefined,
-      pendingPlanQuestion:
-        this.pendingPlanQuestions.get(sessionId) ?? undefined,
-      pendingPlanExit:
-        this.pendingPlanExits.get(sessionId) ?? undefined,
-      pendingToolApproval:
-        this.pendingToolApprovals.get(sessionId) ?? undefined,
-      debugLogs: this.debugLogs.get(sessionId),
-    }
-  }
-
-  private async writeSessionFile(
-    filePath: string,
-    data: PersistedSession,
-  ): Promise<void> {
-    await fs.mkdir(path.dirname(filePath), { recursive: true })
-    const tempFilePath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
-
-    try {
-      await fs.writeFile(
-        tempFilePath,
-        JSON.stringify(data),
-        'utf-8',
-      )
-      await fs.rename(tempFilePath, filePath)
-    } catch (error) {
-      await fs.unlink(tempFilePath).catch(() => {})
-      throw error
-    }
-  }
-
-  async save(
-    sessionId: string,
-    snapshot: SessionSnapshot,
-    metaPatch?: Partial<SessionMeta>,
-    appMessages?: AppMessage[],
-    options?: {
-      preserveUpdatedAt?: boolean
-    },
-  ): Promise<void> {
-    let meta = this.meta.get(sessionId)
-    if (!meta) {
-      meta = normalizeSessionMeta(sessionId, {
-        titleSource: 'auto',
-      })
-    }
-    if (metaPatch) {
-      Object.assign(meta, metaPatch)
-    }
-    meta = normalizeSessionMeta(sessionId, meta)
-    if (!options?.preserveUpdatedAt) {
-      meta.updatedAt = Date.now()
-    }
-    this.meta.set(sessionId, meta)
-    this.snapshots.set(sessionId, snapshot)
-
-    if (appMessages) {
-      this.appMessages.set(sessionId, appMessages)
-    }
-
-    const nextProjectPath = path.resolve(snapshot.workingDirectory)
-    const currentProjectPath = this.sessionProjectPaths.get(sessionId)
-    const currentStorageScope = this.sessionStorageScopes.get(sessionId) ?? 'project'
-    const nextStorageScope = getSessionConfig(snapshot).storageScope
-    const nextStorageDirectory = resolveSessionStorageDirectory(
-      sessionId,
-      snapshot,
-      nextStorageScope,
-    )
-    const nextSessionFilePath = path.join(nextStorageDirectory, 'session.json')
-    const data: PersistedSession = {
-      meta,
-      snapshot,
-      draftText: this.draftTexts.get(sessionId) ?? '',
-      appMessages: this.appMessages.get(sessionId),
-      pendingTurn: this.pendingTurns.get(sessionId) ?? undefined,
-      pendingCompaction: this.pendingCompactions.get(sessionId) ?? undefined,
-      pendingPlanQuestion:
-        this.pendingPlanQuestions.get(sessionId) ?? undefined,
-      pendingPlanExit:
-        this.pendingPlanExits.get(sessionId) ?? undefined,
-      pendingToolApproval:
-        this.pendingToolApprovals.get(sessionId) ?? undefined,
-      debugLogs: this.debugLogs.get(sessionId),
-    }
-    await this.queueWrite(sessionId, async () => {
-      const nextData =
-        currentStorageScope === 'project'
-        && nextStorageScope === 'project'
-        && currentProjectPath
-        && currentProjectPath !== nextProjectPath
-          ? await relocatePersistedSessionArtifacts({
-              data,
-              sessionId,
-              fromWorkingDirectory: currentProjectPath,
-              toWorkingDirectory: nextProjectPath,
-            })
-          : data
-      await this.writeSessionFile(nextSessionFilePath, nextData)
-      this.sessionProjectPaths.set(sessionId, nextProjectPath)
-      this.sessionStorageScopes.set(sessionId, nextStorageScope)
-      this.sessionStorageDirectories.set(
-        sessionId,
-        path.dirname(nextSessionFilePath),
-      )
-    })
-  }
-
-  async load(sessionId: string): Promise<PersistedSession | null> {
-    return this.buildCachedSession(sessionId) ?? await this.readSessionFile(sessionId)
-  }
-
-  async remove(sessionId: string): Promise<void> {
-    const storageDirectory = this.sessionStorageDirectories.get(sessionId)
-    this.clearCachedSession(sessionId)
-    await this.queueWrite(sessionId, async () => {
-      if (!storageDirectory) {
-        return
-      }
-      await fs.rm(storageDirectory, {
-        recursive: true,
-        force: true,
-      })
-    })
-  }
-
-  getMeta(sessionId: string): SessionMeta | undefined {
-    return this.meta.get(sessionId)
-  }
-
-  getWorkingDirectory(sessionId: string): string | null {
-    return this.sessionProjectPaths.get(sessionId) ?? null
-  }
-
-  getSnapshot(sessionId: string): SessionSnapshot | undefined {
-    return this.snapshots.get(sessionId)
-  }
-
-  setSnapshot(sessionId: string, snapshot: SessionSnapshot): void {
-    this.snapshots.set(sessionId, snapshot)
-    this.sessionProjectPaths.set(sessionId, path.resolve(snapshot.workingDirectory))
-  }
-
-  setMeta(sessionId: string, patch: Partial<SessionMeta>): void {
-    const meta = this.meta.get(sessionId)
-    if (meta) Object.assign(meta, patch)
-  }
-
-  upsertAppMessage(sessionId: string, message: AppMessage): void {
-    const messages = [...(this.appMessages.get(sessionId) ?? [])]
-    const idx = messages.findIndex((entry) => entry.id === message.id)
-    if (idx >= 0) {
-      messages[idx] = message
-    } else {
-      messages.push(message)
-    }
-    messages.sort((a, b) => a.timestamp - b.timestamp)
-    this.appMessages.set(sessionId, messages)
-  }
-
-  getAppMessages(sessionId: string): AppMessage[] {
-    return [...(this.appMessages.get(sessionId) ?? [])]
-  }
-
-  setDraftText(sessionId: string, draftText: string): void {
-    this.draftTexts.set(sessionId, draftText)
-  }
-
-  getDraftText(sessionId: string): string {
-    return this.draftTexts.get(sessionId) ?? ''
-  }
-
-  setPendingTurn(sessionId: string, pendingTurn: PendingTurn | null): void {
-    this.pendingTurns.set(sessionId, pendingTurn)
-  }
-
-  getPendingTurn(sessionId: string): PendingTurn | null {
-    return this.pendingTurns.get(sessionId) ?? null
-  }
-
-  clearPendingTurn(sessionId: string): void {
-    this.pendingTurns.delete(sessionId)
-  }
-
-  setPendingCompaction(
-    sessionId: string,
-    pendingCompaction: PendingCompaction | null,
-  ): void {
-    this.pendingCompactions.set(sessionId, pendingCompaction)
-  }
-
-  getPendingCompaction(sessionId: string): PendingCompaction | null {
-    return this.pendingCompactions.get(sessionId) ?? null
-  }
-
-  clearPendingCompaction(sessionId: string): void {
-    this.pendingCompactions.delete(sessionId)
-  }
-
-  setPendingPlanQuestion(
-    sessionId: string,
-    pendingPlanQuestion: PendingPlanQuestion | null,
-  ): void {
-    this.pendingPlanQuestions.set(sessionId, pendingPlanQuestion)
-  }
-
-  getPendingPlanQuestion(sessionId: string): PendingPlanQuestion | null {
-    return this.pendingPlanQuestions.get(sessionId) ?? null
-  }
-
-  clearPendingPlanQuestion(sessionId: string): void {
-    this.pendingPlanQuestions.delete(sessionId)
-  }
-
-  setPendingPlanExit(
-    sessionId: string,
-    pendingPlanExit: PendingPlanExit | null,
-  ): void {
-    this.pendingPlanExits.set(sessionId, pendingPlanExit)
-  }
-
-  getPendingPlanExit(sessionId: string): PendingPlanExit | null {
-    return this.pendingPlanExits.get(sessionId) ?? null
-  }
-
-  clearPendingPlanExit(sessionId: string): void {
-    this.pendingPlanExits.delete(sessionId)
-  }
-
-  setPendingToolApproval(
-    sessionId: string,
-    pendingToolApproval: PendingToolApproval | null,
-  ): void {
-    this.pendingToolApprovals.set(sessionId, pendingToolApproval)
-  }
-
-  getPendingToolApproval(sessionId: string): PendingToolApproval | null {
-    return this.pendingToolApprovals.get(sessionId) ?? null
-  }
-
-  clearPendingToolApproval(sessionId: string): void {
-    this.pendingToolApprovals.delete(sessionId)
-  }
-
-  appendDebugLog(sessionId: string, entry: DebugLogEntry): void {
-    const logs = [...(this.debugLogs.get(sessionId) ?? []), entry]
-    const capped = logs.slice(-1200)
-    this.debugLogs.set(sessionId, capped)
-  }
-
-  getDebugLogs(sessionId: string): DebugLogEntry[] {
-    return [...(this.debugLogs.get(sessionId) ?? [])]
-  }
-
-  clearDebugLogs(sessionId: string): void {
-    this.debugLogs.set(sessionId, [])
-  }
-
-  async flush(sessionId: string): Promise<void> {
-    await this.queueWrite(sessionId, async () => {
-      const existing = this.buildCachedSession(sessionId)
-        ?? await this.readSessionFile(sessionId, {
-          waitForPendingWrite: false,
-        })
-      if (!existing) return
-
-      const data: PersistedSession = {
-        ...existing,
-        draftText: this.draftTexts.get(sessionId) ?? '',
-        appMessages: this.appMessages.get(sessionId),
-        pendingTurn: this.pendingTurns.get(sessionId) ?? undefined,
-        pendingCompaction: this.pendingCompactions.get(sessionId) ?? undefined,
-        pendingPlanQuestion:
-          this.pendingPlanQuestions.get(sessionId) ?? undefined,
-        pendingPlanExit:
-          this.pendingPlanExits.get(sessionId) ?? undefined,
-        pendingToolApproval:
-          this.pendingToolApprovals.get(sessionId) ?? undefined,
-        debugLogs: this.debugLogs.get(sessionId),
-      }
-      const filePath = this.getSessionFilePath(sessionId)
-      if (!filePath) {
-        return
-      }
-      await this.writeSessionFile(filePath, data)
-    })
-  }
-
-  listMeta(): SessionMeta[] {
-    return Array.from(this.meta.values()).sort((a, b) => b.updatedAt - a.updatedAt)
-  }
-}
-
 // ── Module state ──
 
 let gemmaDesktop: GemmaDesktop
-const store = new SessionStore()
+const store = new SessionStore({
+  getSessionConfig,
+  getUserDataPath: () => app.getPath('userData'),
+  isTalkSessionConfig: (config) =>
+    isTalkSessionConfig(config as Pick<AppSessionConfig, 'surface'>),
+  normalizePersistedAppMessages,
+  normalizePersistedSessionData,
+  normalizeSessionMeta,
+  readCurrentTalkSessionIdFromDisk,
+  resolveSessionStorageDirectory,
+  setCurrentTalkSessionId: (sessionId) => {
+    currentTalkSessionId = sessionId
+  },
+  writeFileAtomic,
+})
 const automationStore = new AutomationStore()
 let sidebarStore: SidebarStateStore | null = null
 let currentTalkSessionId: string | null = null
@@ -1365,12 +644,12 @@ function beginConversationExecutionGate(
   }
 
   pendingSessionTasks.set(sessionId, task)
-  void broadcastSessionsChanged().catch(() => {})
+  broadcastSessionsChangedInBackground()
 
   return () => {
     if (pendingSessionTasks.get(sessionId) === task) {
       pendingSessionTasks.delete(sessionId)
-      void broadcastSessionsChanged().catch(() => {})
+      broadcastSessionsChangedInBackground()
     }
   }
 }
@@ -1550,6 +829,50 @@ const pendingModelLoadCounts = new Map<string, number>()
 const pendingModelLoadTargets = new Map<string, PrimaryModelTarget>()
 let primaryModelLoadPromise: Promise<PrimaryModelTarget> | null = null
 let primaryModelLoadTarget: PrimaryModelTarget | null = null
+let modelLifecycleQueue: Promise<void> = Promise.resolve()
+
+function logBackgroundFailure(action: string, error: unknown): void {
+  console.warn(`[gemma-desktop] ${action}:`, error)
+}
+
+function broadcastSessionsChangedInBackground(action = 'Failed to broadcast session changes'): void {
+  void broadcastSessionsChanged().catch((error) => {
+    logBackgroundFailure(action, error)
+  })
+}
+
+function flushSessionInBackground(
+  sessionId: string,
+  action = 'Failed to flush session state',
+): void {
+  void store.flush(sessionId).catch((error) => {
+    logBackgroundFailure(`${action} for ${sessionId}`, error)
+  })
+}
+
+async function removePathBestEffort(
+  targetPath: string,
+  options: Parameters<typeof fs.rm>[1] = { force: true },
+): Promise<void> {
+  try {
+    await fs.rm(targetPath, options)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logBackgroundFailure(`Failed to remove ${targetPath}`, error)
+    }
+  }
+}
+
+async function runModelLifecycleExclusive<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const run = modelLifecycleQueue.then(operation, operation)
+  modelLifecycleQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return await run
+}
 
 function modelTargetKey(target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>): string {
   return `${normalizeProviderRuntimeId(target.runtimeId)}::${target.modelId}`
@@ -2182,7 +1505,7 @@ function scheduleShellSummaryBroadcast(
 
   if (immediate) {
     clearScheduledShellSummaryBroadcast(sessionId)
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
     return
   }
 
@@ -2192,7 +1515,7 @@ function scheduleShellSummaryBroadcast(
 
   const timer = setTimeout(() => {
     shellSummaryBroadcastTimers.delete(sessionId)
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
   }, 250)
   shellSummaryBroadcastTimers.set(sessionId, timer)
 }
@@ -2670,7 +1993,7 @@ function formatDefaultModelLoadStepForChat(
   return prefix ? `${prefix}: ${body}` : body
 }
 
-async function loadModelSelection(
+async function loadModelSelectionUnlocked(
   modelSelectionInput: unknown,
   options: {
     reason: string
@@ -2878,6 +2201,15 @@ async function loadModelSelection(
 
   broadcastEnvironmentModelsChanged()
   return finish()
+}
+
+async function loadModelSelection(
+  modelSelectionInput: unknown,
+  options: Parameters<typeof loadModelSelectionUnlocked>[1],
+): Promise<LoadDefaultModelsResult> {
+  return await runModelLifecycleExclusive(() =>
+    loadModelSelectionUnlocked(modelSelectionInput, options),
+  )
 }
 
 async function loadDefaultModelSelection(
@@ -3170,7 +2502,7 @@ async function isTrackedModelTargetResident(
   return true
 }
 
-async function ensurePrimaryModelTargetLoaded(
+async function ensurePrimaryModelTargetLoadedUnlocked(
   inputTarget: PrimaryModelTarget,
 ): Promise<void> {
   const target = normalizePrimaryModelTarget(inputTarget)
@@ -3252,6 +2584,14 @@ async function ensurePrimaryModelTargetLoaded(
   }
 }
 
+async function ensurePrimaryModelTargetLoaded(
+  inputTarget: PrimaryModelTarget,
+): Promise<void> {
+  return await runModelLifecycleExclusive(() =>
+    ensurePrimaryModelTargetLoadedUnlocked(inputTarget),
+  )
+}
+
 function currentPrimaryHoldCount(): number {
   let total = 0
   for (const count of primaryModelHoldCounts.values()) {
@@ -3306,44 +2646,46 @@ function scheduleStartupPrimaryWarmup(): void {
 async function unloadIdleOllamaModelsWhenKeepAliveDisabled(
   currentSettingsInput?: AppSettingsRecord,
 ): Promise<void> {
-  const currentSettings = currentSettingsInput ?? await getSettingsState()
-  if (
-    currentSettings.runtimes.ollama.keepAliveEnabled
-    || currentPrimaryHoldCount() > 0
-    || currentHelperHoldCount() > 0
-  ) {
-    return
-  }
-
-  const targets = [
-    activePrimaryModelTarget,
-    resolveHelperRouterTarget(currentSettings),
-    resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
-  ]
-    .filter((target): target is PrimaryModelTarget =>
-      Boolean(target && isOllamaModelRuntime(target.runtimeId)),
-    )
-
-  const uniqueTargets = new Map<string, PrimaryModelTarget>()
-  for (const target of targets) {
-    uniqueTargets.set(modelTargetKey(target), target)
-  }
-
-  for (const target of uniqueTargets.values()) {
-    await unloadModelForRuntime(target).catch((error) => {
-      console.warn(
-        `[gemma-desktop] Failed to unload idle Ollama model ${target.modelId} after keep-alive was disabled:`,
-        error,
-      )
-    })
-    if (primaryTargetsMatch(activePrimaryModelTarget, target)) {
-      activePrimaryModelTarget = null
+  await runModelLifecycleExclusive(async () => {
+    const currentSettings = currentSettingsInput ?? await getSettingsState()
+    if (
+      currentSettings.runtimes.ollama.keepAliveEnabled
+      || currentPrimaryHoldCount() > 0
+      || currentHelperHoldCount() > 0
+    ) {
+      return
     }
-  }
 
-  if (uniqueTargets.size > 0) {
-    broadcastEnvironmentModelsChanged()
-  }
+    const targets = [
+      activePrimaryModelTarget,
+      resolveHelperRouterTarget(currentSettings),
+      resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
+    ]
+      .filter((target): target is PrimaryModelTarget =>
+        Boolean(target && isOllamaModelRuntime(target.runtimeId)),
+      )
+
+    const uniqueTargets = new Map<string, PrimaryModelTarget>()
+    for (const target of targets) {
+      uniqueTargets.set(modelTargetKey(target), target)
+    }
+
+    for (const target of uniqueTargets.values()) {
+      await unloadModelForRuntime(target).catch((error) => {
+        console.warn(
+          `[gemma-desktop] Failed to unload idle Ollama model ${target.modelId} after keep-alive was disabled:`,
+          error,
+        )
+      })
+      if (primaryTargetsMatch(activePrimaryModelTarget, target)) {
+        activePrimaryModelTarget = null
+      }
+    }
+
+    if (uniqueTargets.size > 0) {
+      broadcastEnvironmentModelsChanged()
+    }
+  })
 }
 
 function broadcastBootstrapStateChanged(): void {
@@ -4171,7 +3513,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
           message: `Loading helper model ${helperModelId}…`,
           error: undefined,
         }, currentSettings)
-        await loadModelForRuntime(helperTarget)
+        await runModelLifecycleExclusive(() => loadModelForRuntime(helperTarget))
       }
 
       const nextBootstrapState = setBootstrapState({
@@ -4303,7 +3645,8 @@ async function acquireHelperModelLease(
   }
 
   try {
-    await loadModelForRuntime(resolveHelperRouterTarget(await getSettingsState()))
+    const helperTarget = resolveHelperRouterTarget(await getSettingsState())
+    await runModelLifecycleExclusive(() => loadModelForRuntime(helperTarget))
   } catch (error) {
     releaseLease()
     throw error
@@ -4487,8 +3830,7 @@ async function readCurrentTalkSessionIdFromDisk(): Promise<string | null> {
 
 async function writeCurrentTalkSessionIdToDisk(sessionId: string | null): Promise<void> {
   const indexFilePath = getTalkSessionIndexFilePath(app.getPath('userData'))
-  await fs.mkdir(path.dirname(indexFilePath), { recursive: true })
-  await fs.writeFile(
+  await writeFileAtomic(
     indexFilePath,
     JSON.stringify({
       currentSessionId: sessionId,
@@ -4520,7 +3862,7 @@ async function readLastPickedDirectory(): Promise<string | null> {
 async function writeLastPickedDirectory(targetPath: string): Promise<void> {
   try {
     const resolved = path.resolve(targetPath)
-    await fs.writeFile(getLastPickedDirectoryStatePath(), resolved, 'utf-8')
+    await writeFileAtomic(getLastPickedDirectoryStatePath(), resolved, 'utf-8')
   } catch (error) {
     console.error('Failed to persist last picked directory:', error)
   }
@@ -4676,7 +4018,7 @@ async function loadSettings(): Promise<AppSettingsRecord> {
   )
 
   settings = merged
-  await fs.writeFile(
+  await writeFileAtomic(
     getSettingsPath(),
     JSON.stringify(merged, null, 2),
     'utf-8',
@@ -4825,7 +4167,7 @@ async function saveSettings(
   )
   settings = next
 
-  await fs.writeFile(
+  await writeFileAtomic(
     getSettingsPath(),
     JSON.stringify(next, null, 2),
     'utf-8',
@@ -5152,7 +4494,6 @@ function toDisplayAssetUrl(url: string): string {
   return url
 }
 
-const APP_SESSION_METADATA_KEY = 'gemmaDesktopApp'
 const REQUEST_PREFERENCES_METADATA_KEY = 'requestPreferences'
 
 function readRequestPreferences(
@@ -5201,6 +4542,28 @@ function sameNumericRecord(
   )
 }
 
+function resolveSessionStorageDirectory(
+  sessionId: string,
+  snapshot: SessionSnapshot,
+  storageScope = getSessionConfig(snapshot).storageScope,
+): string {
+  if (storageScope === 'global') {
+    if (sessionId === TALK_SESSION_ID) {
+      return getTalkSessionStorageDirectory(app.getPath('userData'))
+    }
+    if (isTalkSessionSnapshot(snapshot)) {
+      return getTalkSessionConversationStorageDirectory(
+        app.getPath('userData'),
+        sessionId,
+      )
+    }
+  }
+
+  return path.dirname(
+    getPersistedSessionFilePath(snapshot.workingDirectory, sessionId),
+  )
+}
+
 function resolveEffectiveOllamaOptions(
   currentSettings: AppSettingsRecord,
   target: { modelId: string; runtimeId: string },
@@ -5242,297 +4605,6 @@ function resolveEffectiveOmlxOptions(
       os.totalmem(),
     ),
   )
-}
-
-function resolveBaseMode(mode: SessionSnapshot['mode']): BaseSessionMode {
-  if (typeof mode === 'string') {
-    if (mode === 'build') {
-      return 'build'
-    }
-    if (
-      mode === 'assistant'
-      || mode === 'explore'
-      || mode === 'cowork'
-      || mode === 'planner'
-      || mode === 'plan'
-    ) {
-      return 'explore'
-    }
-  }
-
-  if (
-    typeof mode === 'object'
-    && mode
-  ) {
-    const base = (mode as { base?: unknown }).base
-    if (base === 'build') {
-      return 'build'
-    }
-    if (
-      base === 'assistant'
-      || base === 'explore'
-      || base === 'cowork'
-      || base === 'planner'
-      || base === 'plan'
-    ) {
-      return 'explore'
-    }
-  }
-
-  return 'explore'
-}
-
-function resolveLegacyPlanMode(mode: SessionSnapshot['mode']): boolean {
-  if (typeof mode === 'string') {
-    return mode === 'planner' || mode === 'plan'
-  }
-
-  if (typeof mode === 'object' && mode) {
-    const base = (mode as { base?: unknown }).base
-    return base === 'planner' || base === 'plan'
-  }
-
-  return false
-}
-
-function getSessionConfigFromMetadata(
-  metadataRecord: Record<string, unknown> | undefined,
-  fallbackBaseMode: BaseSessionMode,
-  fallbackPlanMode = false,
-): AppSessionConfig {
-  const metadata =
-    metadataRecord?.[APP_SESSION_METADATA_KEY] as
-      | Partial<AppSessionConfig>
-      | undefined
-
-  const selectedSkillIds = Array.isArray(metadata?.selectedSkillIds)
-    ? metadata.selectedSkillIds.filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
-  const selectedSkillNames = Array.isArray(metadata?.selectedSkillNames)
-    ? metadata.selectedSkillNames.filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
-  const selectedToolIds = Array.isArray(metadata?.selectedToolIds)
-    ? metadata.selectedToolIds.filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
-  const selectedToolNames = Array.isArray(metadata?.selectedToolNames)
-    ? metadata.selectedToolNames.filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
-  return {
-    conversationKind: normalizeConversationKind(metadata?.conversationKind),
-    baseMode: isBaseSessionMode(metadata?.baseMode)
-      ? metadata.baseMode
-      : fallbackBaseMode,
-    planMode:
-      typeof metadata?.planMode === 'boolean'
-        ? metadata.planMode
-        : fallbackPlanMode,
-    preferredRuntimeId:
-      typeof metadata?.preferredRuntimeId === 'string'
-      && metadata.preferredRuntimeId.trim().length > 0
-        ? metadata.preferredRuntimeId
-        : '',
-    selectedSkillIds,
-    selectedSkillNames,
-    selectedToolIds,
-    selectedToolNames,
-    approvalMode: normalizeConversationApprovalMode(metadata?.approvalMode),
-    surface: normalizeAppSessionSurface(metadata?.surface),
-    visibility: normalizeAppSessionVisibility(metadata?.visibility),
-    storageScope: normalizeAppSessionStorageScope(metadata?.storageScope),
-  }
-}
-
-function getSessionConfig(snapshot: SessionSnapshot): AppSessionConfig {
-  const config = normalizeSessionConfig(getSessionConfigFromMetadata(
-    snapshot.metadata,
-    resolveBaseMode(snapshot.mode),
-    resolveLegacyPlanMode(snapshot.mode),
-  ))
-
-  return {
-    ...config,
-    preferredRuntimeId:
-      config.preferredRuntimeId.trim().length > 0
-        ? config.preferredRuntimeId
-        : normalizeProviderRuntimeId(snapshot.runtimeId),
-  }
-}
-
-function createSessionMetadata(
-  snapshot: SessionSnapshot | null,
-  config: AppSessionConfig,
-): Record<string, unknown> {
-  return {
-    ...withoutCoBrowseSessionMetadata(snapshot?.metadata ?? {}),
-    [APP_SESSION_METADATA_KEY]: {
-      conversationKind: config.conversationKind,
-      baseMode: config.baseMode,
-      planMode: config.planMode,
-      preferredRuntimeId: config.preferredRuntimeId,
-      selectedSkillIds: [...config.selectedSkillIds],
-      selectedSkillNames: [...config.selectedSkillNames],
-      selectedToolIds: [...config.selectedToolIds],
-      selectedToolNames: [...config.selectedToolNames],
-      approvalMode: config.approvalMode,
-      surface: config.surface,
-      visibility: config.visibility,
-      storageScope: config.storageScope,
-    },
-  }
-}
-
-function isTalkSessionConfig(
-  config: Pick<AppSessionConfig, 'surface'>,
-): boolean {
-  return isTalkSessionSurface(config.surface)
-}
-
-function isHiddenSessionConfig(
-  config: Pick<AppSessionConfig, 'visibility'>,
-): boolean {
-  return isHiddenSessionVisibility(config.visibility)
-}
-
-function isTalkSessionSnapshot(snapshot: SessionSnapshot): boolean {
-  return isTalkSessionId(snapshot.sessionId) || isTalkSessionConfig(getSessionConfig(snapshot))
-}
-
-function isHiddenSessionSnapshot(snapshot: SessionSnapshot): boolean {
-  return isTalkSessionSnapshot(snapshot) || isHiddenSessionConfig(getSessionConfig(snapshot))
-}
-
-function resolveSessionStorageDirectory(
-  sessionId: string,
-  snapshot: SessionSnapshot,
-  storageScope = getSessionConfig(snapshot).storageScope,
-): string {
-  if (storageScope === 'global') {
-    if (sessionId === TALK_SESSION_ID) {
-      return getTalkSessionStorageDirectory(app.getPath('userData'))
-    }
-    if (isTalkSessionSnapshot(snapshot)) {
-      return getTalkSessionConversationStorageDirectory(
-        app.getPath('userData'),
-        sessionId,
-      )
-    }
-  }
-
-  return path.dirname(
-    getPersistedSessionFilePath(snapshot.workingDirectory, sessionId),
-  )
-}
-
-function buildTalkSessionConfig(
-  approvalMode: ConversationApprovalMode = DEFAULT_CONVERSATION_APPROVAL_MODE,
-): AppSessionConfig {
-  return normalizeSessionConfig({
-    conversationKind: 'normal',
-    baseMode: 'explore',
-    planMode: false,
-    preferredRuntimeId: TALK_SESSION_RUNTIME_ID,
-    selectedSkillIds: [],
-    selectedSkillNames: [],
-    selectedToolIds: [],
-    selectedToolNames: [],
-    approvalMode,
-    surface: 'talk',
-    visibility: 'hidden',
-    storageScope: 'global',
-  })
-}
-
-function migrateLegacyPendingPlanExecution(
-  pendingPlanExecution: LegacyPendingPlanExecution | undefined,
-): PendingPlanExit | undefined {
-  if (!pendingPlanExecution) {
-    return undefined
-  }
-
-  return {
-    id: pendingPlanExecution.id,
-    turnId: pendingPlanExecution.turnId,
-    createdAt: pendingPlanExecution.createdAt,
-    workMode: normalizeAppSessionMode(
-      pendingPlanExecution.recommendedMode,
-      'build',
-    ),
-    summary: pendingPlanExecution.summary,
-    details:
-      pendingPlanExecution.executionPrompt.trim().length > 0
-        ? pendingPlanExecution.executionPrompt
-        : undefined,
-    source: pendingPlanExecution.source,
-    trigger:
-      pendingPlanExecution.trigger === 'blocked_build_tool'
-        ? 'blocked_build_tool'
-        : 'legacy_prepare_plan_execution',
-    attentionToken: pendingPlanExecution.attentionToken,
-  }
-}
-
-function normalizePersistedSessionData(
-  data: PersistedSession,
-): PersistedSession {
-  const pendingPlanExit =
-    data.pendingPlanExit
-    ?? migrateLegacyPendingPlanExecution(data.pendingPlanExecution)
-  const metadataRecord =
-    data.snapshot.metadata?.[APP_SESSION_METADATA_KEY] as
-      | Partial<AppSessionConfig>
-      | undefined
-  const metadataBaseMode =
-    typeof (metadataRecord as Record<string, unknown> | undefined)?.baseMode === 'string'
-      ? (metadataRecord as Record<string, unknown>).baseMode
-      : undefined
-  const legacyPlannerMode =
-    resolveLegacyPlanMode(data.snapshot.mode)
-    || metadataBaseMode === 'planner'
-  const currentConfig = getSessionConfigFromMetadata(
-    data.snapshot.metadata,
-    resolveBaseMode(data.snapshot.mode),
-    resolveLegacyPlanMode(data.snapshot.mode),
-  )
-  const shouldForceTalkConfig =
-    isTalkSessionId(data.meta.id)
-    || isTalkSessionId(data.snapshot.sessionId)
-    || isTalkSessionSurface(metadataRecord?.surface)
-  const nextConfig: AppSessionConfig = shouldForceTalkConfig
-    ? buildTalkSessionConfig(currentConfig.approvalMode)
-    : {
-        ...currentConfig,
-        baseMode:
-          legacyPlannerMode
-            ? pendingPlanExit?.workMode ?? 'explore'
-            : currentConfig.baseMode,
-        planMode:
-          typeof metadataRecord?.planMode === 'boolean'
-            ? metadataRecord.planMode
-            : legacyPlannerMode || currentConfig.planMode,
-      }
-  const nextSnapshot: SessionSnapshot = {
-    ...data.snapshot,
-    mode: toSdkSessionMode(nextConfig.baseMode),
-    metadata: createSessionMetadata(data.snapshot, normalizeSessionConfig(nextConfig)),
-  }
-
-  return {
-    ...data,
-    snapshot: nextSnapshot,
-    pendingPlanExit,
-  }
 }
 
 function resolveEffectiveReasoningMode(
@@ -7134,7 +6206,7 @@ function setPendingCompactionState(
     pendingCompaction,
     isCompacting: pendingCompaction?.status === 'running',
   })
-  void store.flush(sessionId).catch(() => {})
+  flushSessionInBackground(sessionId)
 }
 
 async function resolveSessionContextLength(snapshot: SessionSnapshot): Promise<number> {
@@ -7302,373 +6374,6 @@ async function getAutoCompactionDecision(snapshot: SessionSnapshot): Promise<{
   }
 }
 
-type StreamingTextBlock = {
-  type: 'text'
-  text: string
-  rawText?: string
-}
-
-type StreamingThinkingBlock = {
-  type: 'thinking'
-  text: string
-  summary?: string
-  rawText?: string
-}
-
-type StreamingToolCallBlock = ToolCallProgressBlock
-
-type StreamingFileEditBlock = FileEditContentBlock & {
-  sourceToolCallId?: string
-}
-
-type StreamingWarningBlock = {
-  type: 'warning'
-  message: string
-}
-
-type StreamingContentBlock =
-  | StreamingTextBlock
-  | StreamingThinkingBlock
-  | StreamingToolCallBlock
-  | StreamingFileEditBlock
-  | StreamingWarningBlock
-
-function isStreamingToolCallBlock(
-  block: StreamingContentBlock,
-): block is StreamingToolCallBlock {
-  return block.type === 'tool_call'
-}
-
-function normalizeUnknownRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-
-  return {}
-}
-
-function serializeStreamingBlocks(
-  blocks: StreamingContentBlock[],
-  options?: { cancelled?: boolean },
-): Array<Record<string, unknown>> {
-  return sanitizeRenderableContentBlocks(
-    blocks.reduce<Array<Record<string, unknown>>>((serialized, block) => {
-      if (block.type === 'tool_call') {
-        const { callId: _, ...rest } = block
-        if (options?.cancelled && (rest.status === 'running' || rest.status === 'pending')) {
-          serialized.push({ ...rest, status: 'error' })
-          return serialized
-        }
-        serialized.push(rest)
-        return serialized
-      }
-      if (block.type === 'file_edit') {
-        const { sourceToolCallId: _, ...rest } = block
-        serialized.push(rest)
-        return serialized
-      }
-      if ((block.type === 'text' || block.type === 'thinking') && block.text.length === 0) {
-        return serialized
-      }
-      if (block.type === 'text' || block.type === 'thinking') {
-        const { rawText: _, ...rest } = block
-        serialized.push(rest)
-        return serialized
-      }
-      serialized.push(block)
-      return serialized
-    }, []),
-  )
-}
-
-function appendStreamingDelta(
-  blocks: StreamingContentBlock[],
-  type: 'text' | 'thinking',
-  delta: string,
-): string {
-  if (delta.length === 0) {
-    return ''
-  }
-
-  const last = blocks[blocks.length - 1]
-  if (last?.type === type) {
-    const previousText = last.text
-    const nextRawText = `${last.rawText ?? last.text}${delta}`
-    const nextText = stripAssistantTransportArtifacts(nextRawText)
-    last.rawText = nextRawText
-    last.text = nextText
-    return nextText.startsWith(previousText)
-      ? nextText.slice(previousText.length)
-      : ''
-  }
-
-  const nextText = stripAssistantTransportArtifacts(delta)
-  if (nextText.length === 0) {
-    return ''
-  }
-
-  blocks.push({ type, text: nextText, rawText: delta })
-  return nextText
-}
-
-function buildFallbackStreamingBlocks(result: {
-  text: string
-  reasoning?: string
-  toolResults: ToolResult[]
-  workingDirectory?: string
-}): StreamingContentBlock[] {
-  const blocks: StreamingContentBlock[] = []
-
-  const sanitizedReasoning = result.reasoning
-    ? stripAssistantTransportArtifacts(result.reasoning)
-    : ''
-  if (sanitizedReasoning) {
-    blocks.push({ type: 'thinking', text: sanitizedReasoning })
-  }
-
-  const sanitizedText = result.text
-    ? stripAssistantTransportArtifacts(result.text)
-    : ''
-  if (sanitizedText) {
-    blocks.push({ type: 'text', text: sanitizedText })
-  }
-
-  for (const toolResult of result.toolResults) {
-    const fileEditBlocks = result.workingDirectory
-      ? extractFileEditBlocksFromToolResult({
-          toolName: toolResult.toolName,
-          structuredOutput: toolResult.structuredOutput,
-          workingDirectory: result.workingDirectory,
-        }).map((block) => ({
-          ...block,
-          sourceToolCallId: toolResult.callId,
-        }))
-      : []
-    if (fileEditBlocks.length > 0) {
-      blocks.push(...fileEditBlocks)
-      continue
-    }
-    blocks.push({
-      type: 'tool_call',
-      toolName: toolResult.toolName,
-      input: {},
-      output: toolResult.output,
-      status: isErroredToolResult(toolResult) ? 'error' : 'success',
-      callId: toolResult.callId,
-    })
-  }
-
-  return blocks
-}
-
-function isErroredToolResult(toolResult: ToolResult): boolean {
-  const metadata = normalizeUnknownRecord(toolResult.metadata)
-  if (metadata.toolError === true) {
-    return true
-  }
-
-  const structured = normalizeUnknownRecord(toolResult.structuredOutput)
-  return structured.ok === false || typeof structured.error === 'string'
-}
-
-function stripProvisionalToolTextBlocks(
-  blocks: StreamingContentBlock[],
-): StreamingContentBlock[] {
-  return blocks.filter((block, index) => {
-    if (block.type !== 'text') {
-      return true
-    }
-
-    let sawToolCall = false
-    for (let cursor = index + 1; cursor < blocks.length; cursor += 1) {
-      const next = blocks[cursor]
-      if (!next || next.type === 'thinking') {
-        continue
-      }
-
-      if (next.type === 'tool_call' || next.type === 'file_edit') {
-        sawToolCall = true
-        continue
-      }
-
-      if (next.type === 'text') {
-        return !sawToolCall
-      }
-
-      return true
-    }
-
-    return true
-  })
-}
-
-function finalizeStreamingBlocks(
-  blocks: StreamingContentBlock[],
-  result: {
-    text: string
-    reasoning?: string
-    toolResults: ToolResult[]
-    workingDirectory?: string
-  },
-): StreamingContentBlock[] {
-  if (blocks.length === 0) {
-    return buildFallbackStreamingBlocks(result)
-  }
-
-  const finalized = stripProvisionalToolTextBlocks(
-    blocks.map((block) => ({ ...block })),
-  )
-  const hasThinking = finalized.some((block) => block.type === 'thinking')
-  const hasText = finalized.some((block) => block.type === 'text')
-  const sanitizedReasoning = result.reasoning
-    ? stripAssistantTransportArtifacts(result.reasoning)
-    : ''
-  const sanitizedText = result.text
-    ? stripAssistantTransportArtifacts(result.text)
-    : ''
-
-  if (sanitizedReasoning && !hasThinking) {
-    finalized.unshift({ type: 'thinking', text: sanitizedReasoning })
-  }
-
-  if (sanitizedText && !hasText) {
-    finalized.push({ type: 'text', text: sanitizedText })
-  }
-
-  for (const toolResult of result.toolResults) {
-    const fileEditBlocks = result.workingDirectory
-      ? extractFileEditBlocksFromToolResult({
-          toolName: toolResult.toolName,
-          structuredOutput: toolResult.structuredOutput,
-          workingDirectory: result.workingDirectory,
-        }).map((block) => ({
-          ...block,
-          sourceToolCallId: toolResult.callId,
-        }))
-      : []
-    const existingFileEditIndex = finalized.findIndex(
-      (block) => block.type === 'file_edit' && block.sourceToolCallId === toolResult.callId,
-    )
-    const idx = finalized.findIndex(
-      (block) =>
-        block.type === 'tool_call'
-        && block.callId === toolResult.callId,
-    )
-
-    if (fileEditBlocks.length > 0) {
-      if (idx >= 0) {
-        finalized.splice(idx, 1, ...fileEditBlocks)
-        continue
-      }
-      if (existingFileEditIndex >= 0) {
-        continue
-      }
-      finalized.push(...fileEditBlocks)
-      continue
-    }
-
-    if (idx >= 0) {
-      const block = finalized[idx]
-      if (block && isStreamingToolCallBlock(block)) {
-        finalized[idx] = {
-          ...block,
-          output: toolResult.output,
-          status: isErroredToolResult(toolResult) ? 'error' : 'success',
-        }
-        continue
-      }
-    }
-
-    finalized.push({
-      type: 'tool_call',
-      toolName: toolResult.toolName,
-      input: {},
-      output: toolResult.output,
-      status: isErroredToolResult(toolResult) ? 'error' : 'success',
-      callId: toolResult.callId,
-    })
-  }
-
-  const stillMissingUserFacingText = !finalized.some(
-    (block) => block.type === 'text' || block.type === 'file_edit',
-  )
-  if (stillMissingUserFacingText && result.toolResults.length > 0) {
-    finalized.push({
-      type: 'text',
-      text:
-        'Completed tool work, but the model did not produce a final written response. Review the tool output above.',
-    })
-  }
-
-  return finalized
-}
-
-function buildCancelledAssistantMessage(
-  turnId: string,
-  blocks: StreamingContentBlock[],
-  durationMs?: number,
-): AppMessage | null {
-  return buildInterruptedAssistantMessage({
-    turnId,
-    content: serializeStreamingBlocks(blocks, { cancelled: true }),
-    timestamp: Date.now(),
-    durationMs,
-    idSuffix: CANCELLED_TURN_ID_SUFFIX,
-    warningMessage: CANCELLED_TURN_WARNING,
-  })
-}
-
-function buildCompletedAssistantMessageFromBlocks(
-  turnId: string,
-  blocks: StreamingContentBlock[],
-  durationMs?: number,
-): AppMessage | null {
-  const content = sanitizeRenderableContentBlocks(
-    serializeStreamingBlocks(
-      finalizeStreamingBlocks(blocks, {
-        text: '',
-        toolResults: [],
-      }),
-    ),
-  )
-
-  if (content.length === 0) {
-    return null
-  }
-
-  return {
-    id: turnId,
-    role: 'assistant',
-    content,
-    timestamp: Date.now(),
-    durationMs,
-  }
-}
-
-function appMessageContentMatches(
-  left: AppMessage['content'],
-  right: AppMessage['content'],
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
-function buildUserMessagePreviewText(
-  text: string,
-  attachments: Array<Pick<IncomingAttachment, 'kind' | 'name'>> = [],
-): string {
-  const textPreview = text.trim().slice(0, 120)
-  if (textPreview.length > 0) {
-    return textPreview
-  }
-
-  const firstAttachment = attachments[0]
-  if (!firstAttachment) {
-    return ''
-  }
-
-  return `[${firstAttachment.kind}] ${firstAttachment.name || 'attachment'}`
-}
-
 function publishOptimisticUserMessage(input: {
   sessionId: string
   snapshot: SessionSnapshot
@@ -7688,7 +6393,7 @@ function publishOptimisticUserMessage(input: {
   ).catch((error) => {
     console.error(`[gemma-desktop] Failed to persist optimistic user message for ${input.sessionId}:`, error)
   })
-  void broadcastSessionsChanged().catch(() => {})
+  broadcastSessionsChangedInBackground()
 }
 
 function refreshOptimisticUserMessage(input: {
@@ -7857,1718 +6562,6 @@ function extractFirstEmojiGrapheme(raw: unknown): string | null {
   return graphemes[0] ?? null
 }
 
-const PDF_PAGE_EXTRACTION_RESPONSE_FORMAT = makeStructuredResponseFormat(
-  'pdf_page_extraction',
-  {
-    markdown: { type: 'string' },
-    warnings: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  ['markdown'],
-)
-const PDF_CHUNK_SUMMARY_RESPONSE_FORMAT = makeStructuredResponseFormat(
-  'pdf_chunk_summary',
-  {
-    summary: { type: 'string' },
-    evidence: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-    warnings: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  ['summary'],
-)
-const PDF_ATTACHMENT_SYNTHESIS_RESPONSE_FORMAT = makeStructuredResponseFormat(
-  'pdf_attachment_synthesis',
-  {
-    summary: { type: 'string' },
-    promptText: { type: 'string' },
-    evidence: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-    warnings: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  ['summary', 'promptText'],
-)
-const FILE_TEXT_EXTRACTION_RESPONSE_FORMAT = makeStructuredResponseFormat(
-  'file_text_extraction',
-  {
-    text: { type: 'string' },
-    warnings: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-  },
-  ['text'],
-)
-
-const SMART_READ_DEFAULT_LINE_LIMIT = 200
-const SMART_READ_DEFAULT_MAX_BYTES = 50 * 1024
-const SMART_MULTI_READ_DEFAULT_MAX_BYTES = 120 * 1024
-const PDF_EMBEDDED_TEXT_MIN_TOTAL_CHARS = 80
-const PDF_EMBEDDED_TEXT_MIN_CHARS_PER_PAGE = 20
-
-type InspectableFileKind = 'text' | 'pdf' | 'image' | 'audio' | 'video' | 'unknown'
-
-interface FileWorkerCapabilitySnapshot {
-  modelId: string
-  runtimeId: string
-  imageSupported: boolean
-  audioSupported: boolean
-}
-
-interface MultimodalFileWorkerResult {
-  structuredOutput: Record<string, unknown>
-  outputText: string
-}
-
-interface PdfDerivedPageRecord {
-  pageNumber: number
-  markdown: string
-  warnings: string[]
-}
-
-interface PdfDerivedArtifactRecord {
-  sourceName: string
-  sourcePath: string
-  pageCount: number
-  processedRange: {
-    startPage: number
-    endPage: number
-  }
-  derivedAt: string
-  worker: {
-    modelId: string
-    runtimeId: string
-  }
-  goal: string
-  summary: string
-  promptText: string
-  promptTokenEstimate: number
-  evidence: string[]
-  warnings: string[]
-  pages: PdfDerivedPageRecord[]
-}
-
-interface PdfDerivationResult {
-  artifactPath?: string
-  textPath?: string
-  summary: string
-  promptText: string
-  promptTokenEstimate: number
-  evidence: string[]
-  warnings: string[]
-  pageCount: number
-  batchCount: number
-  pages: PdfDerivedPageRecord[]
-}
-
-interface ResolvedInspectableFile {
-  path: string
-  fileUrl: string
-  name: string
-  mediaType: string | undefined
-  kind: InspectableFileKind
-  size: number
-  modifiedAtMs: number
-}
-
-const IMAGE_FILE_EXTENSIONS = new Set([
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.gif',
-  '.bmp',
-  '.heic',
-  '.heif',
-  '.avif',
-  '.tif',
-  '.tiff',
-])
-const AUDIO_FILE_EXTENSIONS = new Set([
-  '.wav',
-  '.mp3',
-  '.m4a',
-  '.aac',
-  '.flac',
-  '.ogg',
-  '.oga',
-  '.opus',
-  '.aif',
-  '.aiff',
-  '.caf',
-])
-const VIDEO_FILE_EXTENSIONS = new Set([
-  '.mp4',
-  '.mov',
-  '.m4v',
-  '.webm',
-])
-const TEXT_FILE_EXTENSIONS = new Set([
-  '.txt',
-  '.md',
-  '.markdown',
-  '.json',
-  '.jsonc',
-  '.yaml',
-  '.yml',
-  '.toml',
-  '.ini',
-  '.cfg',
-  '.conf',
-  '.csv',
-  '.tsv',
-  '.log',
-  '.xml',
-  '.html',
-  '.css',
-  '.js',
-  '.jsx',
-  '.ts',
-  '.tsx',
-  '.mjs',
-  '.cjs',
-  '.py',
-  '.rb',
-  '.go',
-  '.rs',
-  '.java',
-  '.kt',
-  '.swift',
-  '.c',
-  '.cc',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.sh',
-  '.zsh',
-  '.fish',
-  '.sql',
-])
-
-function inferInspectableMediaType(filePath: string): string | undefined {
-  switch (path.extname(filePath).toLowerCase()) {
-    case '.pdf':
-      return 'application/pdf'
-    case '.jpg':
-    case '.jpeg':
-      return 'image/jpeg'
-    case '.png':
-      return 'image/png'
-    case '.webp':
-      return 'image/webp'
-    case '.gif':
-      return 'image/gif'
-    case '.bmp':
-      return 'image/bmp'
-    case '.heic':
-      return 'image/heic'
-    case '.heif':
-      return 'image/heif'
-    case '.avif':
-      return 'image/avif'
-    case '.tif':
-    case '.tiff':
-      return 'image/tiff'
-    case '.wav':
-      return 'audio/wav'
-    case '.mp3':
-      return 'audio/mpeg'
-    case '.m4a':
-      return 'audio/mp4'
-    case '.aac':
-      return 'audio/aac'
-    case '.flac':
-      return 'audio/flac'
-    case '.ogg':
-    case '.oga':
-      return 'audio/ogg'
-    case '.opus':
-      return 'audio/opus'
-    case '.aif':
-    case '.aiff':
-      return 'audio/aiff'
-    case '.caf':
-      return 'audio/x-caf'
-    case '.mp4':
-      return 'video/mp4'
-    case '.mov':
-      return 'video/quicktime'
-    case '.m4v':
-      return 'video/x-m4v'
-    case '.webm':
-      return 'video/webm'
-    default:
-      return undefined
-  }
-}
-
-function detectInspectableKind(
-  filePath: string,
-  mediaType: string | undefined,
-): InspectableFileKind {
-  const normalizedMediaType = mediaType?.trim().toLowerCase()
-  const ext = path.extname(filePath).toLowerCase()
-
-  if (normalizedMediaType === 'application/pdf' || ext === '.pdf') {
-    return 'pdf'
-  }
-  if (normalizedMediaType?.startsWith('image/') || IMAGE_FILE_EXTENSIONS.has(ext)) {
-    return 'image'
-  }
-  if (normalizedMediaType?.startsWith('audio/') || AUDIO_FILE_EXTENSIONS.has(ext)) {
-    return 'audio'
-  }
-  if (normalizedMediaType?.startsWith('video/') || VIDEO_FILE_EXTENSIONS.has(ext)) {
-    return 'video'
-  }
-  if (normalizedMediaType?.startsWith('text/') || TEXT_FILE_EXTENSIONS.has(ext)) {
-    return 'text'
-  }
-
-  return 'unknown'
-}
-
-function normalizeInspectableInputPath(
-  rawPath: string,
-  workingDirectory: string,
-): string {
-  const trimmed = rawPath.trim()
-  if (trimmed.startsWith('file://')) {
-    return fileURLToPath(trimmed)
-  }
-  return path.isAbsolute(trimmed)
-    ? path.resolve(trimmed)
-    : path.resolve(workingDirectory, trimmed)
-}
-
-async function readFileProbe(filePath: string): Promise<Buffer> {
-  const handle = await fs.open(filePath, 'r')
-  try {
-    const buffer = Buffer.alloc(4096)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    return buffer.subarray(0, bytesRead)
-  } finally {
-    await handle.close()
-  }
-}
-
-function isLikelyTextProbe(buffer: Buffer): boolean {
-  if (buffer.length === 0) {
-    return true
-  }
-  let controlBytes = 0
-  for (const byte of buffer) {
-    if (byte === 0) {
-      return false
-    }
-    if (byte < 9 || (byte > 13 && byte < 32)) {
-      controlBytes += 1
-    }
-  }
-  return controlBytes / buffer.length < 0.08
-}
-
-async function resolveInspectableFile(
-  input: {
-    path: string
-    mediaType?: string
-  },
-  workingDirectory: string,
-): Promise<ResolvedInspectableFile> {
-  const resolvedPath = normalizeInspectableInputPath(input.path, workingDirectory)
-  const stats = await fs.stat(resolvedPath)
-  if (!stats.isFile()) {
-    throw new Error(`Expected a file path, received: ${input.path}`)
-  }
-
-  const mediaType = input.mediaType?.trim() || inferInspectableMediaType(resolvedPath)
-  let kind = detectInspectableKind(resolvedPath, mediaType)
-  if (kind === 'unknown') {
-    const probe = await readFileProbe(resolvedPath)
-    if (isLikelyTextProbe(probe)) {
-      kind = 'text'
-    }
-  }
-
-  return {
-    path: resolvedPath,
-    fileUrl: pathToFileURL(resolvedPath).toString(),
-    name: path.basename(resolvedPath),
-    mediaType,
-    kind,
-    size: stats.size,
-    modifiedAtMs: stats.mtimeMs,
-  }
-}
-
-async function resolveSessionFileWorkerCapabilitySnapshot(
-  sessionId: string,
-): Promise<FileWorkerCapabilitySnapshot> {
-  const { session } = await getOrResumeLiveSession(sessionId)
-  const snapshot = session.snapshot()
-
-  try {
-    const env = await gemmaDesktop.inspectEnvironment()
-    const matched = mapModels(env.runtimes).find(
-      (model) =>
-        model.id === snapshot.modelId
-        && model.runtimeId === snapshot.runtimeId,
-    )
-
-    return {
-      modelId: snapshot.modelId,
-      runtimeId: snapshot.runtimeId,
-      imageSupported: matched?.attachmentSupport.image ?? false,
-      audioSupported: matched?.attachmentSupport.audio ?? false,
-    }
-  } catch {
-    return {
-      modelId: snapshot.modelId,
-      runtimeId: snapshot.runtimeId,
-      imageSupported: false,
-      audioSupported: false,
-    }
-  }
-}
-
-function toWorkerSnapshot(model: {
-  id: string
-  runtimeId: string
-  attachmentSupport?: {
-    image?: boolean
-    audio?: boolean
-  }
-}): FileWorkerCapabilitySnapshot {
-  return {
-    modelId: model.id,
-    runtimeId: model.runtimeId,
-    imageSupported: model.attachmentSupport?.image === true,
-    audioSupported: model.attachmentSupport?.audio === true,
-  }
-}
-
-async function resolvePreferredFileReadWorker(input: {
-  sessionId: string
-  kind: 'pdf' | 'audio' | 'image'
-}): Promise<FileWorkerCapabilitySnapshot> {
-  const { session } = await getOrResumeLiveSession(input.sessionId)
-  const snapshot = session.snapshot()
-  const env = await gemmaDesktop.inspectEnvironment()
-  const models = mapModels(env.runtimes)
-  const currentModel = models.find(
-    (model) =>
-      model.id === snapshot.modelId
-      && model.runtimeId === snapshot.runtimeId,
-  )
-
-  const pickByTags = (
-    tags: string[],
-    predicate: (model: typeof models[number]) => boolean,
-  ): typeof models[number] | undefined => {
-    for (const tag of tags) {
-      const sameRuntime = models.find((model) =>
-        model.id === tag
-        && model.runtimeId === snapshot.runtimeId
-        && predicate(model),
-      )
-      if (sameRuntime) {
-        return sameRuntime
-      }
-      const anyRuntime = models.find((model) =>
-        model.id === tag
-        && predicate(model),
-      )
-      if (anyRuntime) {
-        return anyRuntime
-      }
-    }
-    return undefined
-  }
-
-  const isResident = (model: typeof models[number]) =>
-    model.status === 'loaded' || model.status === 'loading'
-
-  const isLowestGemmaTier = (model: typeof models[number]) =>
-    model.id === 'gemma4:e2b'
-
-  const preferResidentModel = (
-    predicate: (model: typeof models[number]) => boolean,
-    orderedTags: string[],
-  ): typeof models[number] | undefined => {
-    if (
-      currentModel
-      && isResident(currentModel)
-      && predicate(currentModel)
-      && !isLowestGemmaTier(currentModel)
-    ) {
-      return currentModel
-    }
-
-    const residentByTags = pickByTags(
-      orderedTags,
-      (candidate) => isResident(candidate) && predicate(candidate),
-    )
-    if (residentByTags && !isLowestGemmaTier(residentByTags)) {
-      return residentByTags
-    }
-
-    const residentCompatible = models.find((candidate) =>
-      candidate.runtimeId === snapshot.runtimeId
-      && isResident(candidate)
-      && predicate(candidate)
-      && !isLowestGemmaTier(candidate),
-    )
-      ?? models.find((candidate) =>
-        isResident(candidate)
-        && predicate(candidate)
-        && !isLowestGemmaTier(candidate),
-      )
-
-    if (residentCompatible) {
-      return residentCompatible
-    }
-
-    return undefined
-  }
-
-  const defaultHelperTags = ['gemma4:26b', 'gemma4:31b', 'gemma4:e4b', 'gemma4:e2b']
-
-  if (input.kind === 'pdf') {
-    const model =
-      preferResidentModel(
-        (candidate) => candidate.attachmentSupport.image,
-        ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
-      )
-      ?? pickByTags(
-        ['gemma4:26b', 'gemma4:31b', 'gemma4:e4b', 'gemma4:e2b'],
-        (candidate) => candidate.attachmentSupport.image,
-      )
-      ?? (currentModel?.attachmentSupport.image ? currentModel : undefined)
-    if (!model) {
-      throw new Error('Gemma Desktop could not find a vision-capable Gemma helper for PDF reading. Install Gemma 4 26B, 31B, or another image-capable Gemma runtime.')
-    }
-    return toWorkerSnapshot(model)
-  }
-
-  if (input.kind === 'audio') {
-    const model =
-      preferResidentModel(
-        (candidate) => candidate.attachmentSupport.audio,
-        ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
-      )
-      ?? pickByTags(
-        defaultHelperTags,
-        (candidate) => candidate.attachmentSupport.audio,
-      )
-      ?? (currentModel?.attachmentSupport.audio ? currentModel : undefined)
-    if (!model) {
-      throw new Error('Gemma Desktop could not find an audio-capable helper model for audio reading.')
-    }
-    return toWorkerSnapshot(model)
-  }
-
-  const model =
-    preferResidentModel(
-      (candidate) => candidate.attachmentSupport.image,
-      ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
-    )
-    ?? pickByTags(
-      defaultHelperTags,
-      (candidate) => candidate.attachmentSupport.image,
-    )
-    ?? (currentModel?.attachmentSupport.image ? currentModel : undefined)
-  if (!model) {
-    throw new Error('Gemma Desktop could not find a vision-capable helper model for image reading.')
-  }
-  return toWorkerSnapshot(model)
-}
-
-const SMART_FILE_READ_CACHE_VERSION = 'v2'
-
-async function ensureSmartFileReadCacheRoot(workingDirectory: string): Promise<string> {
-  const root = path.join(workingDirectory, '.gemma', 'file-read-cache')
-  await fs.mkdir(root, { recursive: true })
-  return root
-}
-
-async function buildSmartFileReadCacheDirectory(input: {
-  workingDirectory: string
-  file: ResolvedInspectableFile
-  worker?: Pick<FileWorkerCapabilitySnapshot, 'modelId' | 'runtimeId'>
-  mode: string
-}): Promise<string> {
-  const root = await ensureSmartFileReadCacheRoot(input.workingDirectory)
-  const digest = createHash('sha256')
-    .update([
-      SMART_FILE_READ_CACHE_VERSION,
-      input.mode,
-      input.file.path,
-      String(input.file.size),
-      String(input.file.modifiedAtMs),
-      input.worker?.modelId ?? '',
-      input.worker?.runtimeId ?? '',
-    ].join('\n'))
-    .digest('hex')
-  const directory = path.join(root, digest)
-  await fs.mkdir(directory, { recursive: true })
-  return directory
-}
-
-function renderReadWindow(input: {
-  sourcePath: string
-  displayPath: string
-  text: string
-  offset?: number
-  limit?: number
-  maxBytes?: number
-}): {
-  content: string
-  numberedContent: string
-  lines: Array<{ line: number; text: string }>
-  truncated: boolean
-  nextOffset?: number
-  totalLines: number
-} {
-  const allLines = input.text.replace(/\r\n/g, '\n').split('\n')
-  const offset = Math.max(input.offset ?? 1, 1)
-  const limit = Math.max(input.limit ?? SMART_READ_DEFAULT_LINE_LIMIT, 1)
-  const maxBytes = Math.max(input.maxBytes ?? SMART_READ_DEFAULT_MAX_BYTES, 256)
-  const lines: Array<{ line: number; text: string }> = []
-  let truncated = false
-  let nextOffset: number | undefined
-  let renderedBytes = 0
-
-  for (let index = offset - 1; index < allLines.length; index += 1) {
-    const lineNumber = index + 1
-    if (lines.length >= limit) {
-      truncated = true
-      nextOffset = lineNumber
-      break
-    }
-
-    const line = allLines[index] ?? ''
-    const renderedLine = `${lineNumber}: ${line}`
-    const renderedLineBytes = Buffer.byteLength(
-      `${lines.length === 0 ? '' : '\n'}${renderedLine}`,
-      'utf8',
-    )
-    if (renderedBytes + renderedLineBytes > maxBytes) {
-      truncated = true
-      nextOffset = lineNumber
-      break
-    }
-
-    lines.push({ line: lineNumber, text: line })
-    renderedBytes += renderedLineBytes
-  }
-
-  return {
-    content: lines.map((line) => line.text).join('\n'),
-    numberedContent: lines.map((line) => `${line.line}: ${line.text}`).join('\n'),
-    lines,
-    truncated,
-    nextOffset,
-    totalLines: allLines.length,
-  }
-}
-
-function displayPathForToolOutput(
-  sourcePath: string,
-  workingDirectory: string,
-): string {
-  const relative = path.relative(workingDirectory, sourcePath)
-  return relative && !relative.startsWith('..') && !path.isAbsolute(relative)
-    ? relative
-    : sourcePath
-}
-
-type SmartReadStrategy =
-  | 'direct_text'
-  | 'pdf_to_text'
-  | 'image_to_text'
-  | 'audio_to_text'
-
-type ContentMaterializeTarget = 'auto' | 'text' | 'markdown'
-
-interface MaterializedContentInternal {
-  artifactId: string
-  artifactPath: string
-  displayArtifactPath: string
-  sourcePath: string
-  displaySourcePath: string
-  cachePath?: string
-  outputPath?: string
-  displayOutputPath?: string
-  target: ContentMaterializeTarget
-  kind: InspectableFileKind
-  mediaType?: string
-  strategy: SmartReadStrategy
-  bytes: number
-  lineCount: number
-  helperModelId?: string
-  helperRuntimeId?: string
-  cacheHit?: boolean
-  text: string
-}
-
-interface ContentSearchMatch {
-  path: string
-  line: number
-  text: string
-  submatches: Array<{
-    text: string
-    start: number
-    end: number
-  }>
-  beforeContext?: Array<{ line: number; text: string }>
-  afterContext?: Array<{ line: number; text: string }>
-}
-
-type SmartFileReadProgress = {
-  id: string
-  label: string
-  tone?: 'info' | 'success' | 'warning'
-}
-
-function emitSmartFileReadProgress(
-  callback: ((progress: SmartFileReadProgress) => void) | undefined,
-  progress: SmartFileReadProgress,
-): void {
-  callback?.(progress)
-}
-
-function hasUsefulEmbeddedPdfText(input: {
-  pageCount: number
-  extractedCharCount: number
-  pages: Array<{ charCount: number }>
-}): boolean {
-  if (input.extractedCharCount >= Math.max(
-    PDF_EMBEDDED_TEXT_MIN_TOTAL_CHARS,
-    input.pageCount * PDF_EMBEDDED_TEXT_MIN_CHARS_PER_PAGE,
-  )) {
-    return true
-  }
-
-  return input.pages.some((page) => page.charCount >= PDF_EMBEDDED_TEXT_MIN_TOTAL_CHARS)
-}
-
-function buildEmbeddedPdfMarkdown(
-  pages: Array<{ pageNumber: number; text: string }>,
-): string {
-  return pages
-    .filter((page) => page.text.trim().length > 0)
-    .map((page) => `## Page ${page.pageNumber}\n\n${page.text.trim()}`)
-    .join('\n\n')
-}
-
-function formatInspectFileOutput(input: {
-  file: ResolvedInspectableFile
-  displayPath: string
-  canReadWithReadFile: boolean
-  suggestedTool?: string
-  suggestedStrategy: string
-  reasoning: string
-  warnings: string[]
-  pageCount?: number
-}): string {
-  return [
-    `File: ${input.file.name}`,
-    `Path: ${input.displayPath}`,
-    `Kind: ${input.file.kind}`,
-    `Media type: ${input.file.mediaType ?? 'unknown'}`,
-    `Bytes: ${input.file.size}`,
-    typeof input.pageCount === 'number' ? `PDF pages: ${input.pageCount}` : '',
-    `Can read with read_file: ${input.canReadWithReadFile ? 'yes' : 'no'}`,
-    input.suggestedTool ? `Suggested tool: ${input.suggestedTool}` : '',
-    `Suggested strategy: ${input.suggestedStrategy}`,
-    `Why: ${input.reasoning}`,
-    input.warnings.length > 0 ? `Warnings:\n- ${input.warnings.join('\n- ')}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n')
-}
-
-async function inspectFileForReadStrategy(input: {
-  file: ResolvedInspectableFile
-  workingDirectory: string
-}): Promise<{
-  file: ResolvedInspectableFile
-  displayPath: string
-  canReadWithReadFile: boolean
-  suggestedTool?: 'read_file'
-  suggestedStrategy: string
-  reasoning: string
-  warnings: string[]
-  pageCount?: number
-}> {
-  const warnings: string[] = []
-  const displayPath = displayPathForToolOutput(
-    input.file.path,
-    input.workingDirectory,
-  )
-  let pageCount: number | undefined
-
-  switch (input.file.kind) {
-    case 'text': {
-      if (input.file.size > 256 * 1024) {
-        warnings.push(
-          'Large text file. Prefer one broader read_file window instead of many tiny slices.',
-        )
-      }
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: true,
-        suggestedTool: 'read_file',
-        suggestedStrategy: 'direct_text',
-        reasoning: 'This looks like a text-like file, so read_file can paginate it directly.',
-        warnings,
-      }
-    }
-    case 'pdf': {
-      try {
-        const pdfInfo = await inspectPdfDocument(input.file.path)
-        pageCount = pdfInfo.pageCount
-        if (pdfInfo.pageCount > 40) {
-          warnings.push(
-            `Large PDF (${pdfInfo.pageCount} pages). Expect extraction to take longer the first time.`,
-          )
-        }
-      } catch (error) {
-        warnings.push(
-          error instanceof Error
-            ? `Could not inspect PDF page count: ${error.message}`
-            : 'Could not inspect PDF page count.',
-        )
-      }
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: true,
-        suggestedTool: 'read_file',
-        suggestedStrategy: 'pdf_to_text',
-        reasoning:
-          'Use read_file. Gemma Desktop will convert the PDF into cached text with a helper model, then return a paginated text window.',
-        warnings,
-        pageCount,
-      }
-    }
-    case 'image':
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: true,
-        suggestedTool: 'read_file',
-        suggestedStrategy: 'image_to_text',
-        reasoning:
-          'Use read_file. Gemma Desktop will run image reading once, cache the extracted text or description, and return text.',
-        warnings,
-      }
-    case 'audio':
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: true,
-        suggestedTool: 'read_file',
-        suggestedStrategy: 'audio_to_text',
-        reasoning:
-          'Use read_file. Gemma Desktop will transcribe or describe the audio once, cache the text, and return a paginated text window.',
-        warnings,
-      }
-    case 'video':
-      warnings.push(
-        'Raw video is not readable through read_file yet. Attach it or prepare keyframes first.',
-      )
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: false,
-        suggestedStrategy: 'unsupported_video',
-        reasoning:
-          'read_file does not currently extract raw video into text. The model needs prepared frames or an attached video path.',
-        warnings,
-      }
-    case 'unknown':
-    default:
-      warnings.push(
-        'This file does not look safely text-readable. Inspect the format before trying shell or ad-hoc parsing.',
-      )
-      return {
-        file: input.file,
-        displayPath,
-        canReadWithReadFile: false,
-        suggestedStrategy: 'unknown_binary',
-        reasoning:
-          'Gemma Desktop could not classify this file as text, PDF, image, or audio, so read_file may not be safe or useful.',
-        warnings,
-      }
-  }
-}
-
-function buildReadWindowResult(input: {
-  file: ResolvedInspectableFile
-  displayPath: string
-  offset?: number
-  limit?: number
-  maxBytes?: number
-  text: string
-  strategy: SmartReadStrategy
-  helperModelId?: string
-  helperRuntimeId?: string
-  cacheHit?: boolean
-}) {
-  const window = renderReadWindow({
-    sourcePath: input.file.path,
-    displayPath: input.displayPath,
-    text: input.text,
-    offset: input.offset,
-    limit: input.limit,
-    maxBytes: input.maxBytes,
-  })
-  const offset = Math.max(input.offset ?? 1, 1)
-  const limit = Math.max(input.limit ?? SMART_READ_DEFAULT_LINE_LIMIT, 1)
-  const maxBytes = Math.max(input.maxBytes ?? SMART_READ_DEFAULT_MAX_BYTES, 256)
-  const lineEnd =
-    window.lines.at(-1)?.line ?? Math.max(0, offset - 1)
-
-  return {
-    path: input.displayPath,
-    absolutePath: input.file.path,
-    offset,
-    limit,
-    maxBytes,
-    content: window.content,
-    numberedContent: window.numberedContent,
-    lines: window.lines,
-    truncated: window.truncated,
-    nextOffset: window.nextOffset,
-    lineEnd,
-    totalLinesScanned: window.totalLines,
-    mediaType: input.file.mediaType,
-    kind: input.file.kind,
-    strategy: input.strategy,
-    helperModelId: input.helperModelId,
-    helperRuntimeId: input.helperRuntimeId,
-    cacheHit: input.cacheHit,
-  }
-}
-
-function countMaterializedTextLines(text: string): number {
-  return text.length === 0 ? 0 : text.replace(/\r\n/g, '\n').split('\n').length
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function writeMaterializedTextOutput(input: {
-  outputPath: string
-  text: string
-  createDirectories?: boolean
-  overwrite?: boolean
-}): Promise<void> {
-  if (input.createDirectories) {
-    await fs.mkdir(path.dirname(input.outputPath), { recursive: true })
-  }
-
-  if (input.overwrite !== true && await fileExists(input.outputPath)) {
-    throw new Error(
-      `Refusing to overwrite existing content artifact: ${input.outputPath}. Retry with overwrite=true if replacing it is intentional.`,
-    )
-  }
-
-  await fs.writeFile(input.outputPath, input.text, 'utf8')
-  const verified = await fs.readFile(input.outputPath, 'utf8')
-  if (verified !== input.text) {
-    throw new Error(
-      `Write verification failed for ${input.outputPath}. Re-read the artifact before continuing.`,
-    )
-  }
-}
-
-function materializedContentForStructuredOutput(
-  input: MaterializedContentInternal,
-): Omit<MaterializedContentInternal, 'text'> {
-  const structured: Partial<MaterializedContentInternal> = { ...input }
-  delete structured.text
-  return structured as Omit<MaterializedContentInternal, 'text'>
-}
-
-function formatMaterializedContentOutput(input: MaterializedContentInternal): string {
-  return [
-    'Materialized content artifact.',
-    `Source: ${input.displaySourcePath}`,
-    `Artifact path: ${input.displayArtifactPath}`,
-    input.displayOutputPath ? `Output path: ${input.displayOutputPath}` : '',
-    input.cachePath && input.cachePath !== input.artifactPath
-      ? `Cache path: ${input.cachePath}`
-      : '',
-    `Kind: ${input.kind}`,
-    `Target: ${input.target}`,
-    `Strategy: ${input.strategy}`,
-    input.helperModelId ? `Helper model: ${input.helperModelId}` : '',
-    input.cacheHit != null ? `Cache hit: ${input.cacheHit ? 'yes' : 'no'}` : '',
-    `Bytes: ${input.bytes}`,
-    `Lines: ${input.lineCount}`,
-    `Next: use read_content or search_content with path "${input.displayArtifactPath}".`,
-  ]
-    .filter(Boolean)
-    .join('\n')
-}
-
-async function materializeInspectableContent(input: {
-  path: string
-  mediaType?: string
-  outputPath?: string
-  target?: ContentMaterializeTarget
-  createDirectories?: boolean
-  overwrite?: boolean
-  workingDirectory: string
-  sessionId: string
-  signal?: AbortSignal
-  onProgress?: (progress: SmartFileReadProgress) => void
-}): Promise<MaterializedContentInternal> {
-  emitSmartFileReadProgress(input.onProgress, {
-    id: 'resolve-file',
-    label: 'Resolving content source',
-  })
-  const file = await resolveInspectableFile(
-    { path: input.path, mediaType: input.mediaType },
-    input.workingDirectory,
-  )
-  const displaySourcePath = displayPathForToolOutput(file.path, input.workingDirectory)
-  const target = input.target ?? 'auto'
-  let textPath: string
-  let text: string
-  let strategy: SmartReadStrategy
-  let helperModelId: string | undefined
-  let helperRuntimeId: string | undefined
-  let cacheHit: boolean | undefined
-
-  if (file.kind === 'text') {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'read-text',
-      label: 'Materializing text file',
-    })
-    textPath = file.path
-    text = await fs.readFile(file.path, 'utf8')
-    if (text.includes('\u0000')) {
-      throw new Error(`Refusing to materialize binary-looking file: ${file.path}`)
-    }
-    strategy = 'direct_text'
-    cacheHit = true
-  } else if (file.kind === 'pdf') {
-    const extracted = await extractPdfToCachedText({
-      file,
-      workingDirectory: input.workingDirectory,
-      sessionId: input.sessionId,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    })
-    textPath = extracted.textPath
-    text = await fs.readFile(textPath, 'utf8')
-    strategy = 'pdf_to_text'
-    helperModelId = extracted.helperModelId
-    helperRuntimeId = extracted.helperRuntimeId
-    cacheHit = extracted.cacheHit
-  } else if (file.kind === 'image' || file.kind === 'audio') {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'select-helper',
-      label: `Selecting ${file.kind} helper model`,
-    })
-    const worker = await resolvePreferredFileReadWorker({
-      sessionId: input.sessionId,
-      kind: file.kind,
-    })
-    const extracted = await extractMultimodalFileToCachedText({
-      file,
-      worker,
-      workingDirectory: input.workingDirectory,
-      kind: file.kind,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    })
-    textPath = extracted.textPath
-    text = await fs.readFile(textPath, 'utf8')
-    strategy = file.kind === 'image' ? 'image_to_text' : 'audio_to_text'
-    helperModelId = extracted.helperModelId
-    helperRuntimeId = extracted.helperRuntimeId
-    cacheHit = extracted.cacheHit
-  } else if (file.kind === 'video') {
-    throw new Error(
-      `${file.name} is a video file. materialize_content does not currently extract raw video into text.`,
-    )
-  } else {
-    throw new Error(
-      `${file.name} is not safely materializable as text. Use inspect_file first and avoid shell-based parsing guesses.`,
-    )
-  }
-
-  let artifactPath = textPath
-  let outputPath: string | undefined
-  if (input.outputPath?.trim()) {
-    outputPath = normalizeInspectableInputPath(
-      input.outputPath,
-      input.workingDirectory,
-    )
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'write-artifact',
-      label: 'Writing content artifact',
-    })
-    await writeMaterializedTextOutput({
-      outputPath,
-      text,
-      createDirectories: input.createDirectories,
-      overwrite: input.overwrite,
-    })
-    artifactPath = outputPath
-  }
-
-  return {
-    artifactId: artifactPath,
-    artifactPath,
-    displayArtifactPath: displayPathForToolOutput(artifactPath, input.workingDirectory),
-    sourcePath: file.path,
-    displaySourcePath,
-    cachePath: textPath,
-    outputPath,
-    displayOutputPath: outputPath
-      ? displayPathForToolOutput(outputPath, input.workingDirectory)
-      : undefined,
-    target,
-    kind: file.kind,
-    mediaType: file.mediaType,
-    strategy,
-    bytes: Buffer.byteLength(text, 'utf8'),
-    lineCount: countMaterializedTextLines(text),
-    helperModelId,
-    helperRuntimeId,
-    cacheHit,
-    text,
-  }
-}
-
-function buildMaterializedReadResult(input: {
-  materialized: MaterializedContentInternal
-  offset?: number
-  limit?: number
-  maxBytes?: number
-}) {
-  return buildReadWindowResult({
-    file: {
-      path: input.materialized.artifactPath,
-      fileUrl: pathToFileURL(input.materialized.artifactPath).toString(),
-      name: path.basename(input.materialized.artifactPath),
-      mediaType: 'text/markdown',
-      kind: 'text',
-      size: input.materialized.bytes,
-      modifiedAtMs: Date.now(),
-    },
-    displayPath: input.materialized.displayArtifactPath,
-    offset: input.offset,
-    limit: input.limit,
-    maxBytes: input.maxBytes,
-    text: input.materialized.text,
-    strategy: input.materialized.strategy,
-    helperModelId: input.materialized.helperModelId,
-    helperRuntimeId: input.materialized.helperRuntimeId,
-    cacheHit: input.materialized.cacheHit,
-  })
-}
-
-function searchMaterializedText(input: {
-  text: string
-  path: string
-  query: string
-  regex?: boolean
-  caseSensitive?: boolean
-  wholeWord?: boolean
-  before?: number
-  after?: number
-  limit?: number
-}): {
-  matches: ContentSearchMatch[]
-  truncated: boolean
-  regex: boolean
-} {
-  const query = input.query.trim()
-  if (!query) {
-    throw new Error('search_content requires a non-empty query.')
-  }
-
-  const lines = input.text.replace(/\r\n/g, '\n').split('\n')
-  const before = Math.max(0, Math.min(Math.floor(input.before ?? 0), 20))
-  const after = Math.max(0, Math.min(Math.floor(input.after ?? 0), 20))
-  const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 100), 500))
-  const matches: ContentSearchMatch[] = []
-  const flags = input.caseSensitive ? 'g' : 'gi'
-  const pattern = input.regex === true
-    ? new RegExp(query, flags)
-    : new RegExp(
-        query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-        flags,
-      )
-  const finalPattern = input.wholeWord === true
-    ? new RegExp(`\\b(?:${pattern.source})\\b`, flags)
-    : pattern
-
-  for (const [index, line] of lines.entries()) {
-    finalPattern.lastIndex = 0
-    const submatches = [...line.matchAll(finalPattern)].map((match) => ({
-      text: match[0],
-      start: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
-    }))
-    if (submatches.length === 0) {
-      continue
-    }
-
-    const lineNumber = index + 1
-    matches.push({
-      path: input.path,
-      line: lineNumber,
-      text: line,
-      submatches,
-      beforeContext: before > 0
-        ? lines
-            .slice(Math.max(0, index - before), index)
-            .map((text, contextIndex) => ({
-              line: Math.max(0, index - before) + contextIndex + 1,
-              text,
-            }))
-        : undefined,
-      afterContext: after > 0
-        ? lines
-            .slice(index + 1, Math.min(lines.length, index + after + 1))
-            .map((text, contextIndex) => ({
-              line: index + contextIndex + 2,
-              text,
-            }))
-        : undefined,
-    })
-
-    if (matches.length >= limit) {
-      return {
-        matches,
-        truncated: true,
-        regex: input.regex === true,
-      }
-    }
-  }
-
-  return {
-    matches,
-    truncated: false,
-    regex: input.regex === true,
-  }
-}
-
-function formatContentSearchOutput(input: {
-  path: string
-  query: string
-  matches: ContentSearchMatch[]
-  truncated: boolean
-}): string {
-  if (input.matches.length === 0) {
-    return `[search_content] No matches for ${JSON.stringify(input.query)} in ${input.path}.`
-  }
-
-  const lines = [
-    `[search_content] ${input.truncated ? 'First ' : ''}${input.matches.length} match${input.matches.length === 1 ? '' : 'es'} for ${JSON.stringify(input.query)} in ${input.path}${input.truncated ? ' (truncated)' : ''}.`,
-  ]
-
-  for (const match of input.matches) {
-    lines.push(`${match.path}:${match.line}: ${match.text}`)
-    for (const context of match.beforeContext ?? []) {
-      lines.push(`${match.path}:${context.line}- ${context.text}`)
-    }
-    for (const context of match.afterContext ?? []) {
-      lines.push(`${match.path}:${context.line}+ ${context.text}`)
-    }
-  }
-
-  if (input.truncated) {
-    lines.push(
-      'Narrow the query or raise limit if you need more matches before reading targeted windows.',
-    )
-  }
-
-  return lines.join('\n')
-}
-
-async function readInspectableFileForTool(input: {
-  path: string
-  mediaType?: string
-  offset?: number
-  limit?: number
-  maxBytes?: number
-  workingDirectory: string
-  sessionId: string
-  signal?: AbortSignal
-  onProgress?: (progress: SmartFileReadProgress) => void
-}) {
-  emitSmartFileReadProgress(input.onProgress, {
-    id: 'resolve-file',
-    label: 'Resolving file path',
-  })
-  const file = await resolveInspectableFile(
-    { path: input.path, mediaType: input.mediaType },
-    input.workingDirectory,
-  )
-  const displayPath = displayPathForToolOutput(file.path, input.workingDirectory)
-
-  if (file.kind === 'text') {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'read-text',
-      label: 'Reading text window',
-    })
-    const backend = createWorkspaceSearchBackend({
-      workingDirectory: input.workingDirectory,
-      signal: input.signal,
-    })
-    const result = await backend.readFile({
-      path: displayPath,
-      offset: input.offset,
-      limit: input.limit,
-      maxBytes: input.maxBytes,
-    })
-    return {
-      ...result,
-      mediaType: file.mediaType,
-      kind: file.kind,
-      strategy: 'direct_text' as const,
-      cacheHit: true,
-    }
-  }
-
-  if (file.kind === 'pdf') {
-    const extracted = await extractPdfToCachedText({
-      file,
-      workingDirectory: input.workingDirectory,
-      sessionId: input.sessionId,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    })
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'load-cached-text',
-      label: 'Loading extracted PDF text',
-    })
-    const text = await fs.readFile(extracted.textPath, 'utf8')
-    return buildReadWindowResult({
-      file,
-      displayPath,
-      offset: input.offset,
-      limit: input.limit,
-      maxBytes: input.maxBytes,
-      text,
-      strategy: 'pdf_to_text',
-      helperModelId: extracted.helperModelId,
-      helperRuntimeId: extracted.helperRuntimeId,
-      cacheHit: extracted.cacheHit,
-    })
-  }
-
-  if (file.kind === 'image' || file.kind === 'audio') {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'select-helper',
-      label: `Selecting ${file.kind} helper model`,
-    })
-    const worker = await resolvePreferredFileReadWorker({
-      sessionId: input.sessionId,
-      kind: file.kind,
-    })
-    const extracted = await extractMultimodalFileToCachedText({
-      file,
-      worker,
-      workingDirectory: input.workingDirectory,
-      kind: file.kind,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    })
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'load-cached-text',
-      label: `Loading extracted ${file.kind} text`,
-    })
-    const text = await fs.readFile(extracted.textPath, 'utf8')
-    return buildReadWindowResult({
-      file,
-      displayPath,
-      offset: input.offset,
-      limit: input.limit,
-      maxBytes: input.maxBytes,
-      text,
-      strategy: file.kind === 'image' ? 'image_to_text' : 'audio_to_text',
-      helperModelId: extracted.helperModelId,
-      helperRuntimeId: extracted.helperRuntimeId,
-      cacheHit: extracted.cacheHit,
-    })
-  }
-
-  if (file.kind === 'video') {
-    throw new Error(
-      `${file.name} is a video file. read_file does not currently extract raw video into text.`,
-    )
-  }
-
-  throw new Error(
-    `${file.name} is not safely readable as text. Use inspect_file first and avoid shell-based parsing guesses.`,
-  )
-}
-
-async function extractPdfToCachedText(input: {
-  file: ResolvedInspectableFile
-  workingDirectory: string
-  sessionId: string
-  signal?: AbortSignal
-  onProgress?: (progress: SmartFileReadProgress) => void
-}): Promise<{
-  textPath: string
-  helperModelId?: string
-  helperRuntimeId?: string
-  cacheHit: boolean
-}> {
-  const directCacheDir = await buildSmartFileReadCacheDirectory({
-    workingDirectory: input.workingDirectory,
-    file: input.file,
-    mode: 'pdf-text-direct',
-  })
-  const directTextPath = path.join(directCacheDir, 'content.md')
-  const directMetaPath = path.join(directCacheDir, 'meta.json')
-  try {
-    await fs.access(directTextPath)
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-cache',
-      label: 'Using cached PDF text',
-      tone: 'success',
-    })
-    return {
-      textPath: directTextPath,
-      cacheHit: true,
-    }
-  } catch {
-    // Cache miss; continue with PDF extraction.
-  }
-
-  let pageCount: number | undefined
-
-  try {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-embedded-text',
-      label: 'Checking embedded PDF text',
-    })
-    const extractedText = await extractPdfText({
-      path: input.file.path,
-    })
-    pageCount = extractedText.pageCount
-
-    if (hasUsefulEmbeddedPdfText(extractedText)) {
-      emitSmartFileReadProgress(input.onProgress, {
-        id: 'pdf-embedded-text',
-        label: 'Using embedded PDF text',
-        tone: 'success',
-      })
-      emitSmartFileReadProgress(input.onProgress, {
-        id: 'pdf-write-cache',
-        label: 'Caching extracted PDF text',
-      })
-      await fs.writeFile(
-        directTextPath,
-        buildEmbeddedPdfMarkdown(extractedText.pages),
-        'utf8',
-      )
-      await fs.writeFile(
-        directMetaPath,
-        JSON.stringify({
-          version: SMART_FILE_READ_CACHE_VERSION,
-          sourcePath: input.file.path,
-          pageCount: extractedText.pageCount,
-          extractionMode: 'embedded_text',
-        }, null, 2),
-        'utf8',
-      )
-
-      return {
-        textPath: directTextPath,
-        cacheHit: false,
-      }
-    }
-
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-embedded-text',
-      label: 'Embedded PDF text was sparse, falling back to page reading',
-      tone: 'warning',
-    })
-  } catch (error) {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-embedded-text',
-      label:
-        error instanceof Error
-          ? `Embedded PDF text extraction failed: ${error.message}`
-          : 'Embedded PDF text extraction failed, falling back to page reading',
-      tone: 'warning',
-    })
-  }
-
-  emitSmartFileReadProgress(input.onProgress, {
-    id: 'select-helper',
-    label: 'Selecting PDF helper model',
-  })
-  const worker = await resolvePreferredFileReadWorker({
-    sessionId: input.sessionId,
-    kind: 'pdf',
-  })
-  const workerCacheDir = await buildSmartFileReadCacheDirectory({
-    workingDirectory: input.workingDirectory,
-    file: input.file,
-    worker,
-    mode: 'pdf-text-ocr',
-  })
-  const textPath = path.join(workerCacheDir, 'content.md')
-  const metaPath = path.join(workerCacheDir, 'meta.json')
-  try {
-    await fs.access(textPath)
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-cache',
-      label: 'Using cached PDF text',
-      tone: 'success',
-    })
-    return {
-      textPath,
-      helperModelId: worker.modelId,
-      helperRuntimeId: worker.runtimeId,
-      cacheHit: true,
-    }
-  } catch {
-    // Cache miss; continue with OCR extraction.
-  }
-
-  const resolvedPageCount = pageCount ?? (await inspectPdfDocument(input.file.path)).pageCount
-  const renderedDir = path.join(workerCacheDir, 'rendered-pages')
-  await fs.mkdir(renderedDir, { recursive: true })
-  emitSmartFileReadProgress(input.onProgress, {
-    id: 'pdf-render',
-    label: `Rendering ${resolvedPageCount} PDF page${resolvedPageCount === 1 ? '' : 's'}`,
-  })
-  const renderedPages = await renderPdfPages({
-    path: input.file.path,
-    startPage: 1,
-    endPage: resolvedPageCount,
-    scale: PDF_RENDER_SCALE,
-    outputDir: renderedDir,
-    filenamePrefix: 'page',
-  })
-  const pageMarkdown: string[] = []
-  const totalPages = renderedPages.length
-  for (const page of renderedPages) {
-    emitSmartFileReadProgress(input.onProgress, {
-      id: 'pdf-extract',
-      label: `Reading page ${page.pageNumber} of ${totalPages}`,
-    })
-    const extracted = await runPdfPageExtractionSession({
-      fileName: input.file.name,
-      pageNumber: page.pageNumber,
-      pageImageUrl: pathToFileURL(page.path).toString(),
-      worker,
-      workingDirectory: path.dirname(input.file.path),
-      signal: input.signal,
-    })
-    pageMarkdown.push(`## Page ${extracted.pageNumber}\n\n${extracted.markdown}`)
-  }
-
-  emitSmartFileReadProgress(input.onProgress, {
-    id: 'pdf-write-cache',
-    label: 'Caching extracted PDF text',
-  })
-  await fs.writeFile(textPath, pageMarkdown.join('\n\n'), 'utf8')
-  await fs.writeFile(
-    metaPath,
-    JSON.stringify({
-        version: SMART_FILE_READ_CACHE_VERSION,
-        sourcePath: input.file.path,
-        helperModelId: worker.modelId,
-        helperRuntimeId: worker.runtimeId,
-        pageCount: resolvedPageCount,
-        extractionMode: 'page_ocr',
-      }, null, 2),
-    'utf8',
-  )
-
-  return {
-    textPath,
-    helperModelId: worker.modelId,
-    helperRuntimeId: worker.runtimeId,
-    cacheHit: false,
-  }
-}
-
-async function extractMultimodalFileToCachedText(input: {
-  file: ResolvedInspectableFile
-  worker: FileWorkerCapabilitySnapshot
-  workingDirectory: string
-  kind: 'audio' | 'image'
-  signal?: AbortSignal
-  onProgress?: (progress: SmartFileReadProgress) => void
-}): Promise<{
-  textPath: string
-  helperModelId: string
-  helperRuntimeId: string
-  cacheHit: boolean
-}> {
-  const cacheDir = await buildSmartFileReadCacheDirectory({
-    workingDirectory: input.workingDirectory,
-    file: input.file,
-    worker: input.worker,
-    mode: `${input.kind}-text`,
-  })
-  const textPath = path.join(cacheDir, 'content.txt')
-  const metaPath = path.join(cacheDir, 'meta.json')
-  try {
-    await fs.access(textPath)
-    emitSmartFileReadProgress(input.onProgress, {
-      id: `${input.kind}-cache`,
-      label: `Using cached ${input.kind} text`,
-      tone: 'success',
-    })
-    return {
-      textPath,
-      helperModelId: input.worker.modelId,
-      helperRuntimeId: input.worker.runtimeId,
-      cacheHit: true,
-    }
-  } catch {
-    // Cache miss; continue with multimodal extraction.
-  }
-
-  emitSmartFileReadProgress(input.onProgress, {
-    id: `${input.kind}-helper`,
-    label:
-      input.kind === 'audio'
-        ? 'Listening with helper model'
-        : 'Reading image with helper model',
-  })
-  const workerResult = await runMultimodalFileWorkerSession({
-    worker: input.worker,
-    workingDirectory: path.dirname(input.file.path),
-    signal: input.signal,
-    responseFormat: FILE_TEXT_EXTRACTION_RESPONSE_FORMAT,
-    systemInstructions:
-      input.kind === 'audio'
-        ? [
-            'You are Gemma Desktop\'s internal audio-to-text reader.',
-            'Listen faithfully and return the spoken content as plain text.',
-            'If there is no speech, describe the important audible content briefly as plain text.',
-          ].join('\n')
-        : [
-            'You are Gemma Desktop\'s internal image-to-text reader.',
-            'Read visible text faithfully.',
-            'If the image has little text, return a concise plain-text description of the important visible content.',
-          ].join('\n'),
-    sessionInput: input.kind === 'audio'
-      ? [
-          { type: 'text', text: `Audio file: ${input.file.name}\nRead this file into plain text.` },
-          { type: 'audio_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
-        ]
-      : [
-          { type: 'text', text: `Image file: ${input.file.name}\nRead this image into plain text.` },
-          { type: 'image_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
-        ],
-  })
-  const extractedText =
-    toTrimmedString(workerResult.structuredOutput.text)
-    ?? toTrimmedString(workerResult.outputText)
-    ?? ''
-  if (!extractedText) {
-    throw new Error(`Gemma Desktop could not extract readable text from ${input.file.name}.`)
-  }
-
-  emitSmartFileReadProgress(input.onProgress, {
-    id: `${input.kind}-write-cache`,
-    label: `Caching ${input.kind} text`,
-  })
-  await fs.writeFile(textPath, extractedText, 'utf8')
-  await fs.writeFile(
-    metaPath,
-    JSON.stringify({
-      version: SMART_FILE_READ_CACHE_VERSION,
-      sourcePath: input.file.path,
-      helperModelId: input.worker.modelId,
-      helperRuntimeId: input.worker.runtimeId,
-      kind: input.kind,
-    }, null, 2),
-    'utf8',
-  )
-
-  return {
-    textPath,
-    helperModelId: input.worker.modelId,
-    helperRuntimeId: input.worker.runtimeId,
-    cacheHit: false,
-  }
-}
-
-async function runMultimodalFileWorkerSession(input: {
-  worker: FileWorkerCapabilitySnapshot
-  workingDirectory: string
-  systemInstructions: string
-  sessionInput: SessionInput
-  responseFormat?: StructuredOutputSpec
-  signal?: AbortSignal
-  sessionMetadata?: Record<string, unknown>
-}): Promise<MultimodalFileWorkerResult> {
-  const leaseId = `file-worker-${Date.now()}-${randomUUID()}`
-  const releaseLease = await acquirePrimaryModelLease(leaseId, {
-    modelId: input.worker.modelId,
-    runtimeId: input.worker.runtimeId,
-  })
-
-  try {
-    const workerSession = await gemmaDesktop.sessions.create({
-      runtime: input.worker.runtimeId,
-      model: input.worker.modelId,
-      mode: 'minimal',
-      workingDirectory: input.workingDirectory,
-      systemInstructions: input.systemInstructions,
-      metadata: {
-        ...(await buildPdfWorkerSessionMetadata({
-          modelId: input.worker.modelId,
-          runtimeId: input.worker.runtimeId,
-        })),
-        ...(input.sessionMetadata ?? {}),
-      },
-    })
-    const result = await workerSession.run(input.sessionInput, {
-      maxSteps: 1,
-      responseFormat: input.responseFormat,
-      signal: input.signal,
-    })
-    return {
-      structuredOutput:
-        result.structuredOutput && typeof result.structuredOutput === 'object'
-          ? result.structuredOutput as Record<string, unknown>
-          : {},
-      outputText: result.text,
-    }
-  } finally {
-    releaseLease()
-  }
-}
-
 async function distillMemoryNote(input: {
   rawInput: string
   sessionId?: string
@@ -9607,473 +6600,6 @@ async function distillMemoryNote(input: {
   }
 }
 
-function toTrimmedString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim()
-    : undefined
-}
-
-function toTrimmedStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-    : []
-}
-
-function estimateTextTokens(text: string): number {
-  return Math.max(Math.ceil(text.trim().length / 4), 0)
-}
-
-function truncateTextToApproxTokens(text: string, tokenBudget: number): string {
-  const trimmed = text.trim()
-  if (!trimmed || tokenBudget <= 0) {
-    return ''
-  }
-
-  if (estimateTextTokens(trimmed) <= tokenBudget) {
-    return trimmed
-  }
-
-  const charBudget = Math.max(tokenBudget * 4, 512)
-  const truncated = trimmed.slice(0, charBudget)
-  const breakCandidates = [
-    truncated.lastIndexOf('\n\n'),
-    truncated.lastIndexOf('\n'),
-    truncated.lastIndexOf('. '),
-    truncated.lastIndexOf(' '),
-  ].filter((value) => value >= Math.floor(charBudget * 0.6))
-  const cutIndex = breakCandidates.length > 0
-    ? Math.max(...breakCandidates)
-    : truncated.length
-
-  return `${truncated.slice(0, cutIndex).trim()}\n\n[Truncated by Gemma Desktop to stay within the current model context budget.]`
-}
-
-function chunkPdfPagesByTokenBudget(
-  pages: PdfDerivedPageRecord[],
-  maxTokensPerChunk: number,
-): PdfDerivedPageRecord[][] {
-  if (pages.length === 0) {
-    return []
-  }
-
-  const safeBudget = Math.max(maxTokensPerChunk, 1_500)
-  const chunks: PdfDerivedPageRecord[][] = []
-  let currentChunk: PdfDerivedPageRecord[] = []
-  let currentTokens = 0
-
-  for (const page of pages) {
-    const pageTokens = Math.max(estimateTextTokens(page.markdown), 200)
-    if (currentChunk.length > 0 && currentTokens + pageTokens > safeBudget) {
-      chunks.push(currentChunk)
-      currentChunk = []
-      currentTokens = 0
-    }
-    currentChunk.push(page)
-    currentTokens += pageTokens
-  }
-
-  if (currentChunk.length > 0) {
-    chunks.push(currentChunk)
-  }
-
-  return chunks
-}
-
-async function runPdfPageExtractionSession(input: {
-  fileName: string
-  pageNumber: number
-  pageImageUrl: string
-  worker: FileWorkerCapabilitySnapshot
-  sessionMetadata?: Record<string, unknown>
-  workingDirectory: string
-  signal?: AbortSignal
-}): Promise<PdfDerivedPageRecord> {
-  const result = await runMultimodalFileWorkerSession({
-    worker: input.worker,
-    workingDirectory: input.workingDirectory,
-    sessionMetadata: input.sessionMetadata,
-    signal: input.signal,
-    responseFormat: PDF_PAGE_EXTRACTION_RESPONSE_FORMAT,
-    systemInstructions: [
-      'You are Gemma Desktop\'s internal PDF page extraction worker.',
-      'You will receive exactly one rendered PDF page image.',
-      'Extract the visible content faithfully into markdown.',
-      'Preserve headings, lists, tables, labels, formulas, and figure captions when they are visible.',
-      'Do not summarize across pages and do not omit text just because it looks repetitive.',
-      'If the page is mostly visual or has little readable text, say that plainly in the markdown.',
-    ].join('\n'),
-    sessionInput: [
-      {
-        type: 'text',
-        text: [
-          `PDF: ${input.fileName}`,
-          `Page: ${input.pageNumber}`,
-          'Extract this page into faithful markdown.',
-        ].join('\n'),
-      },
-      {
-        type: 'image_url',
-        url: input.pageImageUrl,
-        mediaType: 'image/png',
-      },
-    ],
-  })
-
-  const markdown =
-    toTrimmedString(result.structuredOutput.markdown)
-    ?? toTrimmedString(result.outputText)
-    ?? 'No readable content could be extracted from this page.'
-
-  return {
-    pageNumber: input.pageNumber,
-    markdown,
-    warnings: toTrimmedStringArray(result.structuredOutput.warnings),
-  }
-}
-
-async function runPdfChunkSummarySession(input: {
-  fileName: string
-  goal: string
-  chunkPages: PdfDerivedPageRecord[]
-  worker: FileWorkerCapabilitySnapshot
-  sessionMetadata?: Record<string, unknown>
-  workingDirectory: string
-  signal?: AbortSignal
-}): Promise<{
-  summary: string
-  evidence: string[]
-  warnings: string[]
-}> {
-  const chunkText = input.chunkPages
-    .map((page) => `## Page ${page.pageNumber}\n\n${page.markdown}`)
-    .join('\n\n')
-  const result = await runMultimodalFileWorkerSession({
-    worker: input.worker,
-    workingDirectory: input.workingDirectory,
-    sessionMetadata: input.sessionMetadata,
-    signal: input.signal,
-    responseFormat: PDF_CHUNK_SUMMARY_RESPONSE_FORMAT,
-    systemInstructions: [
-      'You are Gemma Desktop\'s internal PDF chunk synthesis worker.',
-      'You will receive extracted markdown from a contiguous chunk of PDF pages.',
-      'Produce a compact chunk summary grounded only in the provided text.',
-      'Surface important facts, labels, and caveats that later synthesis should keep.',
-    ].join('\n'),
-    sessionInput: [
-      {
-        type: 'text',
-        text: [
-          `PDF: ${input.fileName}`,
-          `Goal: ${input.goal}`,
-          `Chunk page range: ${input.chunkPages[0]?.pageNumber ?? 0}-${input.chunkPages[input.chunkPages.length - 1]?.pageNumber ?? 0}`,
-          'Chunk markdown:',
-          chunkText,
-        ].join('\n\n'),
-      },
-    ],
-  })
-
-  return {
-    summary:
-      toTrimmedString(result.structuredOutput.summary)
-      ?? toTrimmedString(result.outputText)
-      ?? 'Chunk processed.',
-    evidence: toTrimmedStringArray(result.structuredOutput.evidence),
-    warnings: toTrimmedStringArray(result.structuredOutput.warnings),
-  }
-}
-
-async function runPdfAttachmentSynthesisSession(input: {
-  fileName: string
-  goal: string
-  pageCount: number
-  promptTokenBudget: number
-  synthesisSourceText: string
-  worker: FileWorkerCapabilitySnapshot
-  sessionMetadata?: Record<string, unknown>
-  workingDirectory: string
-  signal?: AbortSignal
-}): Promise<{
-  summary: string
-  promptText: string
-  evidence: string[]
-  warnings: string[]
-}> {
-  const result = await runMultimodalFileWorkerSession({
-    worker: input.worker,
-    workingDirectory: input.workingDirectory,
-    sessionMetadata: input.sessionMetadata,
-    signal: input.signal,
-    responseFormat: PDF_ATTACHMENT_SYNTHESIS_RESPONSE_FORMAT,
-    systemInstructions: [
-      'You are Gemma Desktop\'s internal PDF attachment synthesis worker.',
-      'You will receive extracted PDF content or chunk summaries.',
-      'Prepare a compact, high-signal payload for a parent chat turn.',
-      'The promptText must stay within the requested token budget and should preserve the most relevant details for later conversation.',
-      'Prefer faithful compression over broad paraphrase.',
-    ].join('\n'),
-    sessionInput: [
-      {
-        type: 'text',
-        text: [
-          `PDF: ${input.fileName}`,
-          `Goal: ${input.goal}`,
-          `Total pages: ${input.pageCount}`,
-          `Maximum prompt budget: about ${input.promptTokenBudget} tokens.`,
-          'Return:',
-          '- summary: a short user-facing overview',
-          '- promptText: a compact parent-turn payload within budget',
-          '- evidence: short bullets for key supporting facts',
-          '- warnings: any important caveats',
-          '',
-          'Source material:',
-          input.synthesisSourceText,
-        ].join('\n'),
-      },
-    ],
-  })
-
-  return {
-    summary:
-      toTrimmedString(result.structuredOutput.summary)
-      ?? 'PDF prepared.',
-    promptText:
-      truncateTextToApproxTokens(
-        toTrimmedString(result.structuredOutput.promptText)
-        ?? toTrimmedString(result.outputText)
-        ?? '',
-        input.promptTokenBudget,
-      ),
-    evidence: toTrimmedStringArray(result.structuredOutput.evidence),
-    warnings: toTrimmedStringArray(result.structuredOutput.warnings),
-  }
-}
-
-async function derivePdfArtifact(input: {
-  file: ResolvedInspectableFile
-  goal: string
-  worker: FileWorkerCapabilitySnapshot
-  contextLength: number
-  promptTokenBudget: number
-  processedRange?: { startPage: number; endPage: number }
-  renderedPages?: Array<{ path: string; fileUrl?: string; pageNumber?: number }>
-  pageCount?: number
-  batchCount?: number
-  artifactDirectory?: string
-  sessionMetadata?: Record<string, unknown>
-  signal?: AbortSignal
-  onProgress?: (progress:
-    | { stage: 'start'; pageCount: number; renderedPageCount: number }
-    | { stage: 'page'; pageNumber: number; totalPages: number }
-    | { stage: 'chunk'; chunkIndex: number; chunkCount: number }
-    | { stage: 'synthesis' }
-    | { stage: 'complete'; promptTokenEstimate: number }) => void
-}): Promise<PdfDerivationResult> {
-  if (!input.worker.imageSupported) {
-    throw new Error('This session model is not marked as vision-capable, so PDF preparation is unavailable.')
-  }
-
-  const pageCount = input.pageCount ?? (await inspectPdfDocument(input.file.path)).pageCount
-  const processedRange = input.processedRange ?? {
-    startPage: 1,
-    endPage: pageCount,
-  }
-
-  let renderedPages = input.renderedPages?.map((page, index) => ({
-    pageNumber: page.pageNumber ?? (processedRange.startPage + index),
-    fileUrl: page.fileUrl ?? pathToFileURL(page.path).toString(),
-    path: page.path,
-  }))
-  let temporaryRenderDirectory: string | undefined
-
-  if (!renderedPages || renderedPages.length === 0) {
-    temporaryRenderDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-pdf-derive-'))
-    const rendered = await renderPdfPages({
-      path: input.file.path,
-      startPage: processedRange.startPage,
-      endPage: processedRange.endPage,
-      scale: PDF_RENDER_SCALE,
-      outputDir: temporaryRenderDirectory,
-      filenamePrefix: 'page',
-    })
-    renderedPages = rendered.map((page) => ({
-      pageNumber: page.pageNumber,
-      fileUrl: pathToFileURL(page.path).toString(),
-      path: page.path,
-    }))
-  }
-
-  try {
-    input.onProgress?.({
-      stage: 'start',
-      pageCount,
-      renderedPageCount: renderedPages.length,
-    })
-
-    const pages: PdfDerivedPageRecord[] = []
-    for (const renderedPage of renderedPages) {
-      const page = await runPdfPageExtractionSession({
-        fileName: input.file.name,
-        pageNumber: renderedPage.pageNumber,
-        pageImageUrl: renderedPage.fileUrl,
-        worker: input.worker,
-        sessionMetadata: input.sessionMetadata,
-        workingDirectory: path.dirname(input.file.path),
-        signal: input.signal,
-      })
-      pages.push(page)
-      input.onProgress?.({
-        stage: 'page',
-        pageNumber: renderedPage.pageNumber,
-        totalPages: renderedPages.length,
-      })
-    }
-
-    const combinedMarkdown = pages
-      .map((page) => `## Page ${page.pageNumber}\n\n${page.markdown}`)
-      .join('\n\n')
-
-    const synthesisInputTokenBudget = Math.max(
-      Math.floor(input.contextLength * 0.5),
-      8_000,
-    )
-    const pageWarnings = pages.flatMap((page) => page.warnings)
-    let synthesisSourceText = combinedMarkdown
-    let synthesisWarnings = [...pageWarnings]
-    let synthesisEvidence: string[] = []
-
-    if (estimateTextTokens(combinedMarkdown) > synthesisInputTokenBudget) {
-      const chunks = chunkPdfPagesByTokenBudget(
-        pages,
-        Math.max(Math.floor(synthesisInputTokenBudget * 0.7), 4_000),
-      )
-      const chunkSummaries: string[] = []
-
-      for (const [index, chunkPages] of chunks.entries()) {
-        input.onProgress?.({
-          stage: 'chunk',
-          chunkIndex: index + 1,
-          chunkCount: chunks.length,
-        })
-        const chunkResult = await runPdfChunkSummarySession({
-          fileName: input.file.name,
-          goal: input.goal,
-          chunkPages,
-          worker: input.worker,
-          sessionMetadata: input.sessionMetadata,
-          workingDirectory: path.dirname(input.file.path),
-          signal: input.signal,
-        })
-        chunkSummaries.push(
-          [
-            `### Pages ${chunkPages[0]?.pageNumber ?? 0}-${chunkPages[chunkPages.length - 1]?.pageNumber ?? 0}`,
-            chunkResult.summary,
-            chunkResult.evidence.length > 0
-              ? ['Evidence:', ...chunkResult.evidence.map((entry) => `- ${entry}`)].join('\n')
-              : '',
-          ].filter(Boolean).join('\n\n'),
-        )
-        synthesisWarnings = [...synthesisWarnings, ...chunkResult.warnings]
-        synthesisEvidence = [...synthesisEvidence, ...chunkResult.evidence]
-      }
-
-      synthesisSourceText = [
-        'Full extracted text was larger than one clean synthesis pass, so Gemma Desktop summarized it in chunks first.',
-        ...chunkSummaries,
-      ].join('\n\n')
-    }
-
-    input.onProgress?.({ stage: 'synthesis' })
-    const synthesis = await runPdfAttachmentSynthesisSession({
-      fileName: input.file.name,
-      goal: input.goal,
-      pageCount,
-      promptTokenBudget: input.promptTokenBudget,
-      synthesisSourceText,
-      worker: input.worker,
-      sessionMetadata: input.sessionMetadata,
-      workingDirectory: path.dirname(input.file.path),
-      signal: input.signal,
-    })
-
-    const promptTokenEstimate = estimateTextTokens(synthesis.promptText)
-    input.onProgress?.({
-      stage: 'complete',
-      promptTokenEstimate,
-    })
-
-    let artifactPath: string | undefined
-    let textPath: string | undefined
-
-    if (input.artifactDirectory) {
-      await fs.mkdir(input.artifactDirectory, { recursive: true })
-      textPath = path.join(input.artifactDirectory, 'document.md')
-      artifactPath = path.join(input.artifactDirectory, 'document.json')
-
-      const artifactRecord: PdfDerivedArtifactRecord = {
-        sourceName: input.file.name,
-        sourcePath: input.file.path,
-        pageCount,
-        processedRange,
-        derivedAt: new Date().toISOString(),
-        worker: {
-          modelId: input.worker.modelId,
-          runtimeId: input.worker.runtimeId,
-        },
-        goal: input.goal,
-        summary: synthesis.summary,
-        promptText: synthesis.promptText,
-        promptTokenEstimate,
-        evidence: synthesis.evidence,
-        warnings: [...synthesisWarnings, ...synthesis.warnings],
-        pages,
-      }
-
-      await fs.writeFile(
-        textPath,
-        [
-          `# ${input.file.name}`,
-          '',
-          `Processed pages: ${processedRange.startPage}-${processedRange.endPage} of ${pageCount}`,
-          '',
-          '## Summary',
-          '',
-          synthesis.summary,
-          '',
-          '## Extracted Content',
-          '',
-          ...pages.map((page) => `### Page ${page.pageNumber}\n\n${page.markdown}`),
-        ].join('\n'),
-        'utf8',
-      )
-      await fs.writeFile(
-        artifactPath,
-        JSON.stringify(artifactRecord, null, 2),
-        'utf8',
-      )
-    }
-
-    return {
-      artifactPath,
-      textPath,
-      summary: synthesis.summary,
-      promptText: synthesis.promptText,
-      promptTokenEstimate,
-      evidence: synthesisEvidence.length > 0
-        ? synthesisEvidence
-        : synthesis.evidence,
-      warnings: [...synthesisWarnings, ...synthesis.warnings],
-      pageCount,
-      batchCount: input.batchCount ?? 1,
-      pages,
-    }
-  } finally {
-    if (temporaryRenderDirectory) {
-      await fs.rm(temporaryRenderDirectory, { recursive: true, force: true }).catch(() => {})
-    }
-  }
-}
-
 async function buildPdfWorkerSessionMetadata(
   workerTarget: PrimaryModelTarget,
 ): Promise<Record<string, unknown>> {
@@ -10105,6 +6631,21 @@ async function buildPdfWorkerSessionMetadata(
   ) ?? {}
 }
 
+const smartContent = createSmartContentService({
+  getGemmaDesktop: () => gemmaDesktop,
+  getOrResumeLiveSession,
+  mapModels,
+  acquirePrimaryModelLease,
+  buildWorkerSessionMetadata: buildPdfWorkerSessionMetadata,
+  removePathBestEffort,
+})
+
+const {
+  resolveSessionFileWorkerCapabilitySnapshot,
+  derivePersistedPdfAttachmentForTurn,
+  truncateTextToApproxTokens,
+} = smartContent
+
 async function resolveKnownSessionSnapshot(
   sessionId: string,
 ): Promise<SessionSnapshot | undefined> {
@@ -10113,68 +6654,6 @@ async function resolveKnownSessionSnapshot(
     ?? store.getSnapshot(sessionId)
     ?? (await getPersistedSession(sessionId))?.snapshot
   )
-}
-
-async function derivePersistedPdfAttachmentForTurn(input: {
-  attachment: PersistedPdfAttachment
-  goal: string
-  worker: FileWorkerCapabilitySnapshot
-  contextLength: number
-  promptTokenBudget: number
-  sessionMetadata?: Record<string, unknown>
-  signal?: AbortSignal
-  onProgress?: Parameters<typeof derivePdfArtifact>[0]['onProgress']
-}): Promise<PersistedPdfAttachment> {
-  const artifactDirectory = path.join(
-    path.dirname(input.attachment.path),
-    `${path.basename(input.attachment.path, path.extname(input.attachment.path))}-derived-${Date.now()}`,
-  )
-
-  try {
-    const attachmentStats = await fs.stat(input.attachment.path)
-    const derived = await derivePdfArtifact({
-      file: {
-        path: input.attachment.path,
-        fileUrl: input.attachment.fileUrl,
-        name: input.attachment.name,
-        mediaType: input.attachment.mediaType,
-        kind: 'pdf',
-        size: input.attachment.size,
-        modifiedAtMs: attachmentStats.mtimeMs,
-      },
-      goal: input.goal,
-      worker: input.worker,
-      contextLength: input.contextLength,
-      promptTokenBudget: input.promptTokenBudget,
-      processedRange: input.attachment.processedRange,
-      renderedPages: input.attachment.renderedPages.map((page, index) => ({
-        path: page.path,
-        fileUrl: page.fileUrl,
-        pageNumber: input.attachment.processedRange.startPage + index,
-      })),
-      pageCount: input.attachment.pageCount,
-      batchCount: input.attachment.batchCount,
-      artifactDirectory,
-      sessionMetadata: input.sessionMetadata,
-      signal: input.signal,
-      onProgress: input.onProgress,
-    })
-
-    return {
-      ...input.attachment,
-      derivedArtifactPath: derived.artifactPath,
-      derivedTextPath: derived.textPath,
-      derivedSummary: derived.summary,
-      derivedPromptText: derived.promptText,
-      derivedPromptTokenEstimate: derived.promptTokenEstimate,
-      derivedByModelId: input.worker.modelId,
-      derivedByRuntimeId: input.worker.runtimeId,
-      batchCount: derived.batchCount,
-    }
-  } catch (error) {
-    await fs.rm(artifactDirectory, { recursive: true, force: true }).catch(() => {})
-    throw error
-  }
 }
 
 function buildCompactionCompletedMessage(result: {
@@ -11318,7 +7797,7 @@ async function runSessionCompactionInternal(
     data: runningState,
   })
   setPendingCompactionState(sessionId, runningState)
-  void broadcastSessionsChanged().catch(() => {})
+  broadcastSessionsChangedInBackground()
 
   try {
     const result = await session.compact({
@@ -11400,7 +7879,7 @@ async function runSessionCompactionInternal(
     activeSessionTasks.delete(sessionId)
     releaseExecutionGate()
     releasePrimaryLease()
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
   }
 }
 
@@ -11596,7 +8075,7 @@ async function runShellCommandInternal(
       workingDirectory,
     },
   })
-  void broadcastSessionsChanged().catch(() => {})
+  broadcastSessionsChangedInBackground()
 
   try {
     shellSessionManager.start({
@@ -12174,7 +8653,7 @@ function setPendingPlanQuestionState(
       kind: 'plan_question',
     })
   }
-  void store.flush(sessionId).catch(() => {})
+  flushSessionInBackground(sessionId)
 }
 
 function setPendingPlanExitState(
@@ -12193,7 +8672,7 @@ function setPendingPlanExitState(
       kind: 'plan_exit',
     })
   }
-  void store.flush(sessionId).catch(() => {})
+  flushSessionInBackground(sessionId)
 }
 
 function setPendingToolApprovalState(
@@ -12213,7 +8692,7 @@ function setPendingToolApprovalState(
       toolName: approval.toolName,
     })
   }
-  void store.flush(sessionId).catch(() => {})
+  flushSessionInBackground(sessionId)
 }
 
 function createAutomationLogEntry(
@@ -12524,1633 +9003,36 @@ async function checkDueAutomations(): Promise<void> {
 }
 
 function createAppTools(): RegisteredTool[] {
-  const buildAskUserTool = (
-    name: string,
-    description: string,
-  ): RegisteredTool => ({
-    name,
-    description,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        question: {},
-        details: {},
-        options: {},
-        placeholder: {},
-        raw: { type: 'string' },
-      },
-      additionalProperties: true,
-    },
-    async execute(input: unknown, context) {
-      const normalizedInput = normalizePlanQuestionInput(input)
-      const request: PendingPlanQuestion = {
-        id: randomUUID(),
-        turnId: context.turnId,
-        question: normalizedInput.question,
-        details: normalizedInput.details,
-        options: normalizedInput.options.slice(0, 6),
-        placeholder: normalizedInput.placeholder,
-        askedAt: Date.now(),
-      }
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'plan.question.requested',
-        summary: request.question,
-        turnId: context.turnId,
-        data: {
-          request,
-          normalizedFrom: input,
-          toolName: name,
-        },
-      })
-
-      setPendingPlanQuestionState(context.sessionId, request)
-      const signal = context.signal
-
-      if (!signal) {
-        throw new Error('Plan question requires an abort signal.')
-      }
-
-      const answer = await new Promise<string>((resolve, reject) => {
-        if (signal.aborted) {
-          reject(new Error('Plan question cancelled.'))
-          return
-        }
-
-        const onAbort = () => {
-          pendingPlanQuestionResolvers.delete(request.id)
-          setPendingPlanQuestionState(context.sessionId, null)
-          reject(new Error('Plan question cancelled.'))
-        }
-
-        signal.addEventListener('abort', onAbort, { once: true })
-        pendingPlanQuestionResolvers.set(request.id, {
-          sessionId: context.sessionId,
-          resolve: (value) => {
-            signal.removeEventListener('abort', onAbort)
-            resolve(value)
-          },
-          reject: (error) => {
-            signal.removeEventListener('abort', onAbort)
-            reject(error)
-          },
-        })
-      })
-
-      setPendingPlanQuestionState(context.sessionId, null)
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'renderer->main',
-        event: 'plan.question.answered',
-        summary: 'Plan question answered',
-        turnId: context.turnId,
-        data: {
-          requestId: request.id,
-          answer,
-          toolName: name,
-        },
-      })
-
-      return {
-        output: answer,
-        structuredOutput: {
-          answer,
-        },
-      }
-    },
+  return createAppToolsFromDependencies({
+    appendDebugLog,
+    browserToolManager,
+    buildSearchWebTool,
+    chromeDevtoolsToolManager,
+    closeShellCardInternal,
+    getSessionConfigFromMetadata,
+    getSettingsState,
+    listDiscoverableSkills,
+    pendingPlanQuestionResolvers,
+    projectBrowserManager,
+    resolveBaseMode,
+    resolveShellProcessOrThrow,
+    setPendingPlanExitState,
+    setPendingPlanQuestionState,
+    shellSessionManager,
+    smartContent,
+    startBackgroundProcessInternal,
   })
-
-  const askUserTool = buildAskUserTool(
-    ASK_USER_TOOL,
-    'Ask the user a direct planning question when you are blocked by a missing decision or requirement.',
-  )
-  const legacyAskPlanQuestionTool = buildAskUserTool(
-    LEGACY_ASK_PLAN_QUESTION_TOOL,
-    'Deprecated alias for ask_user. Ask the user a direct planning question when you are blocked.',
-  )
-
-  const activateSkillTool: RegisteredTool = {
-    name: ACTIVATE_SKILL_TOOL,
-    description:
-      'Load a discoverable skill into the session context when it becomes relevant.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        skillId: { type: 'string' },
-        reason: { type: 'string' },
-        raw: { type: 'string' },
-      },
-      additionalProperties: true,
-    },
-    async execute(input: unknown, context) {
-      const normalizedInput = normalizeSkillActivationInput(input)
-      if (!normalizedInput.skillId) {
-        throw new Error('activate_skill requires a skillId from the available skill catalog.')
-      }
-
-      const installedSkills = await listDiscoverableSkills()
-      const target = resolveInstalledSkill(
-        normalizedInput.skillId,
-        installedSkills,
-      )
-
-      if (!target) {
-        const available = installedSkills
-          .map((skill) => `${skillActivationId(skill)} (${skill.name})`)
-          .join(', ')
-        throw new Error(
-          available.length > 0
-            ? `Skill not found: ${normalizedInput.skillId}. Available skills: ${available}`
-            : 'No discoverable skills are available to activate.',
-        )
-      }
-
-      const [bundle] = await buildSkillContextBundles([target.id], installedSkills)
-      if (!bundle) {
-        throw new Error(`Failed to load instructions for ${target.name}.`)
-      }
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'skills.activated',
-        summary: `Activated skill ${target.name}`,
-        turnId: context.turnId,
-        data: {
-          requestedSkillId: normalizedInput.skillId,
-          activationId: skillActivationId(target),
-          reason: normalizedInput.reason,
-          skill: {
-            id: target.id,
-            name: target.name,
-            location: target.location,
-            directory: target.directory,
-          },
-        },
-      })
-
-      return {
-        title: target.name,
-        output: [
-          `Activated skill: ${target.name}`,
-          `Activation id: ${skillActivationId(target)}`,
-          bundle.text,
-          bundle.truncated
-            ? 'Note: some skill content or bundled resource listings were trimmed to keep the session usable.'
-            : '',
-        ]
-          .filter(Boolean)
-          .join('\n\n'),
-        structuredOutput: {
-          activationId: skillActivationId(target),
-          skillId: target.id,
-          name: target.name,
-          location: target.location,
-          directory: target.directory,
-          truncated: bundle.truncated,
-        },
-      }
-    },
-  }
-
-  const inspectFileTool: RegisteredTool<{
-    path: string
-    mediaType?: string
-  }> = {
-    name: 'inspect_file',
-    description:
-      'Direct tool. Resolve a local file path, classify it, and suggest the safest way to use read_file without guessing from the extension alone.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string' },
-        mediaType: { type: 'string' },
-      },
-      required: ['path'],
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const file = await resolveInspectableFile(input, context.workingDirectory)
-      const result = await inspectFileForReadStrategy({
-        file,
-        workingDirectory: context.workingDirectory,
-      })
-      return {
-        output: formatInspectFileOutput(result),
-        structuredOutput: {
-          path: result.displayPath,
-          absolutePath: file.path,
-          name: file.name,
-          kind: file.kind,
-          mediaType: file.mediaType,
-          size: file.size,
-          modifiedAtMs: file.modifiedAtMs,
-          pageCount: result.pageCount,
-          canReadWithReadFile: result.canReadWithReadFile,
-          suggestedTool: result.suggestedTool,
-          suggestedStrategy: result.suggestedStrategy,
-          reasoning: result.reasoning,
-          warnings: result.warnings,
-        },
-      }
-    },
-  }
-
-  const materializeContentTool: RegisteredTool<{
-    path: string
-    mediaType?: string
-    outputPath?: string
-    target?: ContentMaterializeTarget
-    createDirectories?: boolean
-    overwrite?: boolean
-  }> = {
-    name: 'materialize_content',
-    description:
-      'Direct tool. Convert a known local source into an addressable text artifact without loading the whole artifact into model context. Supports text files, PDFs, image OCR/description, and audio transcription when helper models are available.',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: { type: 'string' },
-        mediaType: { type: 'string' },
-        outputPath: { type: 'string' },
-        target: { type: 'string', enum: ['auto', 'text', 'markdown'] },
-        createDirectories: { type: 'boolean' },
-        overwrite: { type: 'boolean' },
-      },
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const materialized = await materializeInspectableContent({
-        ...input,
-        workingDirectory: context.workingDirectory,
-        sessionId: context.sessionId,
-        signal: context.signal,
-        onProgress: context.emitProgress,
-      })
-      return {
-        output: formatMaterializedContentOutput(materialized),
-        structuredOutput: materializedContentForStructuredOutput(materialized),
-      }
-    },
-  }
-
-  const readContentTool: RegisteredTool<{
-    path: string
-    mediaType?: string
-    offset?: number
-    limit?: number
-    maxBytes?: number
-  }> = {
-    name: 'read_content',
-    description:
-      'Direct tool. Read a materialized content artifact or source file with line-based pagination. If the path is a PDF, image, or audio file, Gemma Desktop materializes it to cached text first.',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: { type: 'string' },
-        mediaType: { type: 'string' },
-        offset: { type: 'integer', minimum: 1 },
-        limit: { type: 'integer', minimum: 1, maximum: 10000 },
-        maxBytes: { type: 'integer', minimum: 256, maximum: 524288 },
-      },
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const materialized = await materializeInspectableContent({
-        path: input.path,
-        mediaType: input.mediaType,
-        workingDirectory: context.workingDirectory,
-        sessionId: context.sessionId,
-        signal: context.signal,
-        onProgress: context.emitProgress,
-      })
-      const result = buildMaterializedReadResult({
-        materialized,
-        offset: input.offset,
-        limit: input.limit,
-        maxBytes: input.maxBytes,
-      })
-      return {
-        output: renderWorkspaceReadFile(result),
-        structuredOutput: {
-          ...result,
-          materialized: materializedContentForStructuredOutput(materialized),
-        },
-        metadata: { truncated: result.truncated },
-      }
-    },
-  }
-
-  const searchContentTool: RegisteredTool<{
-    path: string
-    query: string
-    mediaType?: string
-    regex?: boolean
-    caseSensitive?: boolean
-    wholeWord?: boolean
-    before?: number
-    after?: number
-    limit?: number
-  }> = {
-    name: 'search_content',
-    description:
-      'Direct tool. Search within one materialized content artifact or source file. For PDFs, images, and audio, Gemma Desktop materializes cached text first, then searches that artifact.',
-    inputSchema: {
-      type: 'object',
-      required: ['path', 'query'],
-      properties: {
-        path: { type: 'string' },
-        query: { type: 'string' },
-        mediaType: { type: 'string' },
-        regex: { type: 'boolean' },
-        caseSensitive: { type: 'boolean' },
-        wholeWord: { type: 'boolean' },
-        before: { type: 'integer', minimum: 0, maximum: 20 },
-        after: { type: 'integer', minimum: 0, maximum: 20 },
-        limit: { type: 'integer', minimum: 1, maximum: 500 },
-      },
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const materialized = await materializeInspectableContent({
-        path: input.path,
-        mediaType: input.mediaType,
-        workingDirectory: context.workingDirectory,
-        sessionId: context.sessionId,
-        signal: context.signal,
-        onProgress: context.emitProgress,
-      })
-      const result = searchMaterializedText({
-        text: materialized.text,
-        path: materialized.displayArtifactPath,
-        query: input.query,
-        regex: input.regex,
-        caseSensitive: input.caseSensitive,
-        wholeWord: input.wholeWord,
-        before: input.before,
-        after: input.after,
-        limit: input.limit,
-      })
-      return {
-        output: formatContentSearchOutput({
-          path: materialized.displayArtifactPath,
-          query: input.query,
-          matches: result.matches,
-          truncated: result.truncated,
-        }),
-        structuredOutput: {
-          path: materialized.displayArtifactPath,
-          artifactPath: materialized.artifactPath,
-          query: input.query,
-          regex: result.regex,
-          matches: result.matches,
-          truncated: result.truncated,
-          materialized: materializedContentForStructuredOutput(materialized),
-        },
-        metadata: { truncated: result.truncated },
-      }
-    },
-  }
-
-  const smartReadFileTool: RegisteredTool<{
-    path: string
-    mediaType?: string
-    offset?: number
-    limit?: number
-    maxBytes?: number
-  }> = {
-    name: 'read_file',
-    description:
-      'Direct tool. Read a known file with line-based pagination. For PDFs, images, and audio, Gemma Desktop first converts the file into cached text, then returns a paginated text window.',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: { type: 'string' },
-        mediaType: { type: 'string' },
-        offset: { type: 'integer', minimum: 1 },
-        limit: { type: 'integer', minimum: 1, maximum: 10000 },
-        maxBytes: { type: 'integer', minimum: 256, maximum: 524288 },
-      },
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const result = await readInspectableFileForTool({
-        ...input,
-        workingDirectory: context.workingDirectory,
-        sessionId: context.sessionId,
-        signal: context.signal,
-        onProgress: context.emitProgress,
-      })
-      return {
-        output: renderWorkspaceReadFile(result),
-        structuredOutput: result,
-        metadata: { truncated: result.truncated },
-      }
-    },
-  }
-
-  const smartReadFilesTool: RegisteredTool<{
-    requests: Array<{
-      path: string
-      mediaType?: string
-      offset?: number
-      limit?: number
-    }>
-    maxTotalBytes?: number
-  }> = {
-    name: 'read_files',
-    description:
-      'Direct tool. Batch-read several known files under one shared byte budget. Gemma Desktop converts PDFs, images, and audio into cached text before returning paginated text windows.',
-    inputSchema: {
-      type: 'object',
-      required: ['requests'],
-      properties: {
-        requests: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['path'],
-            properties: {
-              path: { type: 'string' },
-              mediaType: { type: 'string' },
-              offset: { type: 'integer', minimum: 1 },
-              limit: { type: 'integer', minimum: 1, maximum: 10000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        maxTotalBytes: { type: 'integer', minimum: 256, maximum: 2097152 },
-      },
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const maxTotalBytes = Math.max(
-        Math.min(
-          typeof input.maxTotalBytes === 'number'
-            ? Math.floor(input.maxTotalBytes)
-            : SMART_MULTI_READ_DEFAULT_MAX_BYTES,
-          2 * 1024 * 1024,
-        ),
-        256,
-      )
-      const results: Array<Awaited<ReturnType<typeof readInspectableFileForTool>>> = []
-      let totalBytes = 0
-      let truncated = false
-      let exhaustedBudget = false
-
-      for (const request of input.requests) {
-        const remainingBytes = maxTotalBytes - totalBytes
-        if (remainingBytes <= 0) {
-          exhaustedBudget = true
-          truncated = true
-          break
-        }
-
-        const requestPath = typeof request.path === 'string' ? request.path.trim() : ''
-        const requestLabel = requestPath.length > 0 ? path.basename(requestPath) : `file ${results.length + 1}`
-        const result = await readInspectableFileForTool({
-          ...request,
-          maxBytes: remainingBytes,
-          workingDirectory: context.workingDirectory,
-          sessionId: context.sessionId,
-          signal: context.signal,
-          onProgress: context.emitProgress
-            ? (progress) => {
-                context.emitProgress?.({
-                  id: `request-${results.length + 1}-${progress.id}`,
-                  label: `${requestLabel}: ${progress.label}`,
-                  tone: progress.tone,
-                })
-              }
-            : undefined,
-        })
-        results.push(result)
-        totalBytes += Buffer.byteLength(result.numberedContent, 'utf8')
-        if (result.truncated) {
-          truncated = true
-        }
-      }
-
-      if (results.length < input.requests.length) {
-        truncated = true
-      }
-
-      const structuredOutput = {
-        results,
-        truncated,
-        exhaustedBudget,
-        maxTotalBytes,
-        totalBytes,
-      }
-
-      return {
-        output: renderWorkspaceReadFiles(structuredOutput),
-        structuredOutput,
-        metadata: { truncated },
-      }
-    },
-  }
-
-  const startBackgroundProcessTool: RegisteredTool<{
-    command: string
-    cwd?: string
-  }> = {
-    name: START_BACKGROUND_PROCESS_TOOL,
-    description:
-      'Start one conversation-scoped background process for a long-running local command such as a dev server, watcher, or download. Use cwd for subdirectories instead of prefixing the command with cd.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        command: {
-          type: 'string',
-          description:
-            'Command to run from the selected working directory, for example "npm run dev". Do not include shell background operators.',
-        },
-        cwd: {
-          type: 'string',
-          description:
-            'Optional path relative to the session workspace where the command should run, for example "blackhole02". Defaults to the session workspace.',
-        },
-      },
-      required: ['command'],
-      additionalProperties: false,
-    },
-    async execute(input, context) {
-      const command =
-        typeof input.command === 'string' ? input.command.trim() : ''
-      const workingDirectory = resolveBackgroundProcessWorkingDirectory({
-        workingDirectory: context.workingDirectory,
-        cwd: input.cwd,
-      })
-      const state = await startBackgroundProcessInternal(context.sessionId, {
-        command,
-        workingDirectory,
-      })
-
-      return {
-        output: [
-          `Started background process ${state.terminalId}.`,
-          `Command: ${state.command}`,
-          `Working directory: ${state.workingDirectory}`,
-          `Status: ${state.status}`,
-          `Use ${PEEK_BACKGROUND_PROCESS_TOOL} to inspect bounded output or ${TERMINATE_BACKGROUND_PROCESS_TOOL} to stop it.`,
-        ].join('\n'),
-        structuredOutput: {
-          processId: state.terminalId,
-          command: state.command,
-          workingDirectory: state.workingDirectory,
-          status: state.status,
-          startedAt: state.startedAt,
-        },
-      }
-    },
-  }
-
-  const peekBackgroundProcessTool: RegisteredTool = {
-    name: PEEK_BACKGROUND_PROCESS_TOOL,
-    description:
-      'Check whether a tracked background process is still running and return a bounded tail of its recent output.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        processId: { type: 'string' },
-        maxChars: { type: 'number' },
-      },
-      required: ['processId'],
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as { processId?: unknown; maxChars?: unknown }
-          : {}
-      const processId =
-        typeof record.processId === 'string' ? record.processId.trim() : ''
-      if (processId.length === 0) {
-        throw new Error('peek_background_process requires a processId.')
-      }
-
-      const liveState = shellSessionManager.inspect(context.sessionId, processId)
-      const block = resolveShellProcessOrThrow(context.sessionId, processId)
-      const peek = peekShellTranscript(
-        liveState?.transcript ?? block.transcript,
-        typeof record.maxChars === 'number' ? record.maxChars : DEFAULT_SHELL_PEEK_CHARS,
-      )
-      const status = liveState?.status ?? block.status
-      const exitCode = liveState?.exitCode ?? block.exitCode
-      const completedAt = liveState?.completedAt ?? block.completedAt
-      const notes = [
-        peek.peekTruncated
-          ? `Showing only the last ${peek.returnedChars} characters of ${peek.totalChars} retained transcript characters.`
-          : undefined,
-        peek.storageTruncated
-          ? 'Older process output was already dropped from retained transcript storage.'
-          : undefined,
-      ].filter((entry): entry is string => Boolean(entry))
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'sessions.process.peeked',
-        summary: `Peeked background process ${processId}`,
-        turnId: context.turnId,
-        data: {
-          processId,
-          status,
-          exitCode,
-          peekTruncated: peek.peekTruncated,
-          storageTruncated: peek.storageTruncated,
-          returnedChars: peek.returnedChars,
-        },
-      })
-
-      return {
-        output: [
-          `Process: ${processId}`,
-          `Command: ${block.command}`,
-          `Status: ${status}${exitCode == null ? '' : ` (exit ${exitCode})`}`,
-          `Working directory: ${block.workingDirectory}`,
-          ...(completedAt != null ? [`Completed at: ${new Date(completedAt).toISOString()}`] : []),
-          ...(notes.length > 0 ? [`Notes: ${notes.join(' ')}`] : []),
-          'Recent output:',
-          peek.text.length > 0 ? peek.text : '[no output recorded yet]',
-        ].join('\n'),
-        structuredOutput: {
-          processId,
-          command: block.command,
-          workingDirectory: block.workingDirectory,
-          status,
-          exitCode,
-          startedAt: block.startedAt,
-          completedAt,
-          output: peek.text,
-          outputChars: peek.returnedChars,
-          retainedTranscriptChars: peek.totalChars,
-          peekTruncated: peek.peekTruncated,
-          storageTruncated: peek.storageTruncated,
-        },
-      }
-    },
-  }
-
-  const terminateBackgroundProcessTool: RegisteredTool = {
-    name: TERMINATE_BACKGROUND_PROCESS_TOOL,
-    description:
-      'Terminate a tracked background process in the current conversation only when the user asked you to stop it or it must be stopped for safety or task progress.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        processId: { type: 'string' },
-      },
-      required: ['processId'],
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as { processId?: unknown }
-          : {}
-      const processId =
-        typeof record.processId === 'string' ? record.processId.trim() : ''
-      if (processId.length === 0) {
-        throw new Error('terminate_background_process requires a processId.')
-      }
-
-      const block = resolveShellProcessOrThrow(context.sessionId, processId)
-      const liveState = shellSessionManager.inspect(context.sessionId, processId)
-
-      if (liveState?.status === 'running') {
-        await closeShellCardInternal(context.sessionId, processId)
-        appendDebugLog(context.sessionId, {
-          layer: 'ipc',
-          direction: 'app->sdk',
-          event: 'sessions.process.terminate.requested',
-          summary: `Terminate requested for ${processId}`,
-          turnId: context.turnId,
-          data: {
-            processId,
-            command: block.command,
-          },
-        })
-        return {
-          output: [
-            `Termination requested for ${processId}.`,
-            `Command: ${block.command}`,
-            `Use ${PEEK_BACKGROUND_PROCESS_TOOL} if you need to confirm the final exit state.`,
-          ].join('\n'),
-          structuredOutput: {
-            processId,
-            command: block.command,
-            status: 'termination_requested',
-          },
-        }
-      }
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'sessions.process.terminate.noop',
-        summary: `Background process ${processId} was already ${block.status}`,
-        turnId: context.turnId,
-        data: {
-          processId,
-          command: block.command,
-          status: block.status,
-          exitCode: block.exitCode,
-        },
-      })
-
-      return {
-        output: [
-          `Process ${processId} is not running.`,
-          `Command: ${block.command}`,
-          `Status: ${block.status}${block.exitCode == null ? '' : ` (exit ${block.exitCode})`}`,
-        ].join('\n'),
-        structuredOutput: {
-          processId,
-          command: block.command,
-          status: block.status,
-          exitCode: block.exitCode,
-          completedAt: block.completedAt,
-        },
-      }
-    },
-  }
-
-  const openProjectBrowserTool: RegisteredTool = {
-    name: OPEN_PROJECT_BROWSER_TOOL,
-    description:
-      'Open or refresh the visible Project Browser for an http or https URL and return a bounded page snapshot for verification.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string' },
-        timeoutMs: { type: 'number' },
-        maxChars: { type: 'number' },
-      },
-      required: ['url'],
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as {
-              url?: unknown
-              timeoutMs?: unknown
-              maxChars?: unknown
-            }
-          : {}
-
-      const result = await projectBrowserManager.open({
-        sessionId: context.sessionId,
-        url: typeof record.url === 'string' ? record.url : '',
-        coBrowseActive: isCoBrowseSessionMetadata(context.sessionMetadata),
-        timeoutMs:
-          typeof record.timeoutMs === 'number' && Number.isFinite(record.timeoutMs)
-            ? record.timeoutMs
-            : undefined,
-        maxChars:
-          typeof record.maxChars === 'number' && Number.isFinite(record.maxChars)
-            ? record.maxChars
-            : undefined,
-      })
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'project-browser.opened',
-        summary:
-          typeof record.url === 'string' && record.url.trim().length > 0
-            ? `Opened Project Browser for ${record.url}`
-            : 'Opened Project Browser',
-        turnId: context.turnId,
-        data: {
-          input: record,
-          structuredOutput: result.structuredOutput,
-        },
-      })
-
-      return result
-    },
-  }
-
-  const searchProjectBrowserDomTool: RegisteredTool = {
-    name: SEARCH_PROJECT_BROWSER_DOM_TOOL,
-    description:
-      'Search the current Project Browser page for selectors or text patterns and return bounded DOM matches.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        selectors: {
-          type: 'array',
-          items: { type: 'string' },
-        },
-        textPatterns: {
-          type: 'array',
-          items: { type: 'string' },
-        },
-        maxMatches: { type: 'number' },
-        includeHtml: { type: 'boolean' },
-      },
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      projectBrowserManager.assertAgentBrowserControl({
-        sessionId: context.sessionId,
-        coBrowseActive: isCoBrowseSessionMetadata(context.sessionMetadata),
-      })
-
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as {
-              selectors?: unknown
-              textPatterns?: unknown
-              maxMatches?: unknown
-              includeHtml?: unknown
-            }
-          : {}
-
-      const result = await projectBrowserManager.searchDom({
-        selectors: Array.isArray(record.selectors)
-          ? record.selectors.filter((entry): entry is string => typeof entry === 'string')
-          : undefined,
-        textPatterns: Array.isArray(record.textPatterns)
-          ? record.textPatterns.filter((entry): entry is string => typeof entry === 'string')
-          : undefined,
-        maxMatches:
-          typeof record.maxMatches === 'number' && Number.isFinite(record.maxMatches)
-            ? record.maxMatches
-            : undefined,
-        includeHtml: record.includeHtml === true,
-      })
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'project-browser.dom-searched',
-        summary: 'Searched Project Browser DOM',
-        turnId: context.turnId,
-        data: {
-          input: record,
-          structuredOutput: result.structuredOutput,
-        },
-      })
-
-      return result
-    },
-  }
-
-  const releaseProjectBrowserToUserTool: RegisteredTool = {
-    name: RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
-    description:
-      'Release visible CoBrowse browser control to the user for login, CAPTCHA, permission, payment, or other human-only browser actions.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        reason: { type: 'string' },
-      },
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      if (!isCoBrowseSessionMetadata(context.sessionMetadata)) {
-        throw new Error('Project Browser control handoff is only available during CoBrowse.')
-      }
-
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as { reason?: unknown }
-          : {}
-      const state = projectBrowserManager.releaseControlToUser({
-        sessionId: context.sessionId,
-        reason: typeof record.reason === 'string' ? record.reason : undefined,
-      })
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'project-browser.control-released-to-user',
-        summary: 'Released Project Browser control to the user',
-        turnId: context.turnId,
-        data: {
-          input: record,
-          state,
-        },
-      })
-
-      return {
-        output: [
-          'Released Project Browser control to the user.',
-          'Browser tools are blocked until the user clicks Release control.',
-        ].join('\n'),
-        structuredOutput: {
-          action: 'release_control_to_user',
-          controlOwner: state.controlOwner,
-          controlReason: state.controlReason,
-          needsUserRelease: true,
-        },
-      }
-    },
-  }
-
-  const getProjectBrowserErrorsTool: RegisteredTool = {
-    name: GET_PROJECT_BROWSER_ERRORS_TOOL,
-    description:
-      'Return recent console and page-load errors captured from the current Project Browser page with bounded output.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        maxItems: { type: 'number' },
-      },
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      projectBrowserManager.assertAgentBrowserControl({
-        sessionId: context.sessionId,
-        coBrowseActive: isCoBrowseSessionMetadata(context.sessionMetadata),
-      })
-
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as { maxItems?: unknown }
-          : {}
-
-      const result = projectBrowserManager.getConsoleErrors({
-        maxItems:
-          typeof record.maxItems === 'number' && Number.isFinite(record.maxItems)
-            ? record.maxItems
-            : undefined,
-      })
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'project-browser.errors-read',
-        summary: 'Read Project Browser console errors',
-        turnId: context.turnId,
-        data: {
-          input: record,
-          structuredOutput: result.structuredOutput,
-        },
-      })
-
-      return result
-    },
-  }
-
-  const browserTools: RegisteredTool[] = (browserToolManager?.getToolDefinitions() ?? [])
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      async execute(input: unknown, context) {
-        if (!browserToolManager) {
-          throw new Error('Browser tool is not initialized.')
-        }
-
-        const argumentsRecord =
-          input && typeof input === 'object' && !Array.isArray(input)
-            ? input as Record<string, unknown>
-            : {}
-
-        const result = await browserToolManager.callTool(
-          context.sessionId,
-          tool.name,
-          argumentsRecord,
-        )
-
-        appendDebugLog(context.sessionId, {
-          layer: 'ipc',
-          direction: 'app->sdk',
-          event: 'chrome.tool.executed',
-          summary: `Executed ${tool.name}`,
-          turnId: context.turnId,
-          data: {
-            toolName: tool.name,
-            arguments: argumentsRecord,
-            structuredOutput: result.structuredOutput,
-          },
-        })
-
-        return {
-          output: result.output,
-          structuredOutput: result.structuredOutput,
-        }
-      },
-    }))
-
-  const chromeDevtoolsTools: RegisteredTool[] = (
-    chromeDevtoolsToolManager?.getToolDefinitions() ?? []
-  ).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    async execute(input: unknown, context) {
-      if (!chromeDevtoolsToolManager) {
-        throw new Error('Chrome DevTools is not initialized.')
-      }
-
-      const argumentsRecord =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as Record<string, unknown>
-          : {}
-
-      const result = await chromeDevtoolsToolManager.callTool(
-        context.sessionId,
-        tool.name,
-        argumentsRecord,
-      )
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'chrome-devtools.tool.executed',
-        summary: `Executed ${tool.name}`,
-        turnId: context.turnId,
-        data: {
-          toolName: tool.name,
-          arguments: argumentsRecord,
-          structuredOutput: result.structuredOutput,
-        },
-      })
-
-      return {
-        output: result.output,
-        structuredOutput: result.structuredOutput,
-      }
-    },
-  }))
-
-  const askGeminiTool: RegisteredTool = {
-    name: ASK_GEMINI_TOOL_NAME,
-    description:
-      'Ask the locally installed Gemini CLI a detailed question in headless read-only mode and use the answer as advisory input.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        question: { type: 'string' },
-        context: { type: 'string' },
-        model: { type: 'string' },
-      },
-      required: ['question'],
-      additionalProperties: false,
-    },
-    async execute(input: unknown, context) {
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as {
-              question?: unknown
-              context?: unknown
-              model?: unknown
-            }
-          : {}
-      const question =
-        typeof record.question === 'string' ? record.question.trim() : ''
-      const contextText =
-        typeof record.context === 'string' && record.context.trim().length > 0
-          ? record.context.trim()
-          : undefined
-      const requestedModel =
-        typeof record.model === 'string' && record.model.trim().length > 0
-          ? record.model.trim()
-          : undefined
-      const currentSettings = await getSettingsState()
-      const configuredModel = currentSettings.integrations.geminiCli.model.trim()
-        || ASK_GEMINI_DEFAULT_MODEL
-
-      const result = await askGeminiCli({
-        question,
-        context: contextText,
-        model: requestedModel ?? configuredModel,
-        workingDirectory: context.workingDirectory,
-        approvalMode: getSessionConfigFromMetadata(
-          context.sessionMetadata,
-          resolveBaseMode(context.mode),
-        ).approvalMode,
-      })
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'gemini.tool.executed',
-        summary: result.ok
-          ? 'Received Ask Gemini response'
-          : `Ask Gemini failed: ${result.errorKind}`,
-        turnId: context.turnId,
-        data: {
-          question,
-          requestedModel: requestedModel ?? configuredModel,
-          result,
-        },
-      })
-
-      if (!result.ok) {
-        return {
-          output: `Ask Gemini failed: ${result.error}`,
-          structuredOutput: result,
-        }
-      }
-
-      return {
-        output: [
-          result.response,
-          ...(result.warnings && result.warnings.length > 0
-            ? ['', `Warnings: ${result.warnings.join(' ')}`]
-            : []),
-        ].join('\n'),
-        structuredOutput: result,
-      }
-    },
-  }
-
-  const buildExitPlanModeTool = (
-    name: string,
-    trigger: PendingPlanExit['trigger'],
-    description: string,
-  ): RegisteredTool => ({
-    name,
-    description,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        summary: {},
-        details: {},
-        executionPrompt: {},
-        workMode: {},
-        recommendedMode: {},
-        mode: {},
-        raw: { type: 'string' },
-      },
-      additionalProperties: true,
-    },
-    async execute(input: unknown, context) {
-      const normalizedInput = normalizePlanExitInput(input)
-      const planExit: PendingPlanExit = {
-        id: randomUUID(),
-        turnId: context.turnId,
-        createdAt: Date.now(),
-        workMode: normalizedInput.workMode,
-        summary: normalizedInput.summary,
-        details: normalizedInput.details,
-        source: 'model',
-        trigger,
-        attentionToken: Date.now(),
-      }
-
-      appendDebugLog(context.sessionId, {
-        layer: 'ipc',
-        direction: 'app->sdk',
-        event: 'plan.exit.prepared',
-        summary: planExit.summary.slice(0, 140),
-        turnId: context.turnId,
-        data: {
-          planExit,
-          normalizedFrom: input,
-          toolName: name,
-        },
-      })
-
-      setPendingPlanExitState(context.sessionId, planExit)
-
-      return {
-        output:
-          'Plan exit prepared. Tell the user the plan is ready and they can switch this session back to work mode.',
-        structuredOutput: planExit,
-      }
-    },
-  })
-
-  return [
-    buildSearchWebTool(),
-    askUserTool,
-    legacyAskPlanQuestionTool,
-    activateSkillTool,
-    inspectFileTool,
-    materializeContentTool,
-    readContentTool,
-    searchContentTool,
-    smartReadFileTool,
-    smartReadFilesTool,
-    startBackgroundProcessTool,
-    peekBackgroundProcessTool,
-    terminateBackgroundProcessTool,
-    openProjectBrowserTool,
-    searchProjectBrowserDomTool,
-    releaseProjectBrowserToUserTool,
-    getProjectBrowserErrorsTool,
-    askGeminiTool,
-    ...browserTools,
-    ...chromeDevtoolsTools,
-    buildExitPlanModeTool(
-      EXIT_PLAN_MODE_TOOL,
-      'exit_plan_mode',
-      'Prepare the current plan to exit plan mode and switch this session back to its underlying work mode.',
-    ),
-    buildExitPlanModeTool(
-      LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
-      'legacy_prepare_plan_execution',
-      'Deprecated alias for exit_plan_mode. Prepare the current plan to switch this session back to work mode.',
-    ),
-  ]
-}
-
-function sanitizeVersion(raw?: string): string | undefined {
-  if (!raw) return undefined
-  // Strip ANSI escape codes
-  const clean = raw.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
-  // Try to extract a semver-like version number
-  const match = /(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)/.exec(clean)
-  return match ? match[1] : clean.trim().slice(0, 20) || undefined
-}
-
-function mapRuntimes(inspectionResults: Array<{ runtime: { id: string; displayName: string; endpoint: string }; healthy: boolean; reachable: boolean; installed: boolean; version?: string }>): Array<{ id: string; name: string; status: 'running' | 'stopped' | 'not_installed'; version?: string }> {
-  return inspectionResults.map((r) => ({
-    id: r.runtime.id,
-    name: r.runtime.displayName,
-    status: r.healthy ? 'running' : r.installed ? 'stopped' : 'not_installed',
-    version: sanitizeVersion(r.version),
-  }))
-}
-
-function coerceNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    if (typeof value === 'number') {
-      return value
-    }
-    if (typeof value === 'string' && value.trim().length > 0) {
-      const parsed = Number(value)
-      if (!Number.isNaN(parsed)) {
-        return parsed
-      }
-    }
-  }
-  return undefined
-}
-
-function normalizeNumericRecord(
-  value: unknown,
-): Record<string, number> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>).filter(([, entry]) =>
-    typeof entry === 'number' && Number.isFinite(entry),
-  )
-  return entries.length > 0
-    ? Object.fromEntries(entries) as Record<string, number>
-    : undefined
-}
-
-function computeApproxGpuResidencyPercent(
-  config: Record<string, unknown>,
-): number | undefined {
-  const size = coerceNumber(config.size)
-  const sizeVram = coerceNumber(config.sizeVram, config.size_vram)
-  if (!size || !sizeVram || size <= 0) {
-    return undefined
-  }
-
-  return Math.max(0, Math.min(100, Math.round((sizeVram / size) * 100)))
-}
-
-const MLX_OPTIMIZATION_TOKEN = /(?:^|[^a-z0-9])mlx(?:[^a-z0-9]|$)/i
-
-function valueHasMlxOptimizationHint(value: unknown): boolean {
-  if (typeof value === 'string') {
-    return MLX_OPTIMIZATION_TOKEN.test(value)
-  }
-
-  if (Array.isArray(value)) {
-    return value.some(valueHasMlxOptimizationHint)
-  }
-
-  if (value && typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).some(valueHasMlxOptimizationHint)
-  }
-
-  return false
-}
-
-function deriveOptimizationTags(input: {
-  runtimeId: string
-  modelId: string
-  displayName: string
-  metadata: Record<string, unknown>
-}): string[] | undefined {
-  const tags = new Set<string>()
-
-  if (input.runtimeId === 'omlx-openai') {
-    tags.add('MLX')
-  }
-
-  const metadata = input.metadata
-  const candidates = [
-    input.modelId,
-    input.displayName,
-    metadata.format,
-    metadata.modelFormat,
-    metadata.model_format,
-    metadata.optimizedFor,
-    metadata.optimized_for,
-    metadata.optimization,
-    metadata.optimizations,
-    metadata.accelerator,
-    metadata.accelerators,
-    metadata.engineType,
-    metadata.engine_type,
-    metadata.modelType,
-    metadata.model_type,
-    metadata.modelPath,
-    metadata.model_path,
-    metadata.sourceId,
-    metadata.publisher,
-    metadata.description,
-  ]
-
-  if (candidates.some(valueHasMlxOptimizationHint)) {
-    tags.add('MLX')
-  }
-
-  return tags.size > 0 ? [...tags] : undefined
-}
-
-function createConfiguredRuntimeAdapters(currentSettings: AppSettingsRecord) {
-  return [
-    createOllamaNativeAdapter({
-      baseUrl: currentSettings.runtimes.ollama.endpoint,
-    }),
-    createOllamaOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.ollama.endpoint,
-    }),
-    createLmStudioNativeAdapter({
-      baseUrl: currentSettings.runtimes.lmstudio.endpoint,
-    }),
-    createLmStudioOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.lmstudio.endpoint,
-    }),
-    createLlamaCppServerAdapter({
-      baseUrl: currentSettings.runtimes.llamacpp.endpoint,
-    }),
-    createOmlxOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.omlx.endpoint,
-      apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
-    }),
-  ]
-}
-
-type MappedModelRuntimeConfig = {
-  provider: 'ollama' | 'lmstudio' | 'omlx'
-  baseParameters?: Record<string, unknown>
-  baseParametersText?: string
-  requestedOptions?: Record<string, number>
-  loadedOptions?: Record<string, unknown>
-  nominalContextLength?: number
-  loadedContextLength?: number
-  approxGpuResidencyPercent?: number
-}
-
-type MappedModelSummary = {
-  id: string
-  name: string
-  runtimeId: string
-  runtimeName: string
-  parameterCount?: string
-  quantization?: string
-  contextLength?: number
-  optimizationTags?: string[]
-  status: 'loaded' | 'available' | 'loading'
-  attachmentSupport: ReturnType<typeof deriveAttachmentSupport>
-  runtimeConfig?: MappedModelRuntimeConfig
 }
 
 function mapModels(
-  inspectionResults: Array<{ runtime: { id: string; displayName: string }; models: Array<{ id: string; runtimeId: string; kind: string; metadata: Record<string, unknown>; capabilities: Array<{ id: string; status: string; scope?: string; source?: string }> }>; loadedInstances: Array<{ modelId: string; status: string }> }>,
-  currentSettings?: Pick<AppSettingsRecord, 'ollama' | 'lmstudio' | 'omlx'> | null,
-): MappedModelSummary[] {
-  const models: MappedModelSummary[] = []
-  const pendingLoadTargets = listPendingModelLoadTargets()
-  const pendingLoadKeys = new Set(pendingLoadTargets.map(modelTargetKey))
-  const mappedKeys = new Set<string>()
-
-  for (const rt of inspectionResults) {
-    const loadedInstancesByModel = new Map(
-      rt.loadedInstances.map((instance) => [instance.modelId, instance]),
-    )
-    const loadedIds = new Set(
-      rt.loadedInstances
-        .filter((i) => i.status === 'loaded' || i.status === 'loading')
-        .map((i) => i.modelId),
-    )
-    const loadingIds = new Set(
-      rt.loadedInstances
-        .filter((i) => i.status === 'loading')
-        .map((i) => i.modelId),
-    )
-
-    for (const m of rt.models) {
-      if (m.kind === 'embedding') continue
-
-      const meta = m.metadata as Record<string, unknown>
-      const loadedInstance = loadedInstancesByModel.get(m.id) as
-        | { config?: Record<string, unknown> }
-        | undefined
-      const loadedConfig =
-        loadedInstance && typeof loadedInstance.config === 'object'
-          ? (loadedInstance.config as Record<string, unknown>)
-          : {}
-
-      // Metadata fields may be objects (e.g. quantization: {name, bits_per_weight})
-      // Flatten to strings for the renderer
-      let quantization: string | undefined
-      if (meta.quantization != null) {
-        quantization = typeof meta.quantization === 'object'
-          ? (meta.quantization as Record<string, unknown>).name as string
-          : String(meta.quantization)
-      }
-
-      let parameterCount: string | undefined
-      const rawParameterCount =
-        meta.parameterCount
-        ?? meta.paramsString
-        ?? meta.params_string
-      if (rawParameterCount != null) {
-        parameterCount = typeof rawParameterCount === 'object'
-          ? JSON.stringify(rawParameterCount)
-          : String(rawParameterCount)
-      }
-
-      const contextLength = coerceNumber(
-        loadedConfig.context_length,
-        loadedConfig.num_ctx,
-        meta.contextLength,
-        meta.contextWindow,
-        meta.context_size,
-        meta.num_ctx,
-        meta.maxContextLength,
-        meta.max_context_length,
-      )
-      const nominalContextLength = coerceNumber(
-        meta.contextLength,
-        meta.contextWindow,
-        meta.context_size,
-        meta.num_ctx,
-        meta.maxContextLength,
-        meta.max_context_length,
-        meta.maxContextWindow,
-        meta.max_context_window,
-        meta.maxTokens,
-        meta.max_tokens,
-      )
-      const loadedContextLength = coerceNumber(
-        loadedConfig.context_length,
-        loadedConfig.num_ctx,
-        loadedConfig.maxContextWindow,
-        loadedConfig.max_context_window,
-        loadedConfig.maxTokens,
-        loadedConfig.max_tokens,
-      )
-
-      let displayName = m.id
-      if (meta.displayName != null) {
-        displayName = typeof meta.displayName === 'string' ? meta.displayName : m.id
-      } else if (meta.display_name != null) {
-        displayName = typeof meta.display_name === 'string' ? meta.display_name : m.id
-      } else if (meta.name != null) {
-        displayName = typeof meta.name === 'string' ? meta.name : m.id
-      }
-
-      const ollamaRequestedOptions = currentSettings
-        ? buildOllamaOptionsRecord(
-            resolveManagedOllamaProfile(
-              currentSettings.ollama,
-              m.id,
-              m.runtimeId,
-            ),
-          )
-        : undefined
-      const lmstudioRequestedOptions = currentSettings
-        ? buildLmStudioRequestOptionsRecord(
-            resolveManagedLmStudioProfile(
-              currentSettings.lmstudio,
-              m.id,
-              m.runtimeId,
-              displayName,
-              os.totalmem(),
-            ),
-          )
-        : undefined
-      const omlxRequestedOptions = currentSettings
-        ? buildOmlxDisplayOptionsRecord(
-            resolveManagedOmlxProfile(
-              currentSettings.omlx,
-              m.id,
-              m.runtimeId,
-              displayName,
-              os.totalmem(),
-            ),
-          )
-        : undefined
-      const runtimeConfig =
-        m.runtimeId === 'ollama-native' || m.runtimeId === 'ollama-openai'
-          ? {
-              provider: 'ollama' as const,
-              baseParameters: normalizeNumericRecord(meta.parameters),
-              baseParametersText:
-                typeof meta.parametersText === 'string'
-                  ? meta.parametersText
-                  : typeof meta.parameters === 'string'
-                    ? meta.parameters
-                    : undefined,
-              requestedOptions: ollamaRequestedOptions,
-              loadedOptions:
-                Object.keys(loadedConfig).length > 0
-                  ? loadedConfig
-                  : undefined,
-              nominalContextLength,
-              loadedContextLength,
-              approxGpuResidencyPercent: computeApproxGpuResidencyPercent(loadedConfig),
-            }
-          : m.runtimeId === 'lmstudio-native' || m.runtimeId === 'lmstudio-openai'
-            ? {
-                provider: 'lmstudio' as const,
-                requestedOptions: lmstudioRequestedOptions,
-                loadedOptions:
-                  Object.keys(loadedConfig).length > 0
-                    ? loadedConfig
-                    : undefined,
-                nominalContextLength,
-                loadedContextLength,
-              }
-              : m.runtimeId === 'omlx-openai'
-                ? {
-                    provider: 'omlx' as const,
-                    requestedOptions: omlxRequestedOptions,
-                    loadedOptions:
-                      Object.keys(loadedConfig).length > 0
-                        ? loadedConfig
-                        : undefined,
-                    nominalContextLength,
-                    loadedContextLength,
-                  }
-          : undefined
-      const optimizationTags = deriveOptimizationTags({
-        runtimeId: m.runtimeId,
-        modelId: m.id,
-        displayName,
-        metadata: meta,
-      })
-
-      const modelKey = modelTargetKey({
-        runtimeId: rt.runtime.id,
-        modelId: m.id,
-      })
-      mappedKeys.add(modelKey)
-
-      models.push({
-        id: m.id,
-        name: displayName,
-        runtimeId: rt.runtime.id,
-        runtimeName: rt.runtime.displayName,
-        parameterCount,
-        quantization,
-        contextLength,
-        optimizationTags,
-        status: pendingLoadKeys.has(modelKey) || loadingIds.has(m.id)
-          ? 'loading'
-          : loadedIds.has(m.id)
-            ? 'loaded'
-            : 'available',
-        attachmentSupport: deriveAttachmentSupport(m.capabilities as CapabilityRecord[]),
-        runtimeConfig,
-      })
-    }
-
-    for (const target of pendingLoadTargets) {
-      const modelKey = modelTargetKey(target)
-      if (target.runtimeId !== rt.runtime.id || mappedKeys.has(modelKey)) {
-        continue
-      }
-
-      mappedKeys.add(modelKey)
-      models.push({
-        id: target.modelId,
-        name: target.modelId,
-        runtimeId: rt.runtime.id,
-        runtimeName: rt.runtime.displayName,
-        status: 'loading',
-        attachmentSupport: deriveAttachmentSupport([]),
-      })
-    }
-  }
-
-  return models
+  inspectionResults: Parameters<typeof mapEnvironmentModels>[0],
+  currentSettings?: Parameters<typeof mapEnvironmentModels>[1],
+): ReturnType<typeof mapEnvironmentModels> {
+  return mapEnvironmentModels(
+    inspectionResults,
+    currentSettings,
+    listPendingModelLoadTargets(),
+  )
 }
 
 function isHiddenSdkHistoryMessage(message: SessionMessage): boolean {
@@ -14896,7 +9778,7 @@ async function sendSessionMessageInternal(
     }
 
     lastPendingFlushAt = now
-    void store.flush(sessionId).catch(() => {})
+    flushSessionInBackground(sessionId)
   }
 
   const buildStreamingBlocks = () => serializeStreamingBlocks(contentBlocks)
@@ -15115,9 +9997,9 @@ async function sendSessionMessageInternal(
   }
   sendToSession(sessionId, { type: 'generation_started' })
   sendToSession(sessionId, { type: 'live_activity', activity: liveActivity })
-  void broadcastSessionsChanged().catch(() => {})
+  broadcastSessionsChangedInBackground()
 
-    try {
+  try {
     const contextLength = await resolveSessionContextLength(sessionSnapshot)
     const pdfWorker = await resolveSessionFileWorkerCapabilitySnapshot(sessionId)
     const pdfAttachments = persistedAttachments.filter(
@@ -15310,7 +10192,7 @@ async function sendSessionMessageInternal(
       content: serializeStreamingBlocks(contentBlocks),
       startedAt: turnStartedAt,
     })
-    void store.flush(sessionId).catch(() => {})
+    flushSessionInBackground(sessionId)
 
     let autoCompletedPlanExit = false
 
@@ -15610,7 +10492,7 @@ async function sendSessionMessageInternal(
           turnId: runtimeTurnId ?? streamResult.turnId,
         },
       })
-      void broadcastSessionsChanged().catch(() => {})
+      broadcastSessionsChangedInBackground()
       return
     }
 
@@ -15897,7 +10779,7 @@ async function sendSessionMessageInternal(
       || assistantPreview
       || userMessagePreview
     await store.save(sessionId, snapshot, { lastMessage: lastMsg })
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
   } catch (err: unknown) {
     const aborted = abortController.signal.aborted
     if (aborted) {
@@ -16128,12 +11010,12 @@ async function sendSessionMessageInternal(
     } catch {
       // Best effort
     }
-    } finally {
-      activeAbortControllers.delete(sessionId)
-      activeSessionTasks.delete(sessionId)
-      releaseExecutionGate()
-      void broadcastSessionsChanged().catch(() => {})
-    }
+  } finally {
+    activeAbortControllers.delete(sessionId)
+    activeSessionTasks.delete(sessionId)
+    releaseExecutionGate()
+    broadcastSessionsChangedInBackground()
+  }
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
     if (isPrimaryModelUnavailableError(err)) {
@@ -16411,7 +11293,7 @@ async function runSessionResearchInternal(
         pendingTurnId,
       },
     })
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
 
     const result = await session.runResearch(message.text, {
       profile: 'deep',
@@ -16517,7 +11399,7 @@ async function runSessionResearchInternal(
         completedAt: result.completedAt,
       },
     })
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
   } catch (err: unknown) {
     const aborted = abortController?.signal.aborted ?? false
     if (aborted) {
@@ -16588,7 +11470,7 @@ async function runSessionResearchInternal(
     activeSessionTasks.delete(sessionId)
     releaseExecutionGate()
     releasePrimaryLease?.()
-    void broadcastSessionsChanged().catch(() => {})
+    broadcastSessionsChangedInBackground()
   }
 }
 
@@ -18446,7 +13328,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('debug:clear-session-logs', async (_, sessionId: string) => {
     store.clearDebugLogs(sessionId)
-    await store.flush(sessionId).catch(() => {})
+    await store.flush(sessionId).catch((error) => {
+      logBackgroundFailure(`Failed to clear debug logs for ${sessionId}`, error)
+    })
   })
 
   // ── Environment ──
@@ -18888,7 +13772,7 @@ export function registerIpcHandlers(): void {
         return { ok: true as const, deleted: false }
       }
 
-      await fs.rm(path.resolve(targetPath), { force: true }).catch(() => {})
+      await removePathBestEffort(path.resolve(targetPath), { force: true })
       return { ok: true as const, deleted: true }
     },
   )

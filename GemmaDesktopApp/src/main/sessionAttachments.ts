@@ -24,6 +24,27 @@ const PDF_ESTIMATED_RENDER_EXPANSION = 4
 
 const execFileAsync = promisify(execFile)
 
+function isMissingPathError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+function warnAttachmentCleanupFailure(action: string, error: unknown): void {
+  if (isMissingPathError(error)) {
+    return
+  }
+
+  console.warn(`[gemma-desktop] ${action}:`, error)
+}
+
+async function removePathBestEffort(
+  targetPath: string,
+  options: Parameters<typeof rm>[1] = { force: true },
+): Promise<void> {
+  await rm(targetPath, options).catch((error) => {
+    warnAttachmentCleanupFailure(`Failed to remove attachment cleanup path ${targetPath}`, error)
+  })
+}
+
 export type PdfProcessingMode = 'full_document' | 'custom_range'
 export type PdfFitStatus =
   | 'ready'
@@ -715,7 +736,7 @@ async function persistIncomingAudioAttachment(
     }
   } finally {
     if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      await removePathBestEffort(tempDir, { recursive: true, force: true })
     }
   }
 }
@@ -938,7 +959,7 @@ async function persistIncomingPdfAttachment(
     }
   } catch (error) {
     if (renderedDirectory) {
-      await rm(renderedDirectory, { recursive: true, force: true }).catch(() => {})
+      await removePathBestEffort(renderedDirectory, { recursive: true, force: true })
     }
 
     const message = error instanceof Error ? error.message : String(error)
@@ -967,7 +988,9 @@ export async function planPdfAttachmentProcessing(
       workerModelId: input.workerModelId,
     })
   } finally {
-    await materialized.cleanup().catch(() => {})
+    await materialized.cleanup().catch((error) => {
+      warnAttachmentCleanupFailure(`Failed to clean up inspected PDF ${materialized.path}`, error)
+    })
   }
 }
 
@@ -978,7 +1001,9 @@ export async function inspectPdfAttachment(
   try {
     return await inspectPdfDocument(materialized.path)
   } finally {
-    await materialized.cleanup().catch(() => {})
+    await materialized.cleanup().catch((error) => {
+      warnAttachmentCleanupFailure(`Failed to clean up inspected PDF ${materialized.path}`, error)
+    })
   }
 }
 

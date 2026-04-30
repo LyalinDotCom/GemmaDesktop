@@ -11,6 +11,7 @@ import {
   Tray,
 } from 'electron'
 import { existsSync } from 'node:fs'
+import { appendFile, mkdir } from 'node:fs/promises'
 import { pathToFileURL } from 'url'
 import { join } from 'path'
 import { installMainConsoleFormatting } from './consoleLogging'
@@ -116,9 +117,57 @@ let menuBarTray: Tray | null = null
 let menuBarPopupWindow: BrowserWindow | null = null
 let menuBarCaptureBusy = false
 let appIsQuitting = false
+let globalErrorDialogShown = false
 
 const MENU_BAR_POPUP_WIDTH = 448
 const MENU_BAR_POPUP_HEIGHT = 676
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return [error.stack, error.message].find((entry) => entry && entry.trim().length > 0) ?? error.name
+  }
+
+  return String(error)
+}
+
+async function appendMainProcessErrorLog(kind: string, error: unknown): Promise<void> {
+  const logDirectory = join(app.getPath('userData'), 'logs')
+  await mkdir(logDirectory, { recursive: true })
+  await appendFile(
+    join(logDirectory, 'main-process-errors.log'),
+    [
+      `[${new Date().toISOString()}] ${kind}`,
+      formatUnknownError(error),
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+}
+
+function notifyGlobalProcessError(kind: string, error: unknown): void {
+  console.error(`[gemma-desktop] ${kind}:`, error)
+  void appendMainProcessErrorLog(kind, error).catch((logError) => {
+    console.error('[gemma-desktop] Failed to write main-process error log:', logError)
+  })
+
+  if (globalErrorDialogShown || appIsQuitting || !app.isReady()) {
+    return
+  }
+
+  globalErrorDialogShown = true
+  dialog.showErrorBox(
+    'Gemma encountered an error',
+    'Gemma hit an unexpected background error and logged the details. If the app behaves strangely, restart it from the Gemma menu.',
+  )
+}
+
+process.on('uncaughtException', (error) => {
+  notifyGlobalProcessError('uncaughtException', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  notifyGlobalProcessError('unhandledRejection', reason)
+})
 
 function destroyMenuBarChrome(): void {
   if (menuBarPopupWindow && !menuBarPopupWindow.isDestroyed()) {

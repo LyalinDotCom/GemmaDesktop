@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
 import type { GemmaDesktopEvent } from "./events.js";
 import type { SessionSnapshot } from "./session.js";
 
@@ -673,6 +674,26 @@ export interface RunShellCommandOptions {
 }
 
 const DEFAULT_SHELL_COMMAND_KILL_GRACE_MS = 1000;
+const DEFAULT_SHELL_PATH_ENTRIES = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+];
+
+function buildShellEnvironment(): NodeJS.ProcessEnv {
+  const pathEntries = [
+    ...(process.env.PATH?.split(path.delimiter) ?? []),
+    ...DEFAULT_SHELL_PATH_ENTRIES,
+  ].filter((entry) => entry.trim().length > 0);
+  return {
+    ...process.env,
+    PATH: [...new Set(pathEntries)].join(path.delimiter),
+    SHELL: process.env.SHELL ?? "/bin/zsh",
+  };
+}
 
 function terminateChildProcess(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid;
@@ -701,9 +722,9 @@ export async function runShellCommand(
   options: RunShellCommandOptions = {},
 ): Promise<ShellCommandResult> {
   return await new Promise((resolve, reject) => {
-    const child = spawn("/bin/zsh", ["-lc", command], {
+    const child = spawn("/bin/zsh", ["-c", command], {
       cwd: options.cwd,
-      env: process.env,
+      env: buildShellEnvironment(),
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -195,6 +195,7 @@ const DEFAULT_MAX_RESULTS = 10;
 const DEFAULT_STANDARD_MAX_PAGES = 3;
 const DEFAULT_DEEP_MAX_PAGES = 6;
 const DEFAULT_MAX_CHARS_PER_PAGE = 8_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const SEARCH_CACHE_TTL_MS = 5 * 60_000;
 const MIN_SEARCH_DELAY_MS = 1_000;
 const MAX_SEARCH_DELAY_MS = 3_000;
@@ -334,6 +335,105 @@ function extractErrorCode(error: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function formatByteCount(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} bytes`;
+  }
+
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KiB`;
+  }
+
+  return `${(kib / 1024).toFixed(1)} MiB`;
+}
+
+function parseContentLength(headers: Headers): number | undefined {
+  const raw = headers.get("content-length");
+  if (!raw) {
+    return undefined;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function buildResponseTooLargeError(
+  url: string,
+  bytesRead: number,
+  maxBytes: number,
+  contentLength?: number,
+): GemmaDesktopError {
+  const observed = contentLength ?? bytesRead;
+  return new GemmaDesktopError(
+    "tool_execution_failed",
+    `Refusing to fetch ${url} because the response is too large (${formatByteCount(observed)}; limit ${formatByteCount(maxBytes)}). Use a more specific URL or a smaller file.`,
+    {
+      details: {
+        bytesRead,
+        contentLength,
+        maxBytes,
+      },
+    },
+  );
+}
+
+function isResponseTooLargeError(error: unknown): boolean {
+  return error instanceof GemmaDesktopError
+    && typeof error.details?.maxBytes === "number";
+}
+
+async function cancelResponseReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch (error) {
+    debugWeb("response_reader_cancel_failed", {
+      error: extractErrorMessage(error),
+    });
+  }
+}
+
+async function readResponseTextWithLimit(
+  response: Response,
+  url: string,
+  maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+): Promise<string> {
+  const contentLength = parseContentLength(response.headers);
+  if (contentLength !== undefined && contentLength > maxBytes) {
+    throw buildResponseTooLargeError(url, 0, maxBytes, contentLength);
+  }
+
+  if (!response.body) {
+    return await response.text();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let body = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      bytesRead += value.byteLength;
+      if (bytesRead > maxBytes) {
+        await cancelResponseReader(reader);
+        throw buildResponseTooLargeError(url, bytesRead, maxBytes, contentLength);
+      }
+
+      body += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return body + decoder.decode();
 }
 
 function isLikelyTransientNetworkCode(code: string | undefined): boolean {
@@ -727,7 +827,7 @@ async function requestText(
         url: response.url,
         status: response.status,
         contentType,
-        body: await response.text(),
+        body: await readResponseTextWithLimit(response, response.url),
         attempts,
       };
     } catch (error) {
@@ -761,6 +861,10 @@ async function requestText(
           }
           continue;
         }
+        throw error;
+      }
+
+      if (isResponseTooLargeError(error)) {
         throw error;
       }
 
@@ -2477,9 +2581,11 @@ export const __testing = {
   isAbortError,
   isLikelyTransientNetworkError,
   isLikelyTransientNetworkMessage,
+  isResponseTooLargeError,
   isRetryableGeminiSearchFailure,
   parseBingHtml,
   parseGoogleHtml,
+  parseContentLength,
   rankSearchResults,
   setGeminiSearchRetryDelaysForTests,
   shouldFallbackToNativeFetch,

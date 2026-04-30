@@ -70,12 +70,20 @@ function isAbortError(error: unknown): boolean {
 }
 
 function suppressReaderClosedRejection(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  void reader.closed.catch(() => {});
+  void reader.closed.catch((error) => {
+    if (!isAbortError(error)) {
+      console.warn("[gemma-desktop-sdk] Stream reader closed with an unexpected error:", error);
+    }
+  });
 }
 
 function cancelReaderSafely(reader: ReadableStreamDefaultReader<Uint8Array>): void {
   suppressReaderClosedRejection(reader);
-  void reader.cancel().catch(() => {});
+  void reader.cancel().catch((error) => {
+    if (!isAbortError(error)) {
+      console.warn("[gemma-desktop-sdk] Failed to cancel stream reader:", error);
+    }
+  });
 }
 
 function headersToObject(headers: Headers): Record<string, string> {
@@ -219,7 +227,11 @@ async function normalizeLocalImageForRequest(filePath: string, originalBytes: Bu
   } catch {
     return originalBytes;
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true }).catch(() => {});
+    await rm(tempDirectory, { recursive: true, force: true }).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn(`[gemma-desktop-sdk] Failed to remove temporary image directory ${tempDirectory}:`, error);
+      }
+    });
   }
 }
 

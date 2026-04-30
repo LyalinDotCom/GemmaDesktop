@@ -282,6 +282,44 @@ describe("web host tools", () => {
     });
   });
 
+  it("refuses oversized fetch_url responses before parsing them", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path !== "/giant") {
+        throw new Error(`Unhandled route: ${request.path}`);
+      }
+
+      return {
+        headers: {
+          "content-length": String(10 * 1024 * 1024 + 1),
+          "content-type": "text/html; charset=utf-8",
+        },
+        text: "<html><body>This body should not be parsed.</body></html>",
+      };
+    });
+    cleanup.push(server.close);
+
+    const tool = getTool("fetch_url");
+    let raised: unknown;
+    try {
+      await tool.execute(
+        {
+          url: `${server.url}/giant`,
+        },
+        await createContext(),
+      );
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toBeInstanceOf(GemmaDesktopError);
+    const failure = raised as GemmaDesktopError;
+    expect(failure.message).toContain("response is too large");
+    expect(failure.details).toMatchObject({
+      contentLength: 10 * 1024 * 1024 + 1,
+      maxBytes: 10 * 1024 * 1024,
+    });
+  });
+
   it("propagates Gemini API failures as GemmaDesktopError the session engine can surface to the agent", async () => {
     installSearchProvider(async () => {
       throw new GemmaDesktopError(

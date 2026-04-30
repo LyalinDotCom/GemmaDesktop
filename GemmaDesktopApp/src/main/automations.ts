@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
 import { randomUUID } from 'crypto'
+import { writeFileAtomic } from './atomicWrite'
 
 export type AutomationSchedule =
   | {
@@ -238,7 +239,7 @@ export class AutomationStore {
       updatedAt: Date.now(),
     }
     this.records.set(nextRecord.id, nextRecord)
-    await fs.writeFile(
+    await writeFileAtomic(
       filePathForAutomation(nextRecord.id),
       JSON.stringify(nextRecord, null, 2),
       'utf8',

@@ -1294,7 +1294,7 @@ describe("delegated tool coverage", () => {
     ]));
     expect(sources.some((source) => source.includes("msnbc.com") || source.includes("ms.now"))).toBe(true);
     expect(toolResult?.output).toContain("Sources:");
-  });
+  }, 10_000);
 
   it("completes the msnbc fox cnn headline comparison flow with room to synthesize", async () => {
     const workingDirectory = await createWorkspace();

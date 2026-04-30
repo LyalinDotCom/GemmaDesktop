@@ -101,6 +101,23 @@ Future agents must treat CLI coverage as part of the acceptance criteria for SDK
 - keep root validation wired so `npm run check` covers SDK, CLI, and app deterministic lanes
 - if a desktop SDK change genuinely does not affect the CLI, say why in the work notes or final summary instead of leaving the parity decision implicit
 
+### App Main-Process Architecture
+
+`GemmaDesktopApp/src/main/ipc.ts` is an IPC composition edge, not the home for product behavior. The durable direction is to keep Electron channel registration thin and move domain behavior into named main-process modules with explicit dependencies.
+
+Use this as the recommended template for new app-main work:
+
+- put pure domain logic, normalization, persistence helpers, runtime orchestration, file processing, and tool implementations in dedicated modules named for the capability they own
+- expose one small service factory when a module needs app-owned dependencies such as `GemmaDesktop`, live sessions, settings, windows, notification broadcasts, or model leases
+- keep `registerIpcHandlers()` and future domain registrars focused on validation, calling a service method, and returning serializable data
+- group related IPC channels behind domain registrars as they are extracted, for example sessions, environment/model lifecycle, browser, attachments/content, skills/memory, speech/read-aloud, automations, settings/notifications, workspace/files, sidebar/global chat
+- preserve channel names and preload contracts unless the user explicitly asks for a public API change
+- prefer typed dependency objects over importing shared mutable singletons into every module
+- add architecture tests that protect ownership boundaries, public channel lists, prompt-section order, or service contracts; do not rely on arbitrary line-count limits as a substitute for design
+- when moving behavior out of `ipc.ts`, do behavior-preserving extraction first, run targeted tests, then make any logic changes in a separate step
+
+The new normal is that `ipc.ts` should read like a table of contents and integration layer. If a change needs a helper large enough to explain, test, cache, retry, stream progress, touch models, or coordinate state across turns, create or extend a domain module instead of nesting it inside an IPC handler.
+
 When we name capabilities, we should be explicit about what kind of thing they are.
 
 - direct tools should have direct task names and should do one concrete action immediately

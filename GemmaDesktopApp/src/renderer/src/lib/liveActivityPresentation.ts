@@ -44,6 +44,8 @@ function formatStageLabel(stage: LiveActivitySnapshot['stage']): string | null {
       return 'Planning'
     case 'discovery':
       return 'Discovering'
+    case 'depth':
+      return 'Checking sources'
     case 'workers':
       return 'Researching'
     case 'synthesis':
