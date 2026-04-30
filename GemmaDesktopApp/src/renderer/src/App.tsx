@@ -73,6 +73,10 @@ import {
   getBusyQueueBlockedReason,
 } from '@/lib/sessionQueuePolicy'
 import {
+  FIRST_RUN_MODEL_SETUP_DISMISSED_KEY,
+  shouldShowFirstRunModelSetup,
+} from '@/lib/firstRunModelSetup'
+import {
   getCoBrowseTakeControlDisabledReason,
   getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
@@ -117,7 +121,6 @@ const COBROWSE_BUSY_QUEUE_DISABLED_REASON =
   'Wait for the current CoBrowse turn to finish before sending another request.'
 const COBROWSE_STALE_QUEUE_DISABLED_REASON =
   'CoBrowse queued turns do not run automatically. Send a fresh request after the current turn finishes.'
-const FIRST_RUN_MODEL_SETUP_DISMISSED_KEY = 'gemma-desktop:first-run-model-setup-dismissed'
 
 function buildPinnedSentenceKeysMap(
   pinnedQuotes: PinnedQuote[],
@@ -1324,10 +1327,13 @@ export function App() {
       console.warn('Failed to refresh environment after first-run model setup:', error)
     })
   }, [dismissFirstRunModelSetup, dispatch])
-  const showFirstRunModelSetup =
-    startupRiskAccepted
-    && !firstRunModelSetupDismissed
-    && state.bootstrapState.status === 'idle'
+  const showFirstRunModelSetup = shouldShowFirstRunModelSetup({
+    startupRiskAccepted,
+    dismissed: firstRunModelSetupDismissed,
+    bootstrapState: state.bootstrapState,
+    sidebar: state.sidebar,
+    sessions: state.sessions,
+  })
   const preferredTerminalWorkingDirectory =
     state.activeSession?.workingDirectory.trim()
     || state.settings.defaultProjectDirectory.trim()

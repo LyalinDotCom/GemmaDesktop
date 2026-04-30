@@ -2,7 +2,9 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { FirstRunModelSetup } from '../src/renderer/src/components/FirstRunModelSetup'
-import type { ModelSummary, RuntimeSummary } from '../src/renderer/src/types'
+import { shouldShowFirstRunModelSetup } from '../src/renderer/src/lib/firstRunModelSetup'
+import type { BootstrapState, ModelSummary, RuntimeSummary, SessionSummary } from '../src/renderer/src/types'
+import type { SidebarState } from '../src/shared/sidebar'
 
 const runtimes: RuntimeSummary[] = [
   {
@@ -27,6 +29,19 @@ const models: ModelSummary[] = [
   },
 ]
 
+const idleBootstrap: Pick<BootstrapState, 'status'> = {
+  status: 'idle',
+}
+
+const emptySidebar: Pick<SidebarState, 'lastActiveSessionId' | 'projectPaths'> = {
+  lastActiveSessionId: null,
+  projectPaths: [],
+}
+
+function session(id: string): Pick<SessionSummary, 'id'> {
+  return { id }
+}
+
 describe('FirstRunModelSetup', () => {
   it('asks users to choose a provider before downloading anything', () => {
     const markup = renderToStaticMarkup(
@@ -48,5 +63,59 @@ describe('FirstRunModelSetup', () => {
     expect(markup).toContain('Gemma 4 26B')
     expect(markup).toContain('Optional guided Gemma downloads')
     expect(markup).toContain('Decide Later')
+  })
+})
+
+describe('shouldShowFirstRunModelSetup', () => {
+  it('shows the chooser only for a fresh app state after the risk dialog', () => {
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: emptySidebar,
+      sessions: [],
+    })).toBe(true)
+  })
+
+  it('does not show the chooser over existing user workspaces just because localStorage is missing', () => {
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: {
+        ...emptySidebar,
+        projectPaths: ['/Users/sam/project'],
+      },
+      sessions: [],
+    })).toBe(false)
+
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: {
+        ...emptySidebar,
+        lastActiveSessionId: 'session-1',
+      },
+      sessions: [],
+    })).toBe(false)
+
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: emptySidebar,
+      sessions: [session('session-1')],
+    })).toBe(false)
+  })
+
+  it('waits while bootstrap is active so it cannot sit on top of explicit retry/download work', () => {
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: { status: 'pulling_models' },
+      sidebar: emptySidebar,
+      sessions: [],
+    })).toBe(false)
   })
 })

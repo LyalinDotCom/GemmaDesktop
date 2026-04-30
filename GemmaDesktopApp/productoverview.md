@@ -554,13 +554,15 @@ Examples visible in code:
 
 `GemmaDesktopApp` has an explicit Ollama bootstrap path.
 
-On startup/bootstrap it can:
+Startup environment inspection is read-only: it reports detected runtimes, visible models, and current bootstrap state without pulling models. The bootstrap path only performs model preparation after an explicit retry, a saved-model warmup, or a guided download action.
+
+When invoked explicitly, bootstrap can:
 
 - check Ollama reachability
 - try to launch the Ollama app
 - fall back to `ollama serve`
 - check for required guided model tags
-- pull missing models
+- pull missing models for the chosen target
 - load the helper model
 - report bootstrap progress back to the renderer
 
