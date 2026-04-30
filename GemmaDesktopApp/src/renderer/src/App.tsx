@@ -34,6 +34,7 @@ import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
+  AppSettings,
   FileAttachment,
   MessageContent,
   ProjectBrowserState,
@@ -1311,12 +1312,16 @@ export function App() {
   const handleFirstRunModelChoice = useCallback(async (target: {
     modelId: string
     runtimeId: string
+    runtimeSettings?: Partial<AppSettings['runtimes']>
   }) => {
     const modelSelection = {
-      mainModel: { ...target },
-      helperModel: { ...target },
+      mainModel: { modelId: target.modelId, runtimeId: target.runtimeId },
+      helperModel: { modelId: target.modelId, runtimeId: target.runtimeId },
     }
-    const updated = await window.gemmaDesktopBridge.settings.update({ modelSelection })
+    const updated = await window.gemmaDesktopBridge.settings.update({
+      ...(target.runtimeSettings ? { runtimes: { ...state.settings.runtimes, ...target.runtimeSettings } } : {}),
+      modelSelection,
+    })
     dispatch({ type: 'SET_SETTINGS', settings: updated })
     dismissFirstRunModelSetup()
     await window.gemmaDesktopBridge.environment.inspect().then(({ runtimes, models, bootstrap }) => {
@@ -2846,6 +2851,7 @@ export function App() {
         <FirstRunModelSetup
           runtimes={state.runtimes}
           models={state.models}
+          runtimeSettings={state.settings.runtimes}
           gemmaInstallStates={state.gemmaInstallStates}
           onChoose={handleFirstRunModelChoice}
           onDismiss={dismissFirstRunModelSetup}

@@ -9560,11 +9560,6 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
   )
 
   if (!persisted) {
-    const bootstrap = await ensureBootstrapReady()
-    if (!bootstrap.ready) {
-      throw new Error(bootstrap.error ?? bootstrap.message)
-    }
-
     const defaultTarget = buildDefaultSessionPrimaryTarget(talkConfig, settings)
     const composition = await resolveSessionComposition({
       snapshot: null,

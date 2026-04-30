@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '../src/shared/globalChat'
 import { FirstRunModelSetup } from '../src/renderer/src/components/FirstRunModelSetup'
 import { shouldShowFirstRunModelSetup } from '../src/renderer/src/lib/firstRunModelSetup'
-import type { BootstrapState, ModelSummary, RuntimeSummary, SessionSummary } from '../src/renderer/src/types'
+import type { AppSettings, BootstrapState, ModelSummary, RuntimeSummary, SessionSummary } from '../src/renderer/src/types'
 import type { SidebarState } from '../src/shared/sidebar'
 
 const runtimes: RuntimeSummary[] = [
@@ -39,6 +39,24 @@ const emptySidebar: Pick<SidebarState, 'lastActiveSessionId' | 'projectPaths'> =
   projectPaths: [],
 }
 
+const runtimeSettings: AppSettings['runtimes'] = {
+  ollama: {
+    endpoint: 'http://127.0.0.1:11434',
+    numParallel: 2,
+    maxLoadedModels: 2,
+    keepAliveEnabled: true,
+  },
+  lmstudio: {
+    endpoint: 'http://127.0.0.1:1234',
+    maxConcurrentPredictions: 1,
+  },
+  llamacpp: { endpoint: 'http://127.0.0.1:8080' },
+  omlx: {
+    endpoint: 'http://127.0.0.1:8000',
+    apiKey: 'secret-token',
+  },
+}
+
 function session(
   id: string,
   overrides: Partial<Pick<SessionSummary, 'lastMessage'>> = {},
@@ -52,6 +70,7 @@ describe('FirstRunModelSetup', () => {
       createElement(FirstRunModelSetup, {
         runtimes,
         models,
+        runtimeSettings,
         gemmaInstallStates: [],
         onChoose: () => {},
         onDismiss: () => {},
@@ -68,6 +87,7 @@ describe('FirstRunModelSetup', () => {
     expect(markup).toContain('Optional guided Gemma downloads')
     expect(markup).toContain('Decide Later')
   })
+
 })
 
 describe('shouldShowFirstRunModelSetup', () => {

@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Download, Loader2 } from 'lucide-react'
 import { GEMMA_CATALOG } from '@shared/gemmaCatalog'
-import type { GemmaInstallState, ModelSummary, RuntimeSummary } from '@/types'
+import type { AppSettings, GemmaInstallState, ModelSummary, RuntimeSummary } from '@/types'
 
 type ModelTarget = {
   modelId: string
   runtimeId: string
+  runtimeSettings?: Partial<AppSettings['runtimes']>
 }
 
 type RuntimeChoice = {
@@ -185,6 +186,7 @@ function failedEnsureResult(result: unknown): string | null {
 export function FirstRunModelSetup({
   runtimes,
   models,
+  runtimeSettings,
   gemmaInstallStates,
   onChoose,
   onDismiss,
@@ -192,6 +194,7 @@ export function FirstRunModelSetup({
 }: {
   runtimes: RuntimeSummary[]
   models: ModelSummary[]
+  runtimeSettings: AppSettings['runtimes']
   gemmaInstallStates: GemmaInstallState[]
   onChoose: (target: ModelTarget) => void | Promise<void>
   onDismiss: () => void
@@ -204,8 +207,14 @@ export function FirstRunModelSetup({
   const [runtimeId, setRuntimeId] = useState(runtimeChoices[0]?.id ?? 'ollama-native')
   const [selectedModel, setSelectedModel] = useState<ModelTarget | null>(null)
   const [manualModelId, setManualModelId] = useState('')
+  const [omlxEndpoint, setOmlxEndpoint] = useState(runtimeSettings.omlx.endpoint)
+  const [omlxApiKey, setOmlxApiKey] = useState(runtimeSettings.omlx.apiKey)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setOmlxEndpoint(runtimeSettings.omlx.endpoint)
+    setOmlxApiKey(runtimeSettings.omlx.apiKey)
+  }, [runtimeSettings.omlx.apiKey, runtimeSettings.omlx.endpoint])
 
   const selectedRuntime = runtimeChoices.find((runtime) => runtime.id === runtimeId)
     ?? runtimeChoices[0]
@@ -221,12 +230,13 @@ export function FirstRunModelSetup({
     }, new Map<string, ModelSummary>())
     .values())
     .sort((left, right) => left.name.localeCompare(right.name))
-  const manualTarget = {
+  const manualTarget: ModelTarget = {
     runtimeId,
     modelId: manualModelId.trim(),
   }
   const target = selectedModel ?? (manualTarget.modelId ? manualTarget : null)
-  const canContinue = Boolean(target) && !busy
+  const needsOmlxEndpoint = runtimeId === 'omlx-openai'
+  const canContinue = Boolean(target) && !busy && (!needsOmlxEndpoint || Boolean(omlxEndpoint.trim()))
 
   const chooseTarget = async (targetInput: ModelTarget | null) => {
     if (!targetInput?.modelId.trim()) {
@@ -236,6 +246,15 @@ export function FirstRunModelSetup({
     const normalized = {
       runtimeId: targetInput.runtimeId,
       modelId: targetInput.modelId.trim(),
+      runtimeSettings: runtimeId === 'omlx-openai'
+        ? {
+            omlx: {
+              ...runtimeSettings.omlx,
+              endpoint: omlxEndpoint.trim(),
+              apiKey: omlxApiKey.trim(),
+            },
+          }
+        : undefined,
     }
 
     setBusy(`choose:${normalized.runtimeId}:${normalized.modelId}`)
@@ -388,6 +407,36 @@ export function FirstRunModelSetup({
               placeholder={runtimeId.startsWith('ollama') ? 'gemma4:26b' : 'model id'}
               className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
             />
+            {runtimeId === 'omlx-openai' && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  oMLX endpoint
+                  <input
+                    value={omlxEndpoint}
+                    onChange={(event) => {
+                      setOmlxEndpoint(event.target.value)
+                      setError(null)
+                    }}
+                    placeholder="http://127.0.0.1:8000"
+                    className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 font-mono text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
+                  />
+                </label>
+                <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  API key / PIN
+                  <input
+                    value={omlxApiKey}
+                    onChange={(event) => {
+                      setOmlxApiKey(event.target.value)
+                      setError(null)
+                    }}
+                    placeholder="Optional bearer token"
+                    type="password"
+                    autoComplete="off"
+                    className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 font-mono text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
+                  />
+                </label>
+              </div>
+            )}
           </div>
 
           {runtimeId === 'ollama-native' && (

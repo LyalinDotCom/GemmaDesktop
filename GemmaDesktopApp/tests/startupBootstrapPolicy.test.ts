@@ -14,6 +14,13 @@ function extractIpcHandler(source: string, channel: string): string {
   return source.slice(start, nextHandler === -1 ? undefined : nextHandler)
 }
 
+function extractFunction(source: string, name: string): string {
+  const start = source.indexOf(`async function ${name}(`)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const nextFunction = source.indexOf('\nasync function ', start + 1)
+  return source.slice(start, nextFunction === -1 ? undefined : nextFunction)
+}
+
 describe('startup bootstrap policy', () => {
   it('keeps startup environment inspection read-only so first launch cannot pull models implicitly', () => {
     const source = fs.readFileSync(ipcSourcePath, 'utf8')
@@ -32,5 +39,13 @@ describe('startup bootstrap policy', () => {
     expect(retryHandler).toContain('ensureBootstrapReady(true)')
     expect(guidedDownloadHandler).toContain('gemmaInstallManager.ensureModel')
     expect(guidedDownloadHandler).not.toContain('ensureBootstrapReady')
+  })
+
+  it('does not bootstrap models just to create the built-in Assistant Chat shell', () => {
+    const source = fs.readFileSync(ipcSourcePath, 'utf8')
+    const talkSession = extractFunction(source, 'ensureTalkSessionInternal')
+
+    expect(talkSession).not.toContain('ensureBootstrapReady')
+    expect(talkSession).not.toContain('pullOllamaModel')
   })
 })
