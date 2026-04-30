@@ -115,4 +115,27 @@ describe('message actions', () => {
     expect(html).toContain('min-w-0 break-words')
     expect(html).toContain('gemma-4-26b-a4b-it-nvfp4')
   })
+
+  it('renders stored system error events with the shared notice treatment', () => {
+    const html = renderToStaticMarkup(
+      createElement(Message, {
+        message: {
+          id: 'system-error-1',
+          role: 'system',
+          timestamp: 1_700_000_000_000,
+          content: [
+            {
+              type: 'error',
+              message: 'LM Studio could not load the selected model.',
+              details: 'Unload the previous runtime model and retry.',
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(html).toContain('LM Studio could not load the selected model.')
+    expect(html).toContain('Unload the previous runtime model and retry.')
+    expect(html).toContain('rounded-lg border')
+  })
 })

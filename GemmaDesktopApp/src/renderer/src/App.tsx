@@ -34,7 +34,6 @@ import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
-  BootstrapState,
   FileAttachment,
   MessageContent,
   ProjectBrowserState,
@@ -288,21 +287,6 @@ function findLatestNewAssistantText(
   }
 
   return null
-}
-
-function findBootstrapModelAvailabilityIssue(
-  bootstrap: BootstrapState,
-  target: { modelId: string; runtimeId: string } | null | undefined,
-): string | null {
-  if (!target) {
-    return null
-  }
-
-  return bootstrap.modelAvailabilityIssues.find(
-    (issue) =>
-      issue.modelId === target.modelId
-      && issue.runtimeId === target.runtimeId,
-  )?.message ?? null
 }
 
 export function App() {
@@ -581,14 +565,6 @@ export function App() {
   const newConversationRunDisabledReason = activeConversationRuns[0]
     ? formatConversationExecutionBlockedReason(activeConversationRuns[0])
     : null
-  const activeModelUnavailableReason = findBootstrapModelAvailabilityIssue(
-    state.bootstrapState,
-    state.activeSession,
-  )
-  const globalModelUnavailableReason = findBootstrapModelAvailabilityIssue(
-    state.bootstrapState,
-    globalChatDetail,
-  )
   const primaryConversationBlocker = state.activeSessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
@@ -616,7 +592,6 @@ export function App() {
       targetSessionId: state.activeSessionId,
     })
   const primaryConversationRunDisabledReason = primaryCoBrowseUserControlDisabledReason
-    ?? activeModelUnavailableReason
     ?? primaryConversationBlockerReason
   const primaryModelSelectionDisabled =
     isBusy
@@ -631,7 +606,6 @@ export function App() {
       targetSessionId: globalChatSession.sessionId,
     })
   const globalConversationRunDisabledReason = globalCoBrowseUserControlDisabledReason
-    ?? globalModelUnavailableReason
     ?? globalConversationBlockerReason
   const globalModelSelectionDisabled =
     globalChatBusy

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { X } from 'lucide-react'
+import { AlertTriangle, Info, X } from 'lucide-react'
 import { AssistantActionRow } from '@/components/AssistantActionRow'
 import { MarkdownContent } from '@/components/MarkdownContent'
 import { CodeBlock } from '@/components/CodeBlock'
@@ -92,6 +92,44 @@ interface ContentBlockProps {
   autoExpandWhenActive: boolean
   contentBlockIndex?: number
   selectionContext?: SelectionBlockContextValue | null
+}
+
+type NoticeTone = 'error' | 'warning'
+
+function NoticeBlock({
+  tone,
+  message,
+  details,
+}: {
+  tone: NoticeTone
+  message: string
+  details?: string
+}) {
+  const isError = tone === 'error'
+  const Icon = isError ? AlertTriangle : Info
+  const shellClass = isError
+    ? 'border-red-200 bg-red-50/80 text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100'
+    : 'border-amber-200 bg-amber-50/80 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
+  const iconClass = isError
+    ? 'text-red-500 dark:text-red-300'
+    : 'text-amber-500 dark:text-amber-300'
+  const detailClass = isError
+    ? 'text-red-700/80 dark:text-red-100/70'
+    : 'text-amber-700/80 dark:text-amber-100/70'
+
+  return (
+    <div className={`my-2 flex min-w-0 gap-2 rounded-lg border px-3 py-2 text-sm ${shellClass}`}>
+      <Icon size={15} className={`mt-0.5 shrink-0 ${iconClass}`} aria-hidden="true" />
+      <div className="min-w-0">
+        <div className="min-w-0 break-words font-medium">{message}</div>
+        {details && (
+          <div className={`mt-1 min-w-0 break-words text-xs ${detailClass}`}>
+            {details}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function formatAttachmentTimestampMs(timestampMs: number): string {
@@ -223,20 +261,15 @@ function ContentBlock({
       return <ResearchProgressPanel panel={content.panel} isActive={isActive} />
     case 'error':
       return (
-        <div className="my-1.5 min-w-0 break-words text-sm text-red-600 dark:text-red-400">
-          <span className="font-medium">{content.message}</span>
-          {content.details && (
-            <span className="ml-1 text-red-500/70 dark:text-red-400/60">
-              — {content.details}
-            </span>
-          )}
-        </div>
+        <NoticeBlock
+          tone="error"
+          message={content.message}
+          details={content.details}
+        />
       )
     case 'warning':
       return (
-        <div className="my-1.5 text-sm text-amber-600 dark:text-amber-400">
-          {content.message}
-        </div>
+        <NoticeBlock tone="warning" message={content.message} />
       )
     case 'folder_link':
       return (

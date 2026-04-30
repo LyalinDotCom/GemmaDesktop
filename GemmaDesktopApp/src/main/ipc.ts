@@ -1473,24 +1473,6 @@ function resolveRequiredPrimaryModelIds(
   return requiredModelIds
 }
 
-async function listPersistedSessionPrimaryTargets(): Promise<PrimaryModelTarget[]> {
-  const targets: PrimaryModelTarget[] = []
-
-  for (const meta of store.listMeta()) {
-    const persisted = await store.load(meta.id)
-    if (!persisted || isHiddenSessionSnapshot(persisted.snapshot)) {
-      continue
-    }
-
-    targets.push({
-      modelId: persisted.snapshot.modelId,
-      runtimeId: persisted.snapshot.runtimeId,
-    })
-  }
-
-  return targets
-}
-
 async function resolveStartupSessionPrimaryTarget(): Promise<PrimaryModelTarget | null> {
   if (!sidebarStore) {
     return null
@@ -1588,12 +1570,6 @@ class PrimaryModelUnavailableError extends Error {
 function getPrimaryModelAvailabilityIssues(): PrimaryModelAvailabilityIssue[] {
   return [...primaryModelAvailabilityIssues.values()]
     .sort((left, right) => left.detectedAt - right.detectedAt)
-}
-
-function findPrimaryModelAvailabilityIssue(
-  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
-): PrimaryModelAvailabilityIssue | null {
-  return primaryModelAvailabilityIssues.get(modelTargetKey(target)) ?? null
 }
 
 function isPrimaryModelUnavailableError(error: unknown): error is PrimaryModelUnavailableError {
@@ -1936,6 +1912,33 @@ function buildShellUserMessage(
     role: 'user',
     content: buildUserMessageContent(visibleCommand, []),
     timestamp,
+  }
+}
+
+function buildSystemErrorEventMessage(input: {
+  message: string
+  details?: string
+  timestamp?: number
+  durationMs?: number
+  primaryTarget?: PrimaryModelTarget
+}): AppMessage {
+  const timestamp = input.timestamp ?? Date.now()
+  return {
+    id: `system-error-${timestamp}-${randomUUID()}`,
+    role: 'system',
+    content: [{
+      type: 'error',
+      message: input.message,
+      ...(input.details ? { details: input.details } : {}),
+    }],
+    timestamp,
+    durationMs: input.durationMs,
+    ...(input.primaryTarget
+      ? {
+          primaryModelId: input.primaryTarget.modelId,
+          primaryRuntimeId: input.primaryTarget.runtimeId,
+        }
+      : {}),
   }
 }
 
@@ -2933,12 +2936,27 @@ async function ensurePrimaryModelTargetLoaded(
   primaryModelLoadPromise = (async () => {
     const currentSettings = await getSettingsState()
     if (activePrimaryModelTarget && !primaryTargetsMatch(activePrimaryModelTarget, target)) {
-      await unloadModelForRuntime(activePrimaryModelTarget).catch((error) => {
-        console.warn('[gemma-desktop] Failed to unload previous primary model:', error)
-      })
+      const previousTarget = activePrimaryModelTarget
+      await unloadModelForRuntime(previousTarget)
+      if (primaryTargetsMatch(activePrimaryModelTarget, previousTarget)) {
+        activePrimaryModelTarget = null
+      }
     }
 
-    await unloadConflictingOllamaPrimaryModels(target, currentSettings)
+    const helperTarget = resolveHelperRouterTarget(currentSettings)
+    const protectedTargets = primaryTargetsMatch(helperTarget, target)
+      ? [target]
+      : [target, helperTarget]
+    const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+      protectedTargets,
+      reason: `loading ${formatPrimaryModelTarget(target)}`,
+    })
+    if (unloadResult.errors.length > 0) {
+      throw new Error(summarizeLifecycleErrors(unloadResult.errors))
+    }
+    if (unloadResult.unloaded.length > 0 || unloadResult.skipped.length > 0) {
+      broadcastEnvironmentModelsChanged()
+    }
     return await loadModelForRuntime(target)
   })()
 
@@ -3041,77 +3059,6 @@ async function unloadIdleOllamaModelsWhenKeepAliveDisabled(
   if (uniqueTargets.size > 0) {
     broadcastEnvironmentModelsChanged()
   }
-}
-
-async function unloadConflictingOllamaPrimaryModels(
-  nextPrimaryTarget: PrimaryModelTarget,
-  currentSettings: AppSettingsRecord,
-): Promise<void> {
-  if (currentPrimaryHoldCount() > 0) {
-    return
-  }
-
-  const loadedModelIds = await listOllamaLoadedModelIds(
-    currentSettings.runtimes.ollama.endpoint,
-  ).catch((error) => {
-    console.warn(
-      '[gemma-desktop] Failed to inspect loaded Ollama models before primary handoff:',
-      error,
-    )
-    return []
-  })
-  if (loadedModelIds.length === 0) {
-    return
-  }
-
-  const helperTarget = resolveHelperRouterTarget(currentSettings)
-  const protectedModelIds = new Set<string>()
-  if (isOllamaModelRuntime(helperTarget.runtimeId)) {
-    protectedModelIds.add(helperTarget.modelId)
-  }
-  if (isOllamaModelRuntime(nextPrimaryTarget.runtimeId)) {
-    protectedModelIds.add(nextPrimaryTarget.modelId)
-  }
-
-  const appPrimaryModelIds = new Set<string>()
-  const addPrimaryTarget = (target: PrimaryModelTarget | null | undefined) => {
-    if (target && isOllamaModelRuntime(target.runtimeId)) {
-      appPrimaryModelIds.add(target.modelId)
-    }
-  }
-
-  addPrimaryTarget(resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection))
-  addPrimaryTarget(activePrimaryModelTarget)
-  addPrimaryTarget(primaryModelLoadTarget)
-  for (const target of listPendingModelLoadTargets()) {
-    addPrimaryTarget(target)
-  }
-  for (const target of await listPersistedSessionPrimaryTargets()) {
-    addPrimaryTarget(target)
-  }
-
-  const unloadModelIds = loadedModelIds.filter(
-    (modelId) =>
-      appPrimaryModelIds.has(modelId)
-      && !protectedModelIds.has(modelId),
-  )
-  if (unloadModelIds.length === 0) {
-    return
-  }
-
-  for (const modelId of unloadModelIds) {
-    await unloadOllamaModel(currentSettings.runtimes.ollama.endpoint, modelId).catch((error) => {
-      console.warn(
-        `[gemma-desktop] Failed to unload inactive Ollama primary model ${modelId}:`,
-        error,
-      )
-    })
-    if (activePrimaryModelTarget?.modelId === modelId) {
-      activePrimaryModelTarget = null
-    }
-  }
-
-  broadcastEnvironmentModelsChanged()
 }
 
 function broadcastBootstrapStateChanged(): void {
@@ -3334,12 +3281,6 @@ async function listOllamaLoadedModels(endpoint: string): Promise<OllamaLoadedMod
       config: model,
     }))
     .filter((model) => model.modelIds.length > 0)
-}
-
-async function listOllamaLoadedModelIds(endpoint: string): Promise<string[]> {
-  return [...new Set(
-    (await listOllamaLoadedModels(endpoint)).flatMap((model) => model.modelIds),
-  )]
 }
 
 async function findOllamaLoadedModel(
@@ -3623,10 +3564,10 @@ async function loadModelForRuntime(
           currentSettings.runtimes.ollama.endpoint,
           target.modelId,
         ).catch((error) => {
-          console.warn(
-            '[gemma-desktop] Failed to unload mismatched Ollama model before reload:',
-            error,
-          )
+          if (isModelNotLoadedError(error)) {
+            return
+          }
+          throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'unloading')
         })
       }
 
@@ -3683,7 +3624,10 @@ async function loadModelForRuntime(
             instance_id: loadedInstance.id,
           }),
         }).catch((error) => {
-          console.warn('[gemma-desktop] Failed to unload mismatched LM Studio model instance before reload:', error)
+          if (isModelNotLoadedError(error)) {
+            return
+          }
+          throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'unloading')
         })
       }
 
@@ -3955,10 +3899,6 @@ async function acquirePrimaryModelLease(
   inputTarget: PrimaryModelTarget,
 ): Promise<() => void> {
   const target = normalizePrimaryModelTarget(inputTarget)
-  const existingIssue = findPrimaryModelAvailabilityIssue(target)
-  if (existingIssue) {
-    throw new PrimaryModelUnavailableError(existingIssue)
-  }
 
   if (isOllamaModelRuntime(target.runtimeId)) {
     const bootstrap = await ensureBootstrapReady()
@@ -3979,6 +3919,21 @@ async function acquirePrimaryModelLease(
 
   try {
     await ensurePrimaryModelTargetLoaded(target)
+    if (primaryModelAvailabilityIssues.delete(modelTargetKey(target))) {
+      const currentSettings = await getSettingsState()
+      const remainingIssues = getPrimaryModelAvailabilityIssues()
+      setBootstrapState(
+        remainingIssues.length === 0
+          ? {
+              status: 'ready',
+              ready: true,
+              message: `${formatPrimaryModelTarget(target)} is ready.`,
+              error: undefined,
+            }
+          : {},
+        currentSettings,
+      )
+    }
   } catch (error) {
     const issue = await recordPrimaryModelLoadFailure(target, error, 'send')
     throw new PrimaryModelUnavailableError(issue)
@@ -15799,17 +15754,26 @@ async function sendSessionMessageInternal(
       console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
     }
 
-    const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
-      {
-        id: `err-${Date.now()}`,
-        role: 'assistant',
-        content: [{ type: 'error', message: errMsg }],
-        timestamp: Date.now(),
-        durationMs: Math.max(Date.now() - requestStartedAt, 1),
-      },
-      primaryTarget,
-      { enabled: shouldPersistPrimaryModelMetadata },
-    )
+    const errorTimestamp = Date.now()
+    const errorDurationMs = Math.max(errorTimestamp - requestStartedAt, 1)
+    const errorMessage: AppMessage = isPrimaryModelUnavailableError(err)
+      ? buildSystemErrorEventMessage({
+          message: errMsg,
+          timestamp: errorTimestamp,
+          durationMs: errorDurationMs,
+          primaryTarget: shouldPersistPrimaryModelMetadata ? primaryTarget : undefined,
+        })
+      : attachPrimaryModelMetadataToAppMessage(
+          {
+            id: `err-${errorTimestamp}`,
+            role: 'assistant',
+            content: [{ type: 'error', message: errMsg }],
+            timestamp: errorTimestamp,
+            durationMs: errorDurationMs,
+          },
+          primaryTarget,
+          { enabled: shouldPersistPrimaryModelMetadata },
+        )
 
     sendToSession(sessionId, {
       type: 'turn_complete',

@@ -73,6 +73,7 @@ import type {
   ReadAloudTestInput,
   BootstrapState,
   SessionTag,
+  GemmaDesktopBridge,
 } from '@/types'
 
 /**
@@ -496,6 +497,13 @@ const initialState: AppState = {
   speechStatus: null,
   readAloudStatus: null,
   selectionBySession: {},
+}
+
+const BRIDGE_UNAVAILABLE_MESSAGE =
+  'Gemma Desktop bridge is unavailable. Open this renderer through the Electron app so preload APIs are available.'
+
+function getGemmaDesktopBridge(): GemmaDesktopBridge | null {
+  return window.gemmaDesktopBridge ?? null
 }
 
 function buildQueuedMessageContent(
@@ -1117,14 +1125,22 @@ export function useAppState() {
   const pendingThinkingSummariesRef = useRef(new Set<string>())
 
   const syncActiveSessionDetail = useCallback(async (sessionId: string) => {
-    const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      throw new Error(BRIDGE_UNAVAILABLE_MESSAGE)
+    }
+    const detail = await bridge.sessions.get(sessionId)
     dispatch({ type: 'SET_ACTIVE_SESSION', session: detail, id: detail.id })
     return detail
   }, [])
 
   const rememberActiveSession = useCallback(async (sessionId: string | null) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
     try {
-      const sidebar = await window.gemmaDesktopBridge.sidebar.rememberActiveSession(
+      const sidebar = await bridge.sidebar.rememberActiveSession(
         sessionId,
       )
       dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
@@ -1224,7 +1240,11 @@ export function useAppState() {
   }, [])
 
   const refreshEnvironment = useCallback(async () => {
-    const { runtimes, models, bootstrap } = await window.gemmaDesktopBridge.environment.inspect()
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const { runtimes, models, bootstrap } = await bridge.environment.inspect()
     dispatch({ type: 'SET_MODELS', models })
     dispatch({ type: 'SET_RUNTIMES', runtimes })
     dispatch({ type: 'SET_BOOTSTRAP_STATE', bootstrapState: bootstrap })
@@ -1233,6 +1253,12 @@ export function useAppState() {
   // Load initial data
   useEffect(() => {
     async function init() {
+      const bridge = getGemmaDesktopBridge()
+      if (!bridge) {
+        console.warn(BRIDGE_UNAVAILABLE_MESSAGE)
+        return
+      }
+
       try {
         const [
           sidebar,
@@ -1246,15 +1272,15 @@ export function useAppState() {
           readAloudStatus,
         ] =
           await Promise.all([
-            window.gemmaDesktopBridge.sidebar.get(),
-            window.gemmaDesktopBridge.sessions.list(),
-            window.gemmaDesktopBridge.environment.inspect(),
-            window.gemmaDesktopBridge.system.getStats(),
-            window.gemmaDesktopBridge.settings.get(),
-            window.gemmaDesktopBridge.skills.listInstalled(),
-            window.gemmaDesktopBridge.automations.list(),
-            window.gemmaDesktopBridge.speech.inspect(),
-            window.gemmaDesktopBridge.readAloud.inspect(),
+            bridge.sidebar.get(),
+            bridge.sessions.list(),
+            bridge.environment.inspect(),
+            bridge.system.getStats(),
+            bridge.settings.get(),
+            bridge.skills.listInstalled(),
+            bridge.automations.list(),
+            bridge.speech.inspect(),
+            bridge.readAloud.inspect(),
           ])
 
         dispatch({ type: 'SET_SIDEBAR_STATE', sidebar })
@@ -1272,7 +1298,7 @@ export function useAppState() {
         const initialSessionId = findInitialVisibleSessionId(sessions, sidebar)
         if (initialSessionId) {
           try {
-            const detail = await window.gemmaDesktopBridge.sessions.get(initialSessionId)
+            const detail = await bridge.sessions.get(initialSessionId)
             dispatch({ type: 'SET_ACTIVE_SESSION', session: detail, id: detail.id })
             void rememberActiveSession(detail.id)
           } catch (err) {
@@ -1287,7 +1313,11 @@ export function useAppState() {
   }, [rememberActiveSession])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.sidebar.onChanged((sidebar) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.sidebar.onChanged((sidebar) => {
       dispatch({
         type: 'SET_SIDEBAR_STATE',
         sidebar: sidebar as SidebarState,
@@ -1297,7 +1327,11 @@ export function useAppState() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.environment.onBootstrapChanged((bootstrapState) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.environment.onBootstrapChanged((bootstrapState) => {
       dispatch({
         type: 'SET_BOOTSTRAP_STATE',
         bootstrapState: bootstrapState as BootstrapState,
@@ -1312,7 +1346,11 @@ export function useAppState() {
   }, [refreshEnvironment])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.environment.onModelsChanged(() => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.environment.onModelsChanged(() => {
       void refreshEnvironment().catch((err) => {
         console.error('Failed to refresh environment after model load update:', err)
       })
@@ -1322,7 +1360,11 @@ export function useAppState() {
   }, [refreshEnvironment])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.environment.onGemmaInstallChanged((states) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.environment.onGemmaInstallChanged((states) => {
       const nextStates = states as GemmaInstallState[]
       dispatch({ type: 'SET_GEMMA_INSTALL_STATES', states: nextStates })
 
@@ -1338,8 +1380,12 @@ export function useAppState() {
 
   useEffect(() => {
     let cancelled = false
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
 
-    const unsub = window.gemmaDesktopBridge.sessions.onChanged((sessions) => {
+    const unsub = bridge.sessions.onChanged((sessions) => {
       const nextSessions = sessions as SessionSummary[]
       dispatch({ type: 'SET_SESSIONS', sessions: nextSessions })
 
@@ -1394,7 +1440,11 @@ export function useAppState() {
   ])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.skills.onChanged((skills) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.skills.onChanged((skills) => {
       dispatch({
         type: 'SET_INSTALLED_SKILLS',
         skills: skills as InstalledSkillRecord[],
@@ -1404,7 +1454,11 @@ export function useAppState() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.settings.onChanged((settings) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.settings.onChanged((settings) => {
       dispatch({
         type: 'SET_SETTINGS',
         settings: settings as AppSettings,
@@ -1414,7 +1468,11 @@ export function useAppState() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.speech.onStatusChanged((status) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.speech.onStatusChanged((status) => {
       dispatch({
         type: 'SET_SPEECH_STATUS',
         speechStatus: status as SpeechInspection,
@@ -1424,7 +1482,11 @@ export function useAppState() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.readAloud.onStatusChanged((status) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.readAloud.onStatusChanged((status) => {
       dispatch({
         type: 'SET_READ_ALOUD_STATUS',
         readAloudStatus: status as ReadAloudInspection,
@@ -1434,7 +1496,11 @@ export function useAppState() {
   }, [])
 
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.automations.onChanged((automations) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.automations.onChanged((automations) => {
       const nextAutomations = automations as AutomationSummary[]
       dispatch({
         type: 'SET_AUTOMATIONS',
@@ -1443,7 +1509,7 @@ export function useAppState() {
 
       const selectedId = state.activeAutomationId
       if (selectedId && nextAutomations.some((item) => item.id === selectedId)) {
-        window.gemmaDesktopBridge.automations
+        bridge.automations
           .get(selectedId)
           .then((automation) => {
             dispatch({
@@ -1472,7 +1538,11 @@ export function useAppState() {
 
   // Subscribe to system stats
   useEffect(() => {
-    const unsub = window.gemmaDesktopBridge.system.onStatsUpdate((stats) => {
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    const unsub = bridge.system.onStatsUpdate((stats) => {
       dispatch({ type: 'SET_SYSTEM_STATS', stats: stats as SystemStats })
     })
     return unsub
@@ -1481,7 +1551,11 @@ export function useAppState() {
   // Subscribe to per-model session token usage
   useEffect(() => {
     let cancelled = false
-    window.gemmaDesktopBridge.system
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
+    bridge.system
       .getModelTokenUsage()
       .then((report) => {
         if (!cancelled) {
@@ -1494,7 +1568,7 @@ export function useAppState() {
       .catch((err) => {
         console.error('Failed to fetch model token usage:', err)
       })
-    const unsub = window.gemmaDesktopBridge.system.onModelTokenUsageUpdate(
+    const unsub = bridge.system.onModelTokenUsageUpdate(
       (report) => {
         dispatch({
           type: 'SET_MODEL_TOKEN_USAGE',
@@ -1517,10 +1591,14 @@ export function useAppState() {
 
     if (!state.activeSessionId) return
     const activeSessionId = state.activeSessionId
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
 
     let cancelled = false
 
-    const unsub = window.gemmaDesktopBridge.events.onSessionEvent(
+    const unsub = bridge.events.onSessionEvent(
       activeSessionId,
       (event) => {
         const e = event as SessionStreamEvent
@@ -1606,7 +1684,7 @@ export function useAppState() {
               compacting: e.isCompacting,
             })
             if (!e.isCompacting) {
-              void window.gemmaDesktopBridge.debug
+              void bridge.debug
                 .getSessionConfig(activeSessionId)
                 .then((session) => {
                   dispatch({ type: 'SET_DEBUG_SESSION', session })
@@ -1673,8 +1751,12 @@ export function useAppState() {
     }
 
     let mounted = true
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
 
-    window.gemmaDesktopBridge.debug
+    bridge.debug
       .getSessionLogs(state.activeSessionId)
       .then((logs) => {
         if (mounted) {
@@ -1691,7 +1773,7 @@ export function useAppState() {
       }
     }
 
-    const unsub = window.gemmaDesktopBridge.debug.onSessionLog(
+    const unsub = bridge.debug.onSessionLog(
       state.activeSessionId,
       (entry) => {
         dispatch({ type: 'ADD_DEBUG_LOG', log: entry })
@@ -1712,8 +1794,12 @@ export function useAppState() {
     }
 
     let cancelled = false
+    const bridge = getGemmaDesktopBridge()
+    if (!bridge) {
+      return
+    }
 
-    window.gemmaDesktopBridge.debug
+    bridge.debug
       .getSessionConfig(state.activeSessionId)
       .then((session) => {
         if (!cancelled) {
