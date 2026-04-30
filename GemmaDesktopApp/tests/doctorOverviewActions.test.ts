@@ -112,12 +112,69 @@ describe('getDoctorOverviewIssueActions', () => {
   })
 
   it('routes runtime issues to the runtime tab', () => {
-    const report = makeReport()
+    const report = makeReport({
+      runtimes: [{
+        id: 'ollama',
+        label: 'Ollama',
+        status: 'running',
+        modelCount: 0,
+        loadedModelCount: 0,
+        summary: 'No visible models.',
+        variants: [],
+        models: [],
+        warnings: [],
+        diagnosis: [],
+      }],
+    })
 
     expect(getDoctorOverviewIssueActions({
       severity: 'warning',
       title: 'Ollama is running without visible models',
       detail: 'No non-embedding models were found.',
+    }, report)).toEqual([
+      {
+        kind: 'tab',
+        label: 'View Runtimes',
+        tab: 'runtimes',
+      },
+    ])
+  })
+
+  it('does not route arbitrary suffix matches without matching report evidence', () => {
+    const report = makeReport()
+
+    expect(getDoctorOverviewIssueActions({
+      severity: 'warning',
+      title: 'Imaginary Runtime is installed but not responding',
+      detail: 'This title shape alone should not be enough.',
+    }, report)).toEqual([])
+  })
+
+  it('routes model runtime issues when the model is present in the report', () => {
+    const report = makeReport({
+      runtimes: [{
+        id: 'ollama',
+        label: 'Ollama',
+        status: 'running',
+        modelCount: 1,
+        loadedModelCount: 1,
+        summary: 'Ready.',
+        variants: [],
+        models: [{
+          id: 'gemma4:26b',
+          label: 'Gemma 4 26B',
+          status: 'loaded',
+          contextLength: 8192,
+        }],
+        warnings: [],
+        diagnosis: [],
+      }],
+    })
+
+    expect(getDoctorOverviewIssueActions({
+      severity: 'warning',
+      title: "Gemma 4 26B is below Gemma Desktop's requested context",
+      detail: 'Context is lower than expected.',
     }, report)).toEqual([
       {
         kind: 'tab',

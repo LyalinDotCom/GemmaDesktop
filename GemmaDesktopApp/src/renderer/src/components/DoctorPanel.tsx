@@ -160,6 +160,25 @@ export type DoctorOverviewIssueAction =
     label: string
   }
 
+const SPEECH_OVERVIEW_ISSUE_TITLES = new Set([
+  'Speech input is not installed yet',
+  'Speech runtime needs repair',
+  'Speech runtime health check failed',
+])
+
+const READ_ALOUD_OVERVIEW_ISSUE_TITLES = new Set([
+  'Read aloud will install on first use',
+  'Read aloud needs attention',
+])
+
+const GLOBAL_RUNTIME_OVERVIEW_ISSUE_TITLES = new Set([
+  'No compatible runtime is healthy',
+  'Runtime diagnosis',
+  'Environment warning',
+  'Ollama server settings differ from Gemma Desktop',
+  'Ollama helper and primary defaults cannot stay loaded together',
+])
+
 function appendViewAction(
   actions: DoctorOverviewIssueAction[],
   tab: DoctorTab,
@@ -170,6 +189,27 @@ function appendViewAction(
   }
 
   return [...actions, { kind: 'tab', label, tab }]
+}
+
+function isRuntimeOverviewIssue(issue: DoctorIssue, report: DoctorReport): boolean {
+  if (GLOBAL_RUNTIME_OVERVIEW_ISSUE_TITLES.has(issue.title)) {
+    return true
+  }
+
+  return report.runtimes.some((runtime) => {
+    if (
+      issue.title === `${runtime.label} is installed but not responding`
+      || issue.title === `${runtime.label} is running without visible models`
+    ) {
+      return true
+    }
+
+    return runtime.models.some((model) =>
+      issue.title === `${model.label} context length is unknown`
+      || issue.title === `${model.label} is below Gemma Desktop's requested context`
+      || issue.title === `${model.label} is spilling to CPU`,
+    )
+  })
 }
 
 export function getDoctorOverviewIssueActions(
@@ -216,11 +256,7 @@ export function getDoctorOverviewIssueActions(
     return appendViewAction(actions, 'permissions', 'View Permissions')
   }
 
-  if (
-    issue.title === 'Speech input is not installed yet'
-    || issue.title === 'Speech runtime needs repair'
-    || issue.title === 'Speech runtime health check failed'
-  ) {
+  if (SPEECH_OVERVIEW_ISSUE_TITLES.has(issue.title)) {
     if (report.speech.recommendedAction === 'request_microphone') {
       actions.push({
         kind: 'requestPermission',
@@ -238,10 +274,7 @@ export function getDoctorOverviewIssueActions(
     return appendViewAction(actions, 'speech', 'View Speech')
   }
 
-  if (
-    issue.title === 'Read aloud will install on first use'
-    || issue.title === 'Read aloud needs attention'
-  ) {
+  if (READ_ALOUD_OVERVIEW_ISSUE_TITLES.has(issue.title)) {
     if (report.readAloud.enabled) {
       actions.push({ kind: 'runReadAloudTest', label: 'Run Voice Test' })
     }
@@ -253,18 +286,7 @@ export function getDoctorOverviewIssueActions(
     return appendViewAction(actions, 'readAloud', 'View Read Aloud')
   }
 
-  if (
-    issue.title === 'No compatible runtime is healthy'
-    || issue.title === 'Runtime diagnosis'
-    || issue.title === 'Environment warning'
-    || issue.title === 'Ollama server settings differ from Gemma Desktop'
-    || issue.title === 'Ollama helper and primary defaults cannot stay loaded together'
-    || issue.title.endsWith(' is installed but not responding')
-    || issue.title.endsWith(' is running without visible models')
-    || issue.title.endsWith(' context length is unknown')
-    || issue.title.endsWith(" is below Gemma Desktop's requested context")
-    || issue.title.endsWith(' is spilling to CPU')
-  ) {
+  if (isRuntimeOverviewIssue(issue, report)) {
     return [{ kind: 'tab', label: 'View Runtimes', tab: 'runtimes' }]
   }
 
