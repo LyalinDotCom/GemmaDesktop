@@ -56,7 +56,10 @@ import {
 import { ToolSelector } from '@/components/ToolSelector'
 import { GemmaSizeSelector } from '@/components/GemmaSizeSelector'
 import { ApprovalModeToggle } from '@/components/ApprovalModeToggle'
-import { serializeSessionHistory } from '@/lib/chatCopy'
+import {
+  applyLatestAssistantPrimaryModelFallback,
+  serializeSessionHistory,
+} from '@/lib/chatCopy'
 import {
   describeAssistantNarrationMode,
   type AssistantNarrationMode,
@@ -1959,17 +1962,24 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     syncTextareaHeight()
   }
 
-  const messagesForCopy = streamingContent
-    ? [
-        ...messages,
-        {
-          id: 'streaming-copy',
-          role: 'assistant' as const,
-          content: streamingContent,
-          timestamp: Date.now(),
-        },
-      ]
-    : messages
+  const messagesForCopy = useMemo(() => {
+    const copyMessages = streamingContent
+      ? [
+          ...messages,
+          {
+            id: 'streaming-copy',
+            role: 'assistant' as const,
+            content: streamingContent,
+            timestamp: Date.now(),
+          },
+        ]
+      : messages
+
+    return applyLatestAssistantPrimaryModelFallback(
+      copyMessages,
+      conversationKind === 'normal' ? selectedModelId : null,
+    )
+  }, [conversationKind, messages, selectedModelId, streamingContent])
 
   const handleCopyChat = useCallback(async () => {
     if (messagesForCopy.length === 0) {

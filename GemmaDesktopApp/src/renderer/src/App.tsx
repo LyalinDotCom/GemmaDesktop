@@ -1887,6 +1887,7 @@ export function App() {
           pendingCompaction={state.pendingCompaction}
           pendingToolApproval={state.pendingToolApproval}
           autoExpandActiveBlocks={false}
+          latestAssistantFallbackPrimaryModelId={state.activeSession?.modelId ?? null}
           topPaddingClass="pt-16"
           contentLayout={mainChatContentLayout}
         />

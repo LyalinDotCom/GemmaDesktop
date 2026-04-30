@@ -478,6 +478,34 @@ interface AppMessage {
   content: Array<Record<string, unknown>>
   timestamp: number
   durationMs?: number
+  primaryModelId?: string
+  primaryRuntimeId?: string
+}
+
+function attachPrimaryModelMetadataToAppMessage(
+  message: AppMessage,
+  target: PrimaryModelTarget,
+  options?: { enabled?: boolean },
+): AppMessage {
+  if (options?.enabled === false || message.role !== 'assistant') {
+    return message
+  }
+
+  return {
+    ...message,
+    primaryModelId: target.modelId,
+    primaryRuntimeId: target.runtimeId,
+  }
+}
+
+function attachPrimaryModelMetadataToNullableAppMessage(
+  message: AppMessage | null,
+  target: PrimaryModelTarget,
+  options?: { enabled?: boolean },
+): AppMessage | null {
+  return message
+    ? attachPrimaryModelMetadataToAppMessage(message, target, options)
+    : null
 }
 
 interface DebugLogEntry {
@@ -5996,15 +6024,26 @@ async function recoverInterruptedPendingTurns(): Promise<void> {
     )
 
     if (!alreadyRecovered) {
-      const recoveredMessage = buildInterruptedAssistantMessage({
-        turnId: pendingTurn.turnId,
-        content: pendingTurn.content,
-        timestamp: resolveInterruptedTurnTimestamp({
-          turnStartedAt: pendingTurn.startedAt,
-          history: persisted.snapshot.history,
-          appMessages: persisted.appMessages,
-        }),
-      })
+      const recoveredMessage = attachPrimaryModelMetadataToNullableAppMessage(
+        buildInterruptedAssistantMessage({
+          turnId: pendingTurn.turnId,
+          content: pendingTurn.content,
+          timestamp: resolveInterruptedTurnTimestamp({
+            turnStartedAt: pendingTurn.startedAt,
+            history: persisted.snapshot.history,
+            appMessages: persisted.appMessages,
+          }),
+        }) as AppMessage | null,
+        {
+          modelId: persisted.snapshot.modelId,
+          runtimeId: persisted.snapshot.runtimeId,
+        },
+        {
+          enabled:
+            !isTalkSessionId(meta.id)
+            && !isTalkSessionConfig(getSessionConfig(persisted.snapshot)),
+        },
+      )
 
       if (recoveredMessage) {
         store.upsertAppMessage(meta.id, recoveredMessage)
@@ -13814,6 +13853,9 @@ async function sendSessionMessageInternal(
     modelId: sessionSnapshot.modelId,
     runtimeId: sessionSnapshot.runtimeId,
   }
+  const shouldPersistPrimaryModelMetadata =
+    !isTalkSessionId(sessionId)
+    && !isTalkSessionConfig(getSessionConfig(sessionSnapshot))
   let releasePrimaryLease: (() => void) | null = null
   try {
     releasePrimaryLease = await acquirePrimaryModelLease(sessionId, primaryTarget)
@@ -14572,7 +14614,7 @@ async function sendSessionMessageInternal(
       finalizeHelperToolBlock()
 
       const durationMs = Math.max(Date.now() - turnStartedAt, 1)
-      const assistantMessage =
+      const completedAssistantMessage =
         buildCompletedAssistantMessageFromBlocks(
           runtimeTurnId ?? streamResult.turnId,
           contentBlocks,
@@ -14590,6 +14632,11 @@ async function sendSessionMessageInternal(
           timestamp: Date.now(),
           durationMs,
         }
+      const assistantMessage = attachPrimaryModelMetadataToAppMessage(
+        completedAssistantMessage,
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
+      )
 
       store.clearPendingTurn(sessionId)
       store.upsertAppMessage(sessionId, assistantMessage)
@@ -14837,19 +14884,23 @@ async function sendSessionMessageInternal(
     }
     const durationMs = Math.max(Date.now() - turnStartedAt, 1)
 
-    const assistantMessage: AppMessage = {
-      id: assistantHistoryMessage?.id ?? effectiveResult.turnId,
-      role: 'assistant',
-      content:
-        finalContent.length > 0
-          ? finalContent
-          : [{
-              type: 'text',
-              text: (helperCompletionMessage ?? effectiveResult.text) || '',
-            }],
-      timestamp: Date.now(),
-      durationMs,
-    }
+    const assistantMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+      {
+        id: assistantHistoryMessage?.id ?? effectiveResult.turnId,
+        role: 'assistant',
+        content:
+          finalContent.length > 0
+            ? finalContent
+            : [{
+                type: 'text',
+                text: (helperCompletionMessage ?? effectiveResult.text) || '',
+              }],
+        timestamp: Date.now(),
+        durationMs,
+      },
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
     store.clearPendingTurn(sessionId)
     store.upsertAppMessage(sessionId, assistantMessage)
 
@@ -14909,10 +14960,14 @@ async function sendSessionMessageInternal(
   } catch (err: unknown) {
     const aborted = abortController.signal.aborted
     if (aborted) {
-      const cancelledMessage = buildCancelledAssistantMessage(
-        runtimeTurnId ?? randomUUID(),
-        contentBlocks,
-        Math.max(Date.now() - turnStartedAt, 1),
+      const cancelledMessage = attachPrimaryModelMetadataToNullableAppMessage(
+        buildCancelledAssistantMessage(
+          runtimeTurnId ?? randomUUID(),
+          contentBlocks,
+          Math.max(Date.now() - turnStartedAt, 1),
+        ),
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
       )
 
       if (cancelledMessage) {
@@ -15081,22 +15136,27 @@ async function sendSessionMessageInternal(
           }
         }
 
-        const errorMessage: AppMessage =
+        const failedMessage =
           recoveredMessage
           ?? buildFailedAssistantMessage({
-              turnId: runtimeTurnId ?? randomUUID(),
-              content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
-              errorMessage: errMsg,
-              timestamp: Date.now(),
-              durationMs,
-            })
+            turnId: runtimeTurnId ?? randomUUID(),
+            content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
+            errorMessage: errMsg,
+            timestamp: Date.now(),
+            durationMs,
+          })
           ?? {
-              id: `err-${Date.now()}`,
-              role: 'assistant',
-              content: [{ type: 'error', message: errMsg }],
-              timestamp: Date.now(),
-              durationMs,
-            }
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: [{ type: 'error', message: errMsg }],
+            timestamp: Date.now(),
+            durationMs,
+          }
+        const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+          failedMessage,
+          primaryTarget,
+          { enabled: shouldPersistPrimaryModelMetadata },
+        )
 
         sendToSession(sessionId, {
           type: 'turn_complete',
@@ -15141,13 +15201,17 @@ async function sendSessionMessageInternal(
       console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
     }
 
-    const errorMessage: AppMessage = {
-      id: `err-${Date.now()}`,
-      role: 'assistant',
-      content: [{ type: 'error', message: errMsg }],
-      timestamp: Date.now(),
-      durationMs: Math.max(Date.now() - requestStartedAt, 1),
-    }
+    const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+      {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: [{ type: 'error', message: errMsg }],
+        timestamp: Date.now(),
+        durationMs: Math.max(Date.now() - requestStartedAt, 1),
+      },
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
 
     sendToSession(sessionId, {
       type: 'turn_complete',
@@ -15221,11 +15285,16 @@ async function runSessionResearchInternal(
     lastMessagePreview: userMessagePreview,
   })
 
+  const primaryTarget: PrimaryModelTarget = {
+    modelId: session.snapshot().modelId,
+    runtimeId: session.snapshot().runtimeId,
+  }
+  const shouldPersistPrimaryModelMetadata =
+    !isTalkSessionId(sessionId)
+    && !isTalkSessionConfig(getSessionConfig(session.snapshot()))
+
   try {
-    releasePrimaryLease = await acquirePrimaryModelLease(sessionId, {
-      modelId: session.snapshot().modelId,
-      runtimeId: session.snapshot().runtimeId,
-    })
+    releasePrimaryLease = await acquirePrimaryModelLease(sessionId, primaryTarget)
     abortController = new AbortController()
     const pendingTurnId = `research-${requestStartedAt}-${randomUUID()}`
     const initialResearchActivity: SessionLiveActivity = {
@@ -15303,7 +15372,11 @@ async function runSessionResearchInternal(
       },
     })
     const durationMs = Math.max(Date.now() - requestStartedAt, 1)
-    const assistantMessage = buildResearchAssistantMessage(result, durationMs)
+    const assistantMessage = attachPrimaryModelMetadataToAppMessage(
+      buildResearchAssistantMessage(result, durationMs),
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
 
     store.clearPendingTurn(sessionId)
     store.upsertAppMessage(sessionId, assistantMessage)
@@ -15363,16 +15436,20 @@ async function runSessionResearchInternal(
           label: 'Open research artifacts',
         })
       }
-      const errorMessage: AppMessage = {
-        id: `research-err-${Date.now()}`,
-        role: 'assistant',
-        content:
-          failureContent.length > 0
-            ? failureContent
-            : [{ type: 'error', message: errMsg }],
-        timestamp: Date.now(),
-        durationMs: Math.max(Date.now() - requestStartedAt, 1),
-      }
+      const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+        {
+          id: `research-err-${Date.now()}`,
+          role: 'assistant',
+          content:
+            failureContent.length > 0
+              ? failureContent
+              : [{ type: 'error', message: errMsg }],
+          timestamp: Date.now(),
+          durationMs: Math.max(Date.now() - requestStartedAt, 1),
+        },
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
+      )
       store.clearPendingTurn(sessionId)
       store.upsertAppMessage(sessionId, errorMessage)
       sendToSession(sessionId, { type: 'live_activity', activity: null })

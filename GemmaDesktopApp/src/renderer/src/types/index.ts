@@ -206,6 +206,8 @@ export interface ChatMessage {
   content: MessageContent[]
   timestamp: number
   durationMs?: number
+  primaryModelId?: string
+  primaryRuntimeId?: string
 }
 
 export interface QueuedUserMessage {

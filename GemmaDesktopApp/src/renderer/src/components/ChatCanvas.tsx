@@ -22,7 +22,10 @@ import {
   isBackgroundProcessNoticeMessage,
 } from '@/lib/messageState'
 import { normalizeSelectedReadAloudText } from '@/lib/readAloudText'
-import { serializeAssistantTurn } from '@/lib/chatCopy'
+import {
+  applyLatestAssistantPrimaryModelFallback,
+  serializeAssistantTurn,
+} from '@/lib/chatCopy'
 import {
   buildConversationUiControlLock,
   getConversationUiActionLockedTitle,
@@ -79,6 +82,7 @@ interface ChatCanvasProps {
   pendingCompaction?: PendingCompaction | null
   pendingToolApproval?: PendingToolApproval | null
   controlLock?: ConversationUiControlLock
+  latestAssistantFallbackPrimaryModelId?: string | null
   topPaddingClass?: string
   contentLayout?: ChatContentLayout
   streamingStatusPlacement?: 'inline' | 'bottom' | 'external'
@@ -203,6 +207,7 @@ export function ChatCanvas({
   pendingCompaction = null,
   pendingToolApproval = null,
   controlLock,
+  latestAssistantFallbackPrimaryModelId = null,
   topPaddingClass = 'pt-14',
   contentLayout = 'centered',
   streamingStatusPlacement = 'inline',
@@ -551,6 +556,15 @@ export function ChatCanvas({
     return null
   }, [messages])
 
+  const messagesWithPrimaryModelFallback = useMemo(
+    () =>
+      applyLatestAssistantPrimaryModelFallback(
+        messages,
+        latestAssistantFallbackPrimaryModelId,
+      ),
+    [latestAssistantFallbackPrimaryModelId, messages],
+  )
+
   const renderMessage = (message: ChatMessage) => (
     <Message
       key={message.id}
@@ -562,11 +576,16 @@ export function ChatCanvas({
       isLatestAssistantTurn={
         message.role === 'assistant' && message.id === latestAssistantMessageId
       }
+      fallbackPrimaryModelId={
+        message.role === 'assistant' && message.id === latestAssistantMessageId
+          ? latestAssistantFallbackPrimaryModelId
+          : null
+      }
       onCopyTurn={
         message.role === 'assistant'
           ? async () => {
               await copyText(
-                serializeAssistantTurn(messages, message.id),
+                serializeAssistantTurn(messagesWithPrimaryModelFallback, message.id),
               )
             }
           : undefined

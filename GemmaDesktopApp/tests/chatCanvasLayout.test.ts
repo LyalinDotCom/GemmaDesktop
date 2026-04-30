@@ -63,6 +63,103 @@ describe('ChatCanvas layout', () => {
     expect(markup.match(/disabled=""/g)?.length ?? 0).toBe(3)
   })
 
+  it('adds the persisted primary model label to completed turn durations', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Summarize the runtime' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Runtime summary complete.' }],
+            timestamp: 2000,
+            durationMs: 15_000,
+            primaryModelId: 'gemma4:26b',
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('gemma4:26b')
+    expect(markup).toContain('15s')
+    expect(markup).toContain('text-zinc-400 dark:text-zinc-500')
+    expect(markup).toContain('font-medium text-zinc-700 dark:text-zinc-100')
+  })
+
+  it('keeps completed turn durations compact when no model label is provided', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Summarize the runtime' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Runtime summary complete.' }],
+            timestamp: 2000,
+            durationMs: 15_000,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('>15s</span>')
+    expect(markup).not.toContain(' in 15s')
+  })
+
+  it('uses the Work-mode latest-turn primary model fallback when metadata is missing', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Summarize the runtime' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Runtime summary complete.' }],
+            timestamp: 2000,
+            durationMs: 15_000,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        latestAssistantFallbackPrimaryModelId: 'gemma4:26b',
+      }),
+    )
+
+    expect(markup).toContain('gemma4:26b')
+    expect(markup).toContain('15s')
+  })
+
   it('keeps the streaming assistant row visible when a background process starts', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatCanvas, {
