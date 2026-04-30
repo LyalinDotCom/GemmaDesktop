@@ -74,6 +74,10 @@ import {
   getBusyQueueBlockedReason,
 } from '@/lib/sessionQueuePolicy'
 import {
+  readStartupSessionFlag,
+  writeStartupSessionFlag,
+} from '@/lib/startupSessionState'
+import {
   getCoBrowseTakeControlDisabledReason,
   getCoBrowseUserControlComposerLockReason,
   isProjectBrowserCoBrowseState,
@@ -298,8 +302,12 @@ function findBootstrapModelAvailabilityIssue(
 }
 
 export function App() {
-  const [startupRiskAccepted, setStartupRiskAccepted] = useState(false)
-  const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(false)
+  const [startupRiskAccepted, setStartupRiskAccepted] = useState(() =>
+    readStartupSessionFlag('startupRiskAccepted'),
+  )
+  const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(() =>
+    readStartupSessionFlag('startupOverlayDismissed'),
+  )
   const [doctorOpen, setDoctorOpen] = useState(false)
   const [statusBarTarget, setStatusBarTarget] = useState<HTMLDivElement | null>(null)
   const [assistantHomeVisible, setAssistantHomeVisible] = useState(true)
@@ -533,6 +541,16 @@ export function App() {
     return () => window.clearInterval(interval)
   }, [globalChatBusy])
 
+  const acceptStartupRisk = useCallback(() => {
+    writeStartupSessionFlag('startupRiskAccepted', true)
+    setStartupRiskAccepted(true)
+  }, [])
+
+  const dismissStartupOverlay = useCallback(() => {
+    writeStartupSessionFlag('startupOverlayDismissed', true)
+    setStartupOverlayDismissed(true)
+  }, [])
+
   useEffect(() => {
     const bootstrap = state.bootstrapState
     const attentionKey =
@@ -547,6 +565,7 @@ export function App() {
 
     if (startupAttentionKeyRef.current !== attentionKey) {
       startupAttentionKeyRef.current = attentionKey
+      writeStartupSessionFlag('startupOverlayDismissed', false)
       setStartupOverlayDismissed(false)
     }
   }, [
@@ -2635,7 +2654,7 @@ export function App() {
   if (!startupRiskAccepted) {
     return (
       <div className="relative flex h-full overflow-hidden">
-        <StartupRiskDialog onAgree={() => setStartupRiskAccepted(true)} />
+        <StartupRiskDialog onAgree={acceptStartupRisk} />
       </div>
     )
   }
@@ -2975,7 +2994,7 @@ export function App() {
         readAloudEnabled={state.settings.readAloud.enabled}
         readAloudStatus={state.readAloudStatus}
         dismissed={startupOverlayDismissed}
-        onDismiss={() => setStartupOverlayDismissed(true)}
+        onDismiss={dismissStartupOverlay}
         onRetryBootstrap={() => {
           void window.gemmaDesktopBridge.environment.retryBootstrap().catch((error) => {
             console.error('Failed to retry model bootstrap:', error)

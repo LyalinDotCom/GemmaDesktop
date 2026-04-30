@@ -3182,22 +3182,26 @@ function wrapLocalRuntimeLoadError(
 async function loadModelForRuntime(
   target: PrimaryModelTarget,
 ): Promise<PrimaryModelTarget> {
-  const releasePendingLoad = markModelLoadPending(target)
+  const currentSettings = await getSettingsState()
 
-  try {
-    const currentSettings = await getSettingsState()
+  if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
+    const profile = resolveManagedOllamaLoadProfile(currentSettings, target)
+    const requestOptions = buildOllamaOptionsRecord(profile)
+    const loadedModel = await findOllamaLoadedModel(
+      currentSettings.runtimes.ollama.endpoint,
+      target.modelId,
+    ).catch(() => undefined)
 
-    if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
-      const profile = resolveManagedOllamaLoadProfile(currentSettings, target)
-      const requestOptions = buildOllamaOptionsRecord(profile)
-      const loadedModel = await findOllamaLoadedModel(
-        currentSettings.runtimes.ollama.endpoint,
-        target.modelId,
-      ).catch(() => undefined)
-      if (
-        loadedModel
-        && !ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)
-      ) {
+    if (
+      loadedModel
+      && ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)
+    ) {
+      return target
+    }
+
+    const releasePendingLoad = markModelLoadPending(target)
+    try {
+      if (loadedModel) {
         await unloadOllamaModel(
           currentSettings.runtimes.ollama.endpoint,
           target.modelId,
@@ -3220,33 +3224,38 @@ async function loadModelForRuntime(
         throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
       }
       return target
+    } finally {
+      releasePendingLoad()
+    }
+  }
+
+  if (isLmStudioModelRuntime(target.runtimeId)) {
+    const endpoint = currentSettings.runtimes.lmstudio.endpoint.replace(/\/$/, '')
+    const visibleModels = await requestJson(`${endpoint}/api/v1/models`).catch((error) => {
+      if (isLocalRuntimeConnectionFailure(error)) {
+        throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
+      }
+      return null
+    })
+    const loadOptions = buildLmStudioLoadOptionsRecord(
+      resolveManagedLmStudioLoadProfile(currentSettings, target),
+    )
+    const loadedInstance =
+      visibleModels
+      && findLoadedLmStudioInstance(visibleModels, target.modelId)
+
+    if (
+      loadedInstance
+      && lmStudioLoadedConfigMatchesLoadOptions(loadedInstance.config, loadOptions)
+    ) {
+      return {
+        ...target,
+        loadedInstanceId: loadedInstance.id,
+      }
     }
 
-    if (isLmStudioModelRuntime(target.runtimeId)) {
-      const endpoint = currentSettings.runtimes.lmstudio.endpoint.replace(/\/$/, '')
-      const visibleModels = await requestJson(`${endpoint}/api/v1/models`).catch((error) => {
-        if (isLocalRuntimeConnectionFailure(error)) {
-          throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
-        }
-        return null
-      })
-      const loadOptions = buildLmStudioLoadOptionsRecord(
-        resolveManagedLmStudioLoadProfile(currentSettings, target),
-      )
-      const loadedInstance =
-        visibleModels
-        && findLoadedLmStudioInstance(visibleModels, target.modelId)
-
-      if (
-        loadedInstance
-        && lmStudioLoadedConfigMatchesLoadOptions(loadedInstance.config, loadOptions)
-      ) {
-        return {
-          ...target,
-          loadedInstanceId: loadedInstance.id,
-        }
-      }
-
+    const releasePendingLoad = markModelLoadPending(target)
+    try {
       if (loadedInstance) {
         await requestJson(`${endpoint}/api/v1/models/unload`, {
           method: 'POST',
@@ -3272,29 +3281,42 @@ async function loadModelForRuntime(
         ...target,
         loadedInstanceId: extractLmStudioInstanceId(loadResult) ?? target.modelId,
       }
+    } finally {
+      releasePendingLoad()
+    }
+  }
+
+  if (target.runtimeId === 'llamacpp-server') {
+    const releasePendingLoad = markModelLoadPending(target)
+    try {
+      await requestJson(`${currentSettings.runtimes.llamacpp.endpoint.replace(/\/$/, '')}/models/load`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: target.modelId,
+        }),
+      })
+      return target
+    } catch (error) {
+      throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
+    } finally {
+      releasePendingLoad()
+    }
+  }
+
+  if (isOmlxModelRuntime(target.runtimeId)) {
+    const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
+    const settingsPatch = buildOmlxModelSettingsRecord(
+      resolveManagedOmlxLoadProfile(currentSettings, target),
+    )
+    if (!settingsPatch || Object.keys(settingsPatch).length === 0) {
+      return target
     }
 
-    if (target.runtimeId === 'llamacpp-server') {
-      try {
-        await requestJson(`${currentSettings.runtimes.llamacpp.endpoint.replace(/\/$/, '')}/models/load`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: target.modelId,
-          }),
-        })
-      } catch (error) {
-        throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
-      }
-    }
-
-    if (isOmlxModelRuntime(target.runtimeId)) {
-      const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
-      const settingsPatch = buildOmlxModelSettingsRecord(
-        resolveManagedOmlxLoadProfile(currentSettings, target),
-      )
+    const releasePendingLoad = markModelLoadPending(target)
+    try {
       await updateOmlxModelSettings(
         currentSettings.runtimes.omlx.endpoint,
         apiKey,
@@ -3304,12 +3326,12 @@ async function loadModelForRuntime(
         console.warn('[gemma-desktop] Failed to sync managed oMLX model settings before use:', error)
       })
       return target
+    } finally {
+      releasePendingLoad()
     }
-
-    return target
-  } finally {
-    releasePendingLoad()
   }
+
+  return target
 }
 
 async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> {
