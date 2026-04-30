@@ -58,6 +58,10 @@ function isStructuredOutputBudgetFailure(message: string | undefined): boolean {
   return typeof message === "string" && STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN.test(message);
 }
 
+function isMissingSearchConfigurationError(message: string | undefined): boolean {
+  return typeof message === "string" && /No Gemini API key is configured, so web search cannot run/i.test(message);
+}
+
 export type ResearchProfile = "quick" | "deep";
 export type ResearchTaskType =
   | "news-sweep"
@@ -1622,6 +1626,126 @@ function recoverPlan(
   }
 
   return undefined;
+}
+
+function buildDeterministicResearchPlan(
+  requestText: string,
+  profile: ResearchProfile,
+  reason?: string,
+): ResearchPlan {
+  const focus = inferResearchFocusQuery(requestText);
+  const subject = inferResearchSubject(requestText) ?? focus;
+  const isNewsRequest =
+    /\b(?:news|headlines|front page|front-page|latest stories?|latest articles?|breaking news|latest)\b/i
+      .test(requestText);
+  const maxTopics = profile === "quick" ? 2 : 4;
+  const risks = [
+    reason ? `Model planner fallback used: ${reason}` : "Model planner fallback used.",
+    "The deterministic plan may be less nuanced than a model-generated plan, so discovery should compensate with broad source coverage.",
+  ];
+
+  if (isNewsRequest) {
+    const newsTopics: ResearchTopicPlan[] = [
+      {
+        id: "front-page-emphasis-1",
+        title: "Front Page Emphasis",
+        goal: `Find what major news outlets are prominently reporting about ${focus}.`,
+        priority: 1,
+        searchQueries: [
+          `${focus} top headlines`,
+          `${focus} front page coverage`,
+          `${focus} breaking news`,
+        ],
+      },
+      {
+        id: "latest-story-coverage-2",
+        title: "Latest Story Coverage",
+        goal: `Read current article coverage and live updates about ${focus}.`,
+        priority: 2,
+        searchQueries: [
+          `${focus} latest news`,
+          `${focus} latest live updates`,
+          `${focus} latest story`,
+        ],
+      },
+      {
+        id: "local-and-specialized-sources-3",
+        title: "Local and Specialized Sources",
+        goal: `Find local, regional, and specialized reporting that may add detail on ${focus}.`,
+        priority: 3,
+        searchQueries: [
+          `${focus} local news`,
+          `${focus} regional media`,
+          `${focus} independent news`,
+        ],
+      },
+      {
+        id: "analysis-and-situation-reports-4",
+        title: "Analysis and Situation Reports",
+        goal: `Find active blogs, trackers, and analysis pages that add chronology or context for ${focus}.`,
+        priority: 4,
+        searchQueries: [
+          `${focus} live blog`,
+          `${focus} situation report`,
+          `${focus} expert analysis`,
+        ],
+      },
+    ];
+    return {
+      objective: requestText,
+      scopeSummary: `Gather current news coverage about ${focus} with broad source diversity, one-hop source depth, and explicit dates when available.`,
+      topics: newsTopics.slice(0, maxTopics),
+      risks,
+      stopConditions: [
+        "Stop once major, wire, local, and active-analysis coverage have enough fetched source diversity for a grounded report.",
+      ],
+    };
+  }
+
+  const generalTopics: ResearchTopicPlan[] = [
+    {
+      id: "primary-evidence-1",
+      title: `${subject} Primary Evidence`,
+      goal: `Find authoritative and high-signal sources for ${subject}.`,
+      priority: 1,
+      searchQueries: [
+        `${focus} official`,
+        `${focus} documentation`,
+        `${focus} latest`,
+      ],
+    },
+    {
+      id: "independent-coverage-2",
+      title: `${subject} Independent Coverage`,
+      goal: `Find independent reporting, analysis, or reference material for ${subject}.`,
+      priority: 2,
+      searchQueries: [
+        `${focus} analysis`,
+        `${focus} report`,
+        `${focus} comparison`,
+      ],
+    },
+    {
+      id: "current-status-3",
+      title: `${subject} Current Status`,
+      goal: `Verify the current status, availability, and unresolved questions for ${subject}.`,
+      priority: 3,
+      searchQueries: [
+        `${focus} current status`,
+        `${focus} availability`,
+        `${focus} update`,
+      ],
+    },
+  ];
+  return {
+    objective: requestText,
+    scopeSummary: `Research ${subject} using a deterministic fallback plan with broad discovery and source-depth checks.`,
+    topics: generalTopics.slice(0, maxTopics),
+    risks,
+    stopConditions: [
+      "Stop once the gathered evidence covers authoritative sources, independent coverage, and current status.",
+    ],
+  };
 }
 
 function toTitleCase(value: string): string {
@@ -4839,7 +4963,9 @@ export const __testOnly = {
   normalizeDepthScoutRecord,
   recoverDepthScoutRecord,
   inferResearchSubject,
+  buildDeterministicResearchPlan,
   isStructuredOutputBudgetFailure,
+  isMissingSearchConfigurationError,
   buildPlanningPrompt,
   enhanceReportWithSourceLinks,
 };
@@ -5160,15 +5286,33 @@ export class ResearchRunner {
         && !Array.isArray(parentPreferencesValue)
           ? parentPreferencesValue as Record<string, unknown>
           : undefined;
-      const reasoningMode = options.reasoningMode
-        ?? (metadata.researchStage === "synthesis" ? "on" : "off");
+      const reasoningMode = options.reasoningMode ?? "off";
+      const requestPreferences: Record<string, unknown> = {
+        ...(parentPreferences ?? {}),
+        reasoningMode,
+      };
+      if (reasoningMode === "off") {
+        const parentOllamaOptionsValue = parentPreferences?.ollamaOptions;
+        const parentOllamaOptions =
+          parentOllamaOptionsValue
+          && typeof parentOllamaOptionsValue === "object"
+          && !Array.isArray(parentOllamaOptionsValue)
+            ? parentOllamaOptionsValue as Record<string, unknown>
+            : undefined;
+        const ollamaOptions: Record<string, unknown> = {
+          ...(parentOllamaOptions ?? {}),
+          temperature: 0.2,
+        };
+        const parentNumCtx = parentOllamaOptions?.num_ctx;
+        if (typeof parentNumCtx === "number" && Number.isFinite(parentNumCtx)) {
+          ollamaOptions.num_ctx = Math.min(parentNumCtx, 65_536);
+        }
+        requestPreferences.ollamaOptions = ollamaOptions;
+      }
 
       return {
         ...metadata,
-        requestPreferences: {
-          ...(parentPreferences ?? {}),
-          reasoningMode,
-        },
+        requestPreferences,
       };
     };
 
@@ -5264,7 +5408,35 @@ export class ResearchRunner {
             attemptResult,
           );
         } catch (error) {
-          throw budgetGuard.wrapError(error);
+          const wrapped = budgetGuard.wrapError(error);
+          if (normalizedOptions.signal?.aborted === true) {
+            throw wrapped;
+          }
+          const message = wrapped instanceof Error ? wrapped.message : String(wrapped);
+          if (!isStructuredOutputBudgetFailure(message)) {
+            throw wrapped;
+          }
+          plan = buildDeterministicResearchPlan(requestText, normalizedOptions.profile, message);
+          plannerResult = {
+            sessionId: `deterministic:${runId}:planning`,
+            turnId: `deterministic:${runId}:planning`,
+            events: [],
+            outputText: plan.objective,
+            structuredOutput: plan,
+            metadata: {
+              deterministicFallback: true,
+              reason: message,
+            },
+          };
+          await tracker.update({
+            currentAction: "Using deterministic research plan",
+            resultSummary: message,
+          });
+          await tracker.complete(plannerResult, {
+            resultSummary: `${plan.objective} Deterministic planner fallback used after model planner timeout.`,
+          });
+          await persistSubsessionArtifacts(runDirectory, "workers/coordinator-plan-fallback", plannerResult);
+          break;
         } finally {
           budgetGuard.cleanup();
           await tracker.end();
@@ -5272,10 +5444,40 @@ export class ResearchRunner {
       }
 
       if (!plannerResult || !plan) {
-        throw new GemmaDesktopError(
-          "tool_execution_failed",
-          "Planner did not produce a valid research plan after recovery and retry.",
+        plan = buildDeterministicResearchPlan(
+          requestText,
+          normalizedOptions.profile,
+          "Planner did not produce a valid structured plan after recovery and retry.",
         );
+        plannerResult = {
+          sessionId: `deterministic:${runId}:planning`,
+          turnId: `deterministic:${runId}:planning`,
+          events: [],
+          outputText: plan.objective,
+          structuredOutput: plan,
+          metadata: {
+            deterministicFallback: true,
+            reason: "Planner did not produce a valid structured plan after recovery and retry.",
+          },
+        };
+        if (runState.stages.planning.worker) {
+          runState.stages.planning.worker.currentAction = "Using deterministic research plan";
+          runState.stages.planning.worker.resultSummary =
+            "Planner did not produce a valid structured plan after recovery and retry.";
+          runState.stages.planning.worker.sourceCount = 0;
+          runState.stages.planning.worker.timeline = upsertResearchWorkerTimelineEntry(
+            runState.stages.planning.worker.timeline,
+            {
+              id: "deterministic-planning-fallback",
+              label: "Using deterministic research plan",
+              detail: "Planner did not produce a valid structured plan after recovery and retry.",
+              timestamp: new Date().toISOString(),
+              tone: "warning",
+            },
+          );
+        }
+        await persistSubsessionArtifacts(runDirectory, "workers/coordinator-plan-fallback", plannerResult);
+        await writeState();
       }
 
       const brief = buildResearchBrief(requestText, plan);
@@ -6089,6 +6291,23 @@ export class ResearchRunner {
       syncTopicStatuses();
       await writeSourceArtifacts();
       await syncTopicArtifacts();
+      const missingSearchConfiguration = [...discoveryByTopic.values()].some((discovery) =>
+        discovery.searchErrors.some((entry) => isMissingSearchConfigurationError(entry.error)),
+      );
+      if (missingSearchConfiguration && latestAssessment && !latestAssessment.sufficient) {
+        const coverageSummary = latestAssessment.gaps.slice(0, 4).join(" ");
+        throw new GemmaDesktopError(
+          "tool_execution_failed",
+          [
+            "Web search is unavailable because no Gemini API key is configured.",
+            "Deep research needs search to find current sources beyond the built-in seed pages.",
+            coverageSummary ? `Coverage remained insufficient: ${coverageSummary}` : "",
+            "Open Gemma Desktop -> Settings -> Integrations and add a Gemini API key, then rerun the research.",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
       const evidenceCardArtifacts = plan.topics.map((topic) => {
         const discovery = discoveryByTopic.get(topic.id);
         const topicSources = (discovery?.fetchedSourceIds ?? [])

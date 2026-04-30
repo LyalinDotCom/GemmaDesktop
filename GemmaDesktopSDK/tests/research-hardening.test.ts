@@ -27,6 +27,17 @@ describe("research content-quality hardening", () => {
     });
   });
 
+  describe("search configuration failures", () => {
+    it("detects missing Gemini API key search failures", () => {
+      expect(
+        __testOnly.isMissingSearchConfigurationError(
+          "No Gemini API key is configured, so web search cannot run. Tell the user to open Settings.",
+        ),
+      ).toBe(true);
+      expect(__testOnly.isMissingSearchConfigurationError("Gemini search failed after 3 attempts.")).toBe(false);
+    });
+  });
+
   describe("assessContentQuality", () => {
     it("flags short bodies as low-quality", () => {
       const result = __testOnly.assessContentQuality("short body", 25);

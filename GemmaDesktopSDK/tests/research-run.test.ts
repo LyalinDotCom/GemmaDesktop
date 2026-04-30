@@ -610,6 +610,101 @@ describe("research runs", { timeout: 120000 }, () => {
     expect(sourceFamilies).not.toContain("community");
   });
 
+  it("builds a deterministic fallback plan for latest-news requests when model planning fails", () => {
+    const request = "Latest news from Kyiv, ukraine capital";
+    const plan = __testOnly.buildDeterministicResearchPlan(
+      request,
+      "deep",
+      "Research planner exceeded the 2 minute time budget while generating structured output.",
+    );
+    const brief = __testOnly.buildResearchBrief(request, plan);
+    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+
+    expect(plan.topics.map((topic) => topic.title)).toEqual([
+      "Front Page Emphasis",
+      "Latest Story Coverage",
+      "Local and Specialized Sources",
+      "Analysis and Situation Reports",
+    ]);
+    expect(plan.risks.join("\n")).toContain("Model planner fallback used");
+    expect(brief.taskType).toBe("news-sweep");
+    expect(coveragePlan.targetSources).toBeGreaterThanOrEqual(18);
+    expect(coveragePlan.queryGroups.map((group) => group.sourceFamily)).toEqual(expect.arrayContaining([
+      "mainstream_front_page",
+      "mainstream_article",
+      "wire",
+      "local_news",
+      "blogs_analysis",
+    ]));
+  });
+
+  it("fails clearly when web search is not configured and source coverage remains insufficient", async () => {
+    const workingDirectory = await createWorkspace();
+    process.env.GEMMA_DESKTOP_DISABLE_RESEARCH_FALLBACK_URLS = "1";
+    const previousGeminiApiKey = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    setSearchProviderForTests(null);
+
+    const server = await createMockServer((request) => {
+      const url = new URL(request.path, "http://127.0.0.1");
+
+      if (url.pathname === "/health") {
+        return { status: 200, text: "ok" };
+      }
+
+      if (url.pathname === "/v1/models") {
+        return { json: { data: [{ id: "mock-model" }] } };
+      }
+
+      if (url.pathname === "/v1/chat/completions") {
+        return {
+          sse: sseJsonResponse("plan-1", {
+            objective: "Research current Zorblatt framework adoption.",
+            scopeSummary: "Find current source coverage.",
+            topics: [
+              {
+                title: "Current adoption",
+                goal: "Find current adoption evidence.",
+                priority: 1,
+                searchQueries: ["Zorblatt framework adoption"],
+              },
+            ],
+            risks: [],
+            stopConditions: [],
+          }),
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    try {
+      const gemmaDesktop = await createGemmaDesktop({
+        workingDirectory,
+        adapters: [createLlamaCppServerAdapter({ baseUrl: server.url })],
+      });
+      const session = await gemmaDesktop.sessions.create({
+        runtime: "llamacpp-server",
+        model: "mock-model",
+        mode: "cowork",
+        workingDirectory,
+      });
+
+      await expect(
+        session.runResearch("Research current Zorblatt framework adoption.", {
+          profile: "quick",
+        }),
+      ).rejects.toThrow(/Web search is unavailable because no Gemini API key is configured/);
+    } finally {
+      if (previousGeminiApiKey === undefined) {
+        delete process.env.GEMINI_API_KEY;
+      } else {
+        process.env.GEMINI_API_KEY = previousGeminiApiKey;
+      }
+    }
+  });
+
   it("uses small source-bundle analyst calls for news sweeps before synthesis", async () => {
     const workingDirectory = await createWorkspace();
     process.env.GEMMA_DESKTOP_DISABLE_RESEARCH_FALLBACK_URLS = "1";
