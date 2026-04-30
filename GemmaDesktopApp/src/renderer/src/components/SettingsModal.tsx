@@ -52,6 +52,7 @@ import {
   TextInput,
   Toggle,
 } from './settings/Primitives'
+import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 
 interface SettingsModalProps {
   settings: AppSettings
@@ -117,6 +118,7 @@ export interface DefaultModelOption {
   label: string
   providerLabel: string
   apiTypeLabel: string
+  optimizationTags?: string[]
 }
 
 const TOOL_POLICY_SECTIONS = [
@@ -317,11 +319,15 @@ function optionSearchText(option: DefaultModelOption): string {
     option.apiTypeLabel,
     option.runtimeId,
     option.modelId,
+    ...(option.optimizationTags ?? []),
   ].join(' ').toLowerCase()
 }
 
 export function formatDefaultModelOptionLabel(option: DefaultModelOption): string {
-  return `${option.label} - ${option.providerLabel} - ${option.apiTypeLabel}`
+  const tagLabel = option.optimizationTags?.length
+    ? ` - ${option.optimizationTags.join(', ')}`
+    : ''
+  return `${option.label} - ${option.providerLabel} - ${option.apiTypeLabel}${tagLabel}`
 }
 
 function compareDefaultModelOptions(
@@ -417,8 +423,14 @@ export function DefaultModelTargetPicker({
         className="flex w-full items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-sm text-zinc-700 outline-none transition-colors hover:border-zinc-300 focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-700 dark:focus:border-indigo-700"
       >
         <span className="min-w-0">
-          <span className="block truncate font-medium text-zinc-800 dark:text-zinc-100">
-            {selectedOption?.label ?? value.modelId}
+          <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
+            <span className="truncate">
+              {selectedOption?.label ?? value.modelId}
+            </span>
+            <ModelOptimizationBadges
+              tags={selectedOption?.optimizationTags}
+              compact
+            />
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
             {selectedOption
@@ -484,8 +496,15 @@ export function DefaultModelTargetPicker({
                       }`}
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-medium">
-                          {option.label}
+                        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
+                          <span className="truncate">
+                            {option.label}
+                          </span>
+                          <ModelOptimizationBadges
+                            tags={option.optimizationTags}
+                            selected={selected}
+                            compact
+                          />
                         </span>
                         <span
                           className={`mt-0.5 block truncate text-[11px] ${
@@ -711,6 +730,7 @@ export function SettingsModal({
           targetModel?.runtimeName,
         ),
         apiTypeLabel: apiTypeLabelForRuntime(target.runtimeId),
+        optimizationTags: targetModel?.optimizationTags,
       })
     }
 

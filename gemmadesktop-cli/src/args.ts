@@ -1,5 +1,11 @@
 import path from "node:path";
-import type { BuildTurnPolicyInput, ModeSelection } from "@gemma-desktop/sdk-core";
+import {
+  DEFAULT_CONVERSATION_APPROVAL_MODE,
+  normalizeConversationApprovalMode,
+  type BuildTurnPolicyInput,
+  type ConversationApprovalMode,
+  type ModeSelection,
+} from "@gemma-desktop/sdk-core";
 import {
   type DesktopParityRuntimeEndpoints,
   resolveDefaultModelTarget,
@@ -16,10 +22,17 @@ export class CliArgumentError extends Error {
 export type CliCommandName = "help" | "inspect" | "preview" | "run" | "scenario";
 export type ScenarioId =
   | "act-webapp-black-hole"
+  | "act-fix-broken-tests"
+  | "act-compaction-checkpoint"
+  | "act-multilang-python-go"
+  | "browser-rest-is-history-lyndon"
   | "pdf-attention-authors"
   | "web-hacker-news-frontpage"
   | "web-news-coverage-compare"
-  | "research-gemma4-availability";
+  | "research-gemma4-availability"
+  | "image-reading-card"
+  | "audio-harvard-transcript"
+  | "video-placeholder-keyframes";
 export type BuildVerifierMode = "hybrid" | "deterministic" | "off";
 
 export interface CommonCliOptions {
@@ -45,6 +58,7 @@ export interface SessionCliOptions extends CommonCliOptions {
   showEvents: boolean;
   debugRuntime: boolean;
   selectedToolNames: string[];
+  approvalMode: ConversationApprovalMode;
   requestPreferences: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
 }
@@ -64,6 +78,7 @@ export interface ScenarioCliOptions extends CommonCliOptions {
   buildPolicy?: BuildTurnPolicyInput;
   showEvents: boolean;
   debugRuntime: boolean;
+  approvalMode: ConversationApprovalMode;
   requestPreferences: RequestPreferences;
 }
 
@@ -96,6 +111,7 @@ interface ParseState {
   promptFile?: string;
   showEvents: boolean;
   debugRuntime: boolean;
+  approvalMode: ConversationApprovalMode;
   geminiApiKey?: string;
   geminiApiModel?: string;
   omlxApiKey?: string;
@@ -109,10 +125,17 @@ const REASONING_MODES = new Set(["auto", "on"]);
 const BUILD_VERIFIER_MODES = new Set<BuildVerifierMode>(["hybrid", "deterministic", "off"]);
 const SCENARIOS = new Set<ScenarioId>([
   "act-webapp-black-hole",
+  "act-fix-broken-tests",
+  "act-compaction-checkpoint",
+  "act-multilang-python-go",
+  "browser-rest-is-history-lyndon",
   "pdf-attention-authors",
   "web-hacker-news-frontpage",
   "web-news-coverage-compare",
   "research-gemma4-availability",
+  "image-reading-card",
+  "audio-harvard-transcript",
+  "video-placeholder-keyframes",
 ]);
 const MODE_PRESETS = new Set([
   "assistant",
@@ -154,10 +177,13 @@ export function usage(): string {
     "  --tool <name>                 Add a tool to the SDK mode selection. Can repeat.",
     "  --without-tool <name>         Remove a tool from the SDK mode selection. Can repeat.",
     "  --require-tool <name>         Require a tool call in the SDK mode selection. Can repeat.",
+    "  --approval-mode <require|yolo>",
+    "                                Require approval for risky commands, or auto-approve non-denied commands.",
     "  --reasoning <auto|on>          Request reasoning control through desktop-style metadata.",
     "  --ollama-option <key=value>   Numeric Ollama request option. Can repeat.",
     "  --ollama-keep-alive <value>   Ollama request keep_alive value.",
     "  --lmstudio-option <key=value> Numeric LM Studio request option. Can repeat.",
+    "  --omlx-option <key=value>     Numeric oMLX request option. Can repeat.",
     "  --metadata-json <object>      Extra top-level session metadata.",
     "  --show-events                 Include SDK events in JSON output or mirror them to stderr.",
     "  --debug-runtime               Mirror runtime debug records to stderr as JSON lines.",
@@ -165,10 +191,17 @@ export function usage(): string {
     "",
     "On-demand scenario IDs:",
     "  act-webapp-black-hole          Multi-turn build/edit/validate web app scenario.",
+    "  act-fix-broken-tests           Repair a broken npm fixture and validate it.",
+    "  act-compaction-checkpoint      Continue a build after forced SDK session compaction.",
+    "  act-multilang-python-go        Build and validate a Python CLI plus Go HTTP backend.",
+    "  browser-rest-is-history-lyndon  Use browser navigation to search podcast episodes.",
     "  pdf-attention-authors          Locate Attention Is All You Need, extract text, list authors.",
     "  web-hacker-news-frontpage      Fetch Hacker News and summarize the current front page.",
     "  web-news-coverage-compare      Compare latest CNN, Fox News, and MSNBC coverage.",
     "  research-gemma4-availability   Research current Gemma 4 versions and availability.",
+    "  image-reading-card             Read exact visible text from a downloaded PNG card.",
+    "  audio-harvard-transcript       Transcribe a free Open Speech Repository WAV sample.",
+    "  video-placeholder-keyframes    Inspect keyframes from a downloaded placeholder MP4.",
   ].join("\n");
 }
 
@@ -197,6 +230,7 @@ function initialState(argv: string[], cwd: string): ParseState {
     selectedToolNames: [],
     showEvents: false,
     debugRuntime: false,
+    approvalMode: DEFAULT_CONVERSATION_APPROVAL_MODE,
     requestPreferences: {},
     positional: [],
   };
@@ -283,6 +317,16 @@ function buildBuildPolicy(state: ParseState): BuildTurnPolicyInput | undefined {
   };
 }
 
+function readApprovalMode(value: string): ConversationApprovalMode {
+  if (value === "require" || value === "require_approval") {
+    return DEFAULT_CONVERSATION_APPROVAL_MODE;
+  }
+  if (value === "yolo") {
+    return normalizeConversationApprovalMode(value);
+  }
+  throw new CliArgumentError("--approval-mode must be require or yolo.");
+}
+
 function resolveWorkingDirectory(input: string): string {
   return path.resolve(input);
 }
@@ -356,6 +400,9 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--require-tool":
       state.requiredTools.push(readFlagValue(state, flag));
       return;
+    case "--approval-mode":
+      state.approvalMode = readApprovalMode(readFlagValue(state, flag));
+      return;
     case "--ollama-endpoint":
       state.endpoints.ollama = readFlagValue(state, flag);
       return;
@@ -397,6 +444,12 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--lmstudio-option":
       state.requestPreferences.lmstudioOptions = addNumericOption(
         state.requestPreferences.lmstudioOptions,
+        readNumericOption(readFlagValue(state, flag), flag),
+      );
+      return;
+    case "--omlx-option":
+      state.requestPreferences.omlxOptions = addNumericOption(
+        state.requestPreferences.omlxOptions,
         readNumericOption(readFlagValue(state, flag), flag),
       );
       return;
@@ -474,6 +527,7 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
       },
       showEvents: state.showEvents,
       debugRuntime: state.debugRuntime,
+      approvalMode: state.approvalMode,
       requestPreferences: state.requestPreferences,
     };
   }
@@ -492,6 +546,7 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
     ...(state.promptFile ? { promptFile: state.promptFile } : {}),
     showEvents: state.showEvents,
     debugRuntime: state.debugRuntime,
+    approvalMode: state.approvalMode,
     selectedToolNames: [...new Set(state.selectedToolNames)],
     requestPreferences: state.requestPreferences,
     ...(state.extraMetadata ? { extraMetadata: state.extraMetadata } : {}),

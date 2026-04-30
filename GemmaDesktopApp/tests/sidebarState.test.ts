@@ -6,7 +6,12 @@ import {
   SidebarStateStore,
   normalizeStoredSidebarProjectPath,
 } from '../src/main/sidebarState'
-import type { SidebarSessionReference } from '../src/shared/sidebar'
+import {
+  DEFAULT_PINNED_AREA_ICON,
+  DEFAULT_PINNED_AREA_ID,
+  getPinnedAreaDestinations,
+  type SidebarSessionReference,
+} from '../src/shared/sidebar'
 
 describe('sidebar state store', () => {
   let tempDir = ''
@@ -42,15 +47,23 @@ describe('sidebar state store', () => {
     }
   }
 
-  it('appends pinned sessions in pin order and persists them', async () => {
+  it('creates pinned areas and persists pinned sessions in their areas', async () => {
     const { refs } = buildSessionRefs()
     const store = new SidebarStateStore(sidebarStatePath)
 
     await store.init(refs)
-    await store.pinSession('session-a', refs)
-    const result = await store.pinSession('session-c', refs)
+    const created = await store.createPinnedArea('🚀', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    const result = await store.pinSession('session-c', areaId, refs)
 
-    expect(result.state.pinnedSessionIds).toEqual(['session-a', 'session-c'])
+    expect(result.state.pinnedSessionIds).toEqual([])
+    expect(result.state.pinnedAreas?.map((area) => ({
+      icon: area.icon,
+      sessionIds: area.sessionIds,
+      collapsed: area.collapsed,
+    }))).toEqual([
+      { icon: '🚀', sessionIds: ['session-a', 'session-c'], collapsed: false },
+    ])
     expect(result.state.projectPaths).toEqual([
       normalizeStoredSidebarProjectPath(refs[0]!.workingDirectory),
       normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
@@ -58,48 +71,118 @@ describe('sidebar state store', () => {
 
     const reloaded = new SidebarStateStore(sidebarStatePath)
     const reloadedState = await reloaded.init(refs)
-    expect(reloadedState.state.pinnedSessionIds).toEqual(['session-a', 'session-c'])
+    expect(reloadedState.state.pinnedAreas?.map((area) => area.sessionIds)).toEqual([
+      ['session-a', 'session-c'],
+    ])
     expect(reloadedState.state.projectPaths).toEqual([
       normalizeStoredSidebarProjectPath(refs[0]!.workingDirectory),
       normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
     ])
   })
 
-  it('persists reordered pinned sessions across store reloads', async () => {
+  it('pins directly into the generic default area when requested', async () => {
     const { refs } = buildSessionRefs()
     const store = new SidebarStateStore(sidebarStatePath)
 
     await store.init(refs)
-    await store.pinSession('session-a', refs)
-    await store.pinSession('session-b', refs)
-    await store.pinSession('session-c', refs)
+    const result = await store.pinSession('session-a', DEFAULT_PINNED_AREA_ID, refs)
 
-    const moved = await store.movePinnedSession('session-a', 2, refs)
-    expect(moved.state.pinnedSessionIds).toEqual([
-      'session-b',
-      'session-c',
-      'session-a',
+    expect(result.state.pinnedAreas?.map((area) => ({
+      id: area.id,
+      icon: area.icon,
+      sessionIds: area.sessionIds,
+    }))).toEqual([
+      {
+        id: DEFAULT_PINNED_AREA_ID,
+        icon: DEFAULT_PINNED_AREA_ICON,
+        sessionIds: ['session-a'],
+      },
+    ])
+  })
+
+  it('uses a synthetic generic destination until the default area is persisted', () => {
+    expect(getPinnedAreaDestinations([]).map((area) => area.id)).toEqual([
+      DEFAULT_PINNED_AREA_ID,
+    ])
+    expect(getPinnedAreaDestinations([
+      {
+        id: 'custom-area',
+        icon: '🚀',
+        collapsed: false,
+        sessionIds: [],
+      },
+    ]).map((area) => area.id)).toEqual([
+      DEFAULT_PINNED_AREA_ID,
+      'custom-area',
+    ])
+  })
+
+  it('keeps the generic default area stable', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    await store.pinSession('session-a', DEFAULT_PINNED_AREA_ID, refs)
+    const updated = await store.updatePinnedAreaIcon(DEFAULT_PINNED_AREA_ID, '🔥', refs)
+    const deleted = await store.deletePinnedArea(DEFAULT_PINNED_AREA_ID, refs)
+
+    expect(updated.state.pinnedAreas?.[0]?.icon).toBe(DEFAULT_PINNED_AREA_ICON)
+    expect(deleted.state.pinnedAreas?.[0]?.id).toBe(DEFAULT_PINNED_AREA_ID)
+  })
+
+  it('persists reordered pinned areas and icon changes across store reloads', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    const first = await store.createPinnedArea('⭐', 'session-a', refs)
+    const firstAreaId = first.state.pinnedAreas?.[0]?.id ?? ''
+    const second = await store.createPinnedArea('🧪', 'session-c', refs)
+    const secondAreaId = second.state.pinnedAreas?.[1]?.id ?? ''
+    await store.updatePinnedAreaIcon(firstAreaId, '🔥', refs)
+    const moved = await store.movePinnedArea(secondAreaId, 'up', refs)
+
+    expect(moved.state.pinnedAreas?.map((area) => ({
+      icon: area.icon,
+      sessionIds: area.sessionIds,
+    }))).toEqual([
+      { icon: '🧪', sessionIds: ['session-c'] },
+      { icon: '🔥', sessionIds: ['session-a'] },
     ])
 
     const reloaded = new SidebarStateStore(sidebarStatePath)
     const reloadedState = await reloaded.init(refs)
-    expect(reloadedState.state.pinnedSessionIds).toEqual([
-      'session-b',
-      'session-c',
-      'session-a',
-    ])
+    expect(reloadedState.state.pinnedAreas?.map((area) => area.icon)).toEqual(['🧪', '🔥'])
   })
 
-  it('prunes deleted pinned sessions after session cleanup', async () => {
+  it('preserves compound emoji graphemes for pinned area icons', async () => {
     const { refs } = buildSessionRefs()
     const store = new SidebarStateStore(sidebarStatePath)
 
     await store.init(refs)
-    await store.pinSession('session-a', refs)
-    await store.pinSession('session-c', refs)
+    const created = await store.createPinnedArea('👩🏽‍💻 research', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    expect(created.state.pinnedAreas?.[0]?.icon).toBe('👩🏽‍💻')
+
+    const updated = await store.updatePinnedAreaIcon(areaId, '🏳️‍🌈 release', refs)
+    expect(updated.state.pinnedAreas?.[0]?.icon).toBe('🏳️‍🌈')
+
+    const reloaded = new SidebarStateStore(sidebarStatePath)
+    const reloadedState = await reloaded.init(refs)
+    expect(reloadedState.state.pinnedAreas?.[0]?.icon).toBe('🏳️‍🌈')
+  })
+
+  it('prunes deleted pinned sessions from pinned areas after session cleanup', async () => {
+    const { refs } = buildSessionRefs()
+    const store = new SidebarStateStore(sidebarStatePath)
+
+    await store.init(refs)
+    const created = await store.createPinnedArea('⭐', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    await store.pinSession('session-c', areaId, refs)
 
     const pruned = await store.prune(refs.filter((session) => session.id !== 'session-a'))
-    expect(pruned.state.pinnedSessionIds).toEqual(['session-c'])
+    expect(pruned.state.pinnedAreas?.map((area) => area.sessionIds)).toEqual([['session-c']])
   })
 
   it('persists the last active session and prunes it after deletion', async () => {
@@ -125,12 +208,13 @@ describe('sidebar state store', () => {
     const store = new SidebarStateStore(sidebarStatePath)
 
     await store.init(refs)
-    await store.pinSession('session-a', refs)
-    await store.pinSession('session-c', refs)
+    const created = await store.createPinnedArea('⭐', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    await store.pinSession('session-c', areaId, refs)
 
     const closed = await store.closeProject(projectAlpha, refs)
 
-    expect(closed.state.pinnedSessionIds).toEqual(['session-c'])
+    expect(closed.state.pinnedAreas?.map((area) => area.sessionIds)).toEqual([['session-c']])
     expect(closed.state.closedProjectPaths).toEqual([
       normalizeStoredSidebarProjectPath(projectAlpha),
     ])
@@ -145,27 +229,36 @@ describe('sidebar state store', () => {
     const store = new SidebarStateStore(sidebarStatePath)
 
     await store.init(refs)
-    await store.pinSession('session-a', refs)
-    await store.pinSession('session-c', refs)
+    const created = await store.createPinnedArea('⭐', 'session-a', refs)
+    const areaId = created.state.pinnedAreas?.[0]?.id ?? ''
+    await store.pinSession('session-c', areaId, refs)
     await store.closeProject(projectAlpha, refs)
 
     const reopened = await store.reopenProject(projectAlpha, refs)
 
     expect(reopened.state.closedProjectPaths).toEqual([])
-    expect(reopened.state.pinnedSessionIds).toEqual(['session-c'])
+    expect(reopened.state.pinnedAreas?.map((area) => area.sessionIds)).toEqual([['session-c']])
     expect(reopened.state.projectPaths).toEqual([
       normalizeStoredSidebarProjectPath(projectAlpha),
       normalizeStoredSidebarProjectPath(refs[2]!.workingDirectory),
     ])
   })
 
-  it('prunes stale pinned ids and closed project paths on initialization', async () => {
+  it('ignores legacy pinned ids and prunes stale pinned area ids on initialization', async () => {
     const { refs, projectAlpha } = buildSessionRefs()
 
     await fs.writeFile(
       sidebarStatePath,
       JSON.stringify({
         pinnedSessionIds: ['session-a', 'missing-session', 'session-a', ''],
+        pinnedAreas: [
+          {
+            id: 'area-1',
+            icon: '🔥',
+            collapsed: true,
+            sessionIds: ['session-a', 'missing-session', 'session-a', ''],
+          },
+        ],
         closedProjectPaths: [
           projectAlpha,
           `${projectAlpha}/`,
@@ -186,7 +279,15 @@ describe('sidebar state store', () => {
     const initialized = await store.init(refs)
 
     expect(initialized.state).toEqual({
-      pinnedSessionIds: ['session-a'],
+      pinnedSessionIds: [],
+      pinnedAreas: [
+        {
+          id: 'area-1',
+          icon: '🔥',
+          collapsed: true,
+          sessionIds: ['session-a'],
+        },
+      ],
       followUpSessionIds: [],
       closedProjectPaths: [normalizeStoredSidebarProjectPath(projectAlpha)],
       projectPaths: [

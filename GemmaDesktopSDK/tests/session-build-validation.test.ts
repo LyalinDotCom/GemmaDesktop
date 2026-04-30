@@ -316,7 +316,7 @@ describe("build mode verification enforcement", () => {
     }
   });
 
-  it("continues the turn after edited files until verification passes", async () => {
+  it("records missing verification without auto-coaching the assistant", async () => {
     const workingDirectory = await createWorkspaceWithPackageJson({
       build: "vite build",
     });
@@ -332,14 +332,7 @@ describe("build mode verification enforcement", () => {
         },
       }),
       createTextResponse("I created the file."),
-      createToolCallResponse({
-        text: "I will run the build.",
-        toolName: "exec_command",
-        toolInput: {
-          command: "npm run build",
-        },
-      }),
-      createTextResponse("I created the file and npm run build passed."),
+      createTextResponse("This response should not be requested."),
     ]);
 
     const registry = new ToolRegistry();
@@ -363,17 +356,14 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create the file.");
 
-    expect(result.text).toBe("I created the file and npm run build passed.");
-    expect(adapter.requests).toHaveLength(4);
-    expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-      "This act turn is not complete yet.",
-    );
-    expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-      "Run a meaningful verification command now when one fits this workspace",
-    );
+    expect(result.text).toBe("I created the file.");
+    expect(adapter.requests).toHaveLength(2);
+    expect(result.build?.verification?.attempted).toBe(false);
+    expect(result.build?.verification?.recommendedCommands).toContain("npm run build");
+    expect(result.warnings).toEqual([]);
   });
 
-  it("stops automatic build-validation continuation after repeated text-only replies", async () => {
+  it("does not loop on repeated text-only replies when verification is missing", async () => {
     const workingDirectory = await createWorkspaceWithPackageJson({
       build: "vite build",
     });
@@ -414,11 +404,9 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create the file.");
 
-    expect(result.text).toBe("I created the file and it is ready.");
-    expect(adapter.requests).toHaveLength(3);
-    expect(result.warnings).toContain(
-      "Assistant kept replying with text instead of running required build verification. Stopping automatic continuation to avoid a repeat loop.",
-    );
+    expect(result.text).toBe("I created the file.");
+    expect(adapter.requests).toHaveLength(2);
+    expect(result.warnings).toEqual([]);
     expect(result.build?.verification?.attempted).toBe(false);
   });
 
@@ -437,7 +425,6 @@ describe("build mode verification enforcement", () => {
           }),
         },
       }),
-      createTextResponse("I created the package."),
       createToolCallResponse({
         text: "I will run the nested build.",
         toolName: "exec_command",
@@ -473,13 +460,63 @@ describe("build mode verification enforcement", () => {
       const result = await engine.run("Create a nested npm app in black.");
 
       expect(result.text).toBe("I created the nested app and cd black && npm run build passed.");
-      expect(adapter.requests).toHaveLength(4);
-      expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-        "Recommended commands for this workspace: cd black && npm run build.",
-      );
+      expect(adapter.requests).toHaveLength(3);
+      expect(result.build?.verification?.passed).toBe(true);
+      expect(result.build?.verification?.latestAttempt?.command).toBe("cd black && npm run build");
     } finally {
       process.chdir(originalCwd);
     }
+  });
+
+  it("accepts npm test shorthand as meaningful build verification", async () => {
+    const workingDirectory = await createWorkspaceWithPackageJson({
+      test: "node validate.mjs",
+    });
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the file.",
+        toolName: "write_file",
+        toolInput: {
+          path: "src/main.ts",
+          content: "console.log('hi');",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will run npm test.",
+        toolName: "exec_command",
+        toolInput: {
+          command: "npm test",
+        },
+      }),
+      createTextResponse("I created the file and npm test passed."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool());
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      timedOut: false,
+    })));
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 3,
+    });
+
+    const result = await engine.run("Create the file.");
+
+    expect(result.text).toBe("I created the file and npm test passed.");
+    expect(result.build?.verification?.passed).toBe(true);
+    expect(result.build?.verification?.latestAttempt?.command).toBe("npm test");
   });
 
   it("does not require finalize_build evidence after validation by default", async () => {
@@ -497,7 +534,6 @@ describe("build mode verification enforcement", () => {
           }),
         },
       }),
-      createTextResponse("I created the black hole simulator package."),
       createToolCallResponse({
         text: "I will run the build.",
         toolName: "exec_command",
@@ -534,7 +570,7 @@ describe("build mode verification enforcement", () => {
       const result = await engine.run("Create a black hole simulator in a folder called black.");
 
       expect(result.text).toBe("Done. The black hole simulator package builds with npm.");
-      expect(adapter.requests).toHaveLength(4);
+      expect(adapter.requests).toHaveLength(3);
       expect(result.build?.verification?.passed).toBe(true);
       expect(result.build?.finalization).toBeUndefined();
       expect(result.build?.verifier).toBeUndefined();
@@ -634,7 +670,7 @@ describe("build mode verification enforcement", () => {
     }
   });
 
-  it("stops after required validation passes even when finalize_build was recorded before that validation", async () => {
+  it("does not auto-coach weak finalize_build evidence toward later validation", async () => {
     const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
     cleanup.push(workingDirectory);
 
@@ -711,21 +747,15 @@ describe("build mode verification enforcement", () => {
 
       const result = await engine.run("Create an SVG of a cat on a bicycle in a folder called svg4.");
 
-      expect(result.text).toBe("Done. svg4/cat-bicycle.svg was created and xmllint passed.");
-      expect(adapter.requests).toHaveLength(6);
-      expect(collectSystemText(adapter.requests[4]?.messages ?? [])).toContain(
-        "Run a meaningful verification command now when one fits this workspace",
-      );
+      expect(result.text).toBe("I created svg4/cat-bicycle.svg and listed the folder.");
+      expect(adapter.requests).toHaveLength(4);
       expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
         "write_file",
         "exec_command",
         FINALIZE_BUILD_TOOL_NAME,
-        "exec_command",
       ]);
-      expect(result.build?.verification?.passed).toBe(true);
-      expect(result.build?.verification?.latestAttempt?.command).toBe("xmllint --noout svg4/cat-bicycle.svg");
-      expect(result.build?.finalization?.passed).toBe(true);
-      expect(result.build?.finalization?.latestFinalization?.validation[0]?.command).toBe("ls svg4/");
+      expect(result.build?.verification?.attempted).toBe(false);
+      expect(result.build?.finalization).toBeUndefined();
     } finally {
       process.chdir(originalCwd);
     }
@@ -912,7 +942,7 @@ describe("build mode verification enforcement", () => {
     }
   });
 
-  it("continues artifact-only SVG turns until parser validation passes", async () => {
+  it("records artifact-only SVG turns without auto-coaching parser validation", async () => {
     const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
     cleanup.push(workingDirectory);
 
@@ -957,11 +987,10 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create a cat on a bicycle as an SVG.");
 
-    expect(result.text).toBe("I created cat-bicycle.svg and xmllint passed.");
-    expect(adapter.requests).toHaveLength(4);
-    expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-      "Recommended commands for this workspace: xmllint --noout cat-bicycle.svg.",
-    );
+    expect(result.text).toBe("I created cat-bicycle.svg.");
+    expect(adapter.requests).toHaveLength(2);
+    expect(result.build?.verification?.attempted).toBe(false);
+    expect(result.build?.verification?.recommendedCommands).toContain("xmllint --noout cat-bicycle.svg");
   });
 
   it("recognizes focused Node artifact validators as meaningful SVG verification", async () => {
@@ -1075,7 +1104,7 @@ describe("build mode verification enforcement", () => {
     );
   });
 
-  it("tracks SVG artifacts created by shell redirection before requiring validation", async () => {
+  it("tracks SVG artifacts created by shell redirection without auto-coaching validation", async () => {
     const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
     cleanup.push(workingDirectory);
 
@@ -1118,14 +1147,13 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create an axolotl on a bicycle as an SVG.");
 
-    expect(result.text).toBe("I generated axolotl-bicycle.svg and xmllint passed.");
-    expect(adapter.requests).toHaveLength(4);
-    expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
-      "Recommended commands for this workspace: xmllint --noout axolotl-bicycle.svg.",
-    );
+    expect(result.text).toBe("I generated axolotl-bicycle.svg.");
+    expect(adapter.requests).toHaveLength(2);
+    expect(result.build?.verification?.attempted).toBe(false);
+    expect(result.build?.verification?.recommendedCommands).toContain("xmllint --noout axolotl-bicycle.svg");
   });
 
-  it("continues when the assistant drafts file creation commands in markdown instead of using tools", async () => {
+  it("does not auto-coach when the assistant drafts file creation commands in markdown", async () => {
     const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
     cleanup.push(workingDirectory);
 
@@ -1177,24 +1205,18 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create an axolotl on a bicycle as an SVG.");
 
-    expect(result.text).toBe("I created axolotl-bicycle.svg on disk and xmllint passed.");
-    expect(adapter.requests).toHaveLength(4);
-    expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
-      "You drafted file contents or shell commands in the assistant text, but that did not create files in the workspace.",
-    );
-    expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
-      "write_file",
-      "exec_command",
-    ]);
+    expect(result.text).toContain("Here is the file:");
+    expect(adapter.requests).toHaveLength(1);
+    expect(result.toolResults).toEqual([]);
     const historyText = engine.snapshot().history
       .flatMap((message) => message.content)
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("\n");
-    expect(historyText).not.toContain("Here is the file:");
+    expect(historyText).toContain("Here is the file:");
   });
 
-  it("continues after a premature file-creation completion claim and does not keep that claim in history", async () => {
+  it("does not auto-coach after a premature file-creation completion claim", async () => {
     const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-mode-"));
     cleanup.push(workingDirectory);
 
@@ -1245,18 +1267,15 @@ describe("build mode verification enforcement", () => {
 
     const result = await engine.run("Create five animal unicycle SVGs in svg7.");
 
-    expect(result.text).toBe("I created svg7/elephant_unicycle.svg on disk and xmllint passed.");
-    expect(adapter.requests).toHaveLength(4);
-    expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
-      "You drafted file contents or shell commands in the assistant text, but that did not create files in the workspace.",
-    );
+    expect(result.text).toContain("I have created the svg7 folder");
+    expect(adapter.requests).toHaveLength(1);
+    expect(result.toolResults).toEqual([]);
     const historyText = engine.snapshot().history
       .flatMap((message) => message.content)
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("\n");
-    expect(historyText).not.toContain("I have created the svg7 folder");
-    expect(historyText).toContain("I created svg7/elephant_unicycle.svg on disk and xmllint passed.");
+    expect(historyText).toContain("I have created the svg7 folder");
   });
 
   it("continues the turn after failed verification when the assistant has not stated a concrete blocker", async () => {

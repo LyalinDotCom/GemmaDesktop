@@ -135,7 +135,15 @@ That means:
 
 When implementation details, runtime behavior, or API semantics need grounding in real-world examples, consult the local reference projects at `/Users/dmitrylyalin/Source/Reference_Projects` first. This library includes major open-source projects, including Ollama and its documentation, and should be treated as a preferred source of practical reference context.
 
-When behavior depends on a real open model, prefer real-model validation on Ollama over mocks once focused unit coverage exists. Separate short live regression checks from longer preflight suites so developers can run the smallest useful real-model test first.
+When behavior depends on a real open model, prefer real-model validation on Ollama over mocks once focused unit coverage exists. Use **live tests** as the short name for validation that runs real models, real tools, real websites, real files, or real runtimes instead of mocks. Use **live scenario tests** for the user-shaped CLI/app scenarios where an agent runs the flow, reviews the evidence, and judges whether the outcome is genuinely useful. Separate short live tests from longer preflight suites so developers can run the smallest useful real-model check first.
+
+Live scenario tests exist to expose real product behavior, not to reward brittle prompt hacks or validator gaming. When a real scenario fails, agents should respond in one of three ways:
+
+- make a real product fix that improves the generic capability the scenario exercises
+- make a real test-fixture or harness fix when the failure is in the scenario setup itself, such as a dead asset URL or non-deterministic local precondition
+- report the capability gap plainly when the model, runtime, tool surface, or local environment cannot currently handle the scenario
+
+Do not change a scenario, evaluator, prompt, or fixture to merely make a failing run look green. If a scenario reveals that a browser tool is missing from the CLI, a model cannot process a modality, a Go toolchain is unavailable, or a website blocks automation, record that honestly and either fix the product surface or preserve the failure as useful evidence.
 
 ## Test Discipline
 
@@ -197,6 +205,7 @@ Treat live-model cleanup as a hard safety requirement, not a nice-to-have. Loadi
 - prefer exclusive live-test execution or another guard that prevents multiple heavy live-model tests from overlapping
 - if another Ollama model is already resident, resolve that intentionally before starting another heavy live-model test
 - assume live-model tests may need to unload a model that was already warm; do not run them casually alongside other local inference work
+- oMLX live validation can use the OpenAI-compatible API key saved in Gemma Desktop app settings. When a local run needs it, read it from `~/Library/Application Support/Gemma Desktop/settings.json` or pass it through `GEMMA_DESKTOP_OMLX_API_KEY`, but never print, hard-code, or commit the secret.
 
 ## User-Curated Data Safety
 

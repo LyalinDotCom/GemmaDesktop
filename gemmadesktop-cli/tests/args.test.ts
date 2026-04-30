@@ -25,12 +25,16 @@ describe("CLI argument parsing", () => {
       "read_file",
       "--without-tool",
       "exec_command",
+      "--approval-mode",
+      "yolo",
       "--reasoning",
       "on",
       "--ollama-option",
       "num_ctx=8192",
       "--ollama-keep-alive",
       "24h",
+      "--omlx-option",
+      "temperature=0.8",
       "--omlx-endpoint",
       "http://localhost:8001",
       "--omlx-api-key",
@@ -45,6 +49,7 @@ describe("CLI argument parsing", () => {
     expect(command.modelId).toBe("gemma4:e2b");
     expect(command.runtimeId).toBe("ollama-native");
     expect(command.outputJson).toBe(true);
+    expect(command.approvalMode).toBe("yolo");
     expect(command.endpoints.omlx).toBe("http://localhost:8001");
     expect(command.omlxApiKey).toBe("1234");
     expect(command.mode).toEqual({
@@ -56,6 +61,7 @@ describe("CLI argument parsing", () => {
       reasoningMode: "on",
       ollamaOptions: { num_ctx: 8192 },
       ollamaKeepAlive: "24h",
+      omlxOptions: { temperature: 0.8 },
     });
     expect(command.extraMetadata).toEqual({
       [REQUEST_PREFERENCES_METADATA_KEY]: { legacy: true },
@@ -68,6 +74,13 @@ describe("CLI argument parsing", () => {
 
     expect(command.command).toBe("run");
     expect(command.prompt).toBe("Summarize this");
+    expect(command.approvalMode).toBe("require_approval");
+  });
+
+  it("rejects unsupported approval modes", () => {
+    expect(() =>
+      parseCliCommand(["run", "hello", "--approval-mode", "maybe"], "/tmp/gemma-project"),
+    ).toThrow(CliArgumentError);
   });
 
   it("rejects malformed numeric request preferences", () => {
@@ -120,10 +133,17 @@ describe("CLI argument parsing", () => {
   it("parses the on-demand headless scenario catalog", () => {
     const scenarioIds = [
       "act-webapp-black-hole",
+      "act-fix-broken-tests",
+      "act-compaction-checkpoint",
+      "act-multilang-python-go",
+      "browser-rest-is-history-lyndon",
       "pdf-attention-authors",
       "web-hacker-news-frontpage",
       "web-news-coverage-compare",
       "research-gemma4-availability",
+      "image-reading-card",
+      "audio-harvard-transcript",
+      "video-placeholder-keyframes",
     ];
 
     for (const scenarioId of scenarioIds) {

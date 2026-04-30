@@ -6,6 +6,8 @@ export interface SessionDetailMessage {
   content: Array<Record<string, unknown>>
   timestamp: number
   durationMs?: number
+  primaryModelId?: string
+  primaryRuntimeId?: string
 }
 
 const USER_MESSAGE_CLOCK_SKEW_MS = 250

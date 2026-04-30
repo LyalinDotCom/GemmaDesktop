@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { AudioLines, BookOpenText, Briefcase, Globe2, Maximize2, Minimize2, Pin, VolumeX } from 'lucide-react'
+import { AudioLines, BookOpenText, Brain, Briefcase, Globe2, Maximize2, Minimize2, Pin, VolumeX } from 'lucide-react'
 import {
   describeAssistantNarrationMode,
   type AssistantNarrationMode,
@@ -55,6 +55,19 @@ function AssistantHomeNebula({ busy }: { busy: boolean }) {
   )
 }
 
+function AssistantHomeBrainMark() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-4"
+    >
+      <div className="assistant-home-brain-mark flex h-12 w-full max-w-3xl items-center justify-center rounded-b-[28px] border border-t-0 border-white/10 bg-[#050817]/70 px-3 text-zinc-200 shadow-[0_24px_70px_-36px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+        <Brain size={19} className="shrink-0 text-zinc-100" />
+      </div>
+    </div>
+  )
+}
+
 export function AssistantHome({
   conversationSlot,
   conversationStatusSlot,
@@ -106,6 +119,7 @@ export function AssistantHome({
     <div className="absolute inset-0 z-[70] overflow-hidden bg-[#05030d] text-white">
       <AssistantHomeNebula busy={busy} />
       <div className="drag-region absolute inset-x-0 top-0 z-10 h-12" />
+      <AssistantHomeBrainMark />
 
       <div className="relative z-20 flex h-full min-h-0 flex-col px-5 pb-8 pt-12">
         <main

@@ -1,5 +1,6 @@
 import { Check, Copy, Loader2, Square, TextSelect, Volume2 } from 'lucide-react'
 import type { ReadAloudButtonState } from '@/hooks/useReadAloudPlayer'
+import type { TurnDurationLabelParts } from '@/lib/turnStatus'
 
 /**
  * Shared action row rendered beneath a non-streaming assistant turn.
@@ -31,6 +32,7 @@ export interface CopyAction {
 
 export interface AssistantActionRowProps {
   durationLabel?: string | null
+  durationLabelParts?: TurnDurationLabelParts | null
   selection?: SelectionAction
   readAloud?: ReadAloudButtonState
   copy?: CopyAction
@@ -61,8 +63,42 @@ function iconButtonClass({
   return 'assistant-action-button inline-flex h-4 w-4 items-center justify-center rounded border border-zinc-200 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-200'
 }
 
+function TurnDurationLabel({ parts }: { parts: TurnDurationLabelParts }) {
+  if (!parts.modelLabel) {
+    return (
+      <span className="text-[11px] font-medium text-zinc-700 dark:text-zinc-100">
+        {parts.label}
+      </span>
+    )
+  }
+
+  return (
+    <span
+      className="text-[11px]"
+      aria-label={parts.label}
+    >
+      {parts.statusLabel ? (
+        <span className="text-zinc-400 dark:text-zinc-500">
+          {parts.statusLabel}
+          {' · '}
+        </span>
+      ) : null}
+      <span className="text-zinc-400 dark:text-zinc-500">
+        {parts.modelLabel}
+      </span>
+      <span className="text-zinc-400/90 dark:text-zinc-500">
+        {' in '}
+      </span>
+      <span className="font-medium text-zinc-700 dark:text-zinc-100">
+        {parts.elapsedLabel}
+      </span>
+    </span>
+  )
+}
+
 export function AssistantActionRow({
   durationLabel,
+  durationLabelParts,
   selection,
   readAloud,
   copy,
@@ -74,8 +110,9 @@ export function AssistantActionRow({
   // Only the latest turn shows the duration label; older turns keep the
   // buttons only (revealed on hover below).
   const effectiveDurationLabel = isLatestTurn ? durationLabel : null
+  const effectiveDurationLabelParts = isLatestTurn ? durationLabelParts : null
 
-  if (!effectiveDurationLabel && !hasAnyAction) {
+  if (!effectiveDurationLabel && !effectiveDurationLabelParts && !hasAnyAction) {
     return null
   }
 
@@ -87,7 +124,9 @@ export function AssistantActionRow({
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
-      {effectiveDurationLabel ? (
+      {effectiveDurationLabelParts ? (
+        <TurnDurationLabel parts={effectiveDurationLabelParts} />
+      ) : effectiveDurationLabel ? (
         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
           {effectiveDurationLabel}
         </span>

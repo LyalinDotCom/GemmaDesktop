@@ -148,6 +148,35 @@ function renderContentBlock(content: MessageContent): string {
   }
 }
 
+export function applyLatestAssistantPrimaryModelFallback(
+  messages: ChatMessage[],
+  primaryModelId?: string | null,
+): ChatMessage[] {
+  const normalizedPrimaryModelId = primaryModelId?.trim()
+  if (!normalizedPrimaryModelId) {
+    return messages
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== 'assistant') {
+      continue
+    }
+
+    if (message.primaryModelId?.trim()) {
+      return messages
+    }
+
+    return messages.map((entry, entryIndex) =>
+      entryIndex === index
+        ? { ...entry, primaryModelId: normalizedPrimaryModelId }
+        : entry,
+    )
+  }
+
+  return messages
+}
+
 export function serializeChatMessage(message: ChatMessage): string {
   const roleLabel =
     message.role === 'user'
@@ -161,7 +190,13 @@ export function serializeChatMessage(message: ChatMessage): string {
       .map((content) => renderContentBlock(content).trim())
       .filter((value) => value.length > 0),
     ...(message.role === 'assistant'
-      ? [buildTurnDurationLabel(message.content, message.durationMs) ?? '']
+      ? [
+          buildTurnDurationLabel(
+            message.content,
+            message.durationMs,
+            message.primaryModelId,
+          ) ?? '',
+        ]
       : []),
   ].filter((section) => section.length > 0)
 

@@ -55,7 +55,11 @@ import {
 } from '@/lib/speechAudio'
 import { ToolSelector } from '@/components/ToolSelector'
 import { GemmaSizeSelector } from '@/components/GemmaSizeSelector'
-import { serializeSessionHistory } from '@/lib/chatCopy'
+import { ApprovalModeToggle } from '@/components/ApprovalModeToggle'
+import {
+  applyLatestAssistantPrimaryModelFallback,
+  serializeSessionHistory,
+} from '@/lib/chatCopy'
 import {
   describeAssistantNarrationMode,
   type AssistantNarrationMode,
@@ -91,6 +95,7 @@ import type {
   SpeechEvent,
   SpeechInspection,
 } from '@/types'
+import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import {
   SPEECH_CHUNK_DURATION_MS,
   SPEECH_CHUNK_OVERLAP_MS,
@@ -121,12 +126,15 @@ export interface InputBarProps {
   selectedMode: SessionMode
   conversationKind: ConversationKind
   planMode: boolean
+  approvalMode?: ConversationApprovalMode
   onSelectConversationMode?: (mode: ConversationRunMode) => void
+  onSelectApprovalMode?: (mode: ConversationApprovalMode) => void
   onSelectModel?: (selection: {
     modelId: string
     runtimeId: string
   }) => void | Promise<void>
   modeChangeDisabled?: boolean
+  modelSelectionDisabled?: boolean
   conversationRunDisabledReason?: string | null
   busyQueueDisabledReason?: string | null
   messages: ChatMessage[]
@@ -293,9 +301,12 @@ export function InputBar({
   selectedMode,
   conversationKind,
   planMode,
+  approvalMode,
   onSelectConversationMode,
+  onSelectApprovalMode,
   onSelectModel,
   modeChangeDisabled = false,
+  modelSelectionDisabled,
   conversationRunDisabledReason = null,
   busyQueueDisabledReason = null,
   messages,
@@ -471,6 +482,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
+  const modelSelectionControlDisabled =
+    modelSelectionDisabled == null
+      ? conversationModeControlDisabled
+      : modelSelectionDisabled || isCompacting || speechLocked || sessionBusy
 
   const attachmentAccept = useMemo(() => {
     const accepted = [
@@ -1947,17 +1962,24 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     syncTextareaHeight()
   }
 
-  const messagesForCopy = streamingContent
-    ? [
-        ...messages,
-        {
-          id: 'streaming-copy',
-          role: 'assistant' as const,
-          content: streamingContent,
-          timestamp: Date.now(),
-        },
-      ]
-    : messages
+  const messagesForCopy = useMemo(() => {
+    const copyMessages = streamingContent
+      ? [
+          ...messages,
+          {
+            id: 'streaming-copy',
+            role: 'assistant' as const,
+            content: streamingContent,
+            timestamp: Date.now(),
+          },
+        ]
+      : messages
+
+    return applyLatestAssistantPrimaryModelFallback(
+      copyMessages,
+      conversationKind === 'normal' ? selectedModelId : null,
+    )
+  }, [conversationKind, messages, selectedModelId, streamingContent])
 
   const handleCopyChat = useCallback(async () => {
     if (messagesForCopy.length === 0) {
@@ -2118,9 +2140,16 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           selectedRuntimeId={selectedRuntimeId}
           mode={selectedMode}
           hasMessages={messages.length > 0}
-          disabled={conversationModeControlDisabled}
+          disabled={modelSelectionControlDisabled}
           onSelect={onSelectModel}
         />
+        {!isResearchConversation && (
+          <ApprovalModeToggle
+            mode={approvalMode}
+            disabled={conversationModeControlDisabled}
+            onChange={onSelectApprovalMode}
+          />
+        )}
         {sessionTools.length > 0 && (
           <ToolSelector
             tools={sessionTools}

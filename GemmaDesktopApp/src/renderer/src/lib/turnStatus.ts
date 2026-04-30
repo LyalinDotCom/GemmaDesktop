@@ -42,15 +42,27 @@ function formatCompactDuration(durationMs: number): string {
     : `${hours}h`
 }
 
-export function buildTurnDurationLabel(
+export interface TurnDurationLabelParts {
+  label: string
+  statusLabel?: 'Failed' | 'Stopped'
+  modelLabel?: string
+  elapsedLabel: string
+}
+
+export function buildTurnDurationLabelParts(
   content: MessageContent[],
   durationMs?: number,
-): string | null {
+  modelLabel?: string | null,
+): TurnDurationLabelParts | null {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) {
     return null
   }
 
-  const formatted = formatCompactDuration(durationMs)
+  const elapsedLabel = formatCompactDuration(durationMs)
+  const normalizedModelLabel = modelLabel?.trim() || undefined
+  const durationText = normalizedModelLabel
+    ? `${normalizedModelLabel} in ${elapsedLabel}`
+    : elapsedLabel
   const failed = content.some((block) => block.type === 'error')
   const stopped = content.some(
     (block) =>
@@ -58,13 +70,26 @@ export function buildTurnDurationLabel(
       && block.message === 'Generation stopped before completion.',
   )
 
-  if (failed) {
-    return `Failed · ${formatted}`
+  const statusLabel = failed ? 'Failed' : stopped ? 'Stopped' : undefined
+  const label = statusLabel ? `${statusLabel} · ${durationText}` : durationText
+
+  return {
+    label,
+    ...(statusLabel ? { statusLabel } : {}),
+    ...(normalizedModelLabel ? { modelLabel: normalizedModelLabel } : {}),
+    elapsedLabel,
+  }
+}
+
+export function buildTurnDurationLabel(
+  content: MessageContent[],
+  durationMs?: number,
+  modelLabel?: string | null,
+): string | null {
+  const parts = buildTurnDurationLabelParts(content, durationMs, modelLabel)
+  if (!parts) {
+    return null
   }
 
-  if (stopped) {
-    return `Stopped · ${formatted}`
-  }
-
-  return formatted
+  return parts.label
 }

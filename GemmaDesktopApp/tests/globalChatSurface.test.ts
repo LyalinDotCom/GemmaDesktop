@@ -29,6 +29,8 @@ describe('Assistant Chat surface copy', () => {
     )
 
     expect(markup).toContain('aria-label="Switch to Work mode"')
+    expect(markup).toContain('lucide-brain')
+    expect(markup).not.toContain('lucide-chevron')
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
     expect(markup).toContain('aria-label="Pin Assistant Chat to the right dock"')
     expect(markup).not.toContain('aria-label="Assistant Chat actions"')
@@ -99,12 +101,13 @@ describe('Assistant Chat surface copy', () => {
     expect(markup).toContain('assistant-home-transcript w-full dark')
     expect(markup).not.toContain('assistant-home-title')
     expect(markup).not.toContain('Hi, I&#x27;m Gemma')
+    expect(markup).toContain('assistant-home-brain-mark')
+    expect(markup).toContain('lucide-brain')
     expect(toolbarIndex).toBeGreaterThanOrEqual(0)
     expect(expandButtonIndex).toBeGreaterThan(toolbarIndex)
     expect(expandButtonIndex).toBeLessThan(transcriptIndex)
     expect(markup).not.toContain('absolute right-3 top-3')
     expect(markup).not.toContain('aria-label="Switch to Work mode"')
-    expect(markup).not.toContain('lucide-brain')
     expect(markup).not.toContain('>Assistant Home<')
   })
 

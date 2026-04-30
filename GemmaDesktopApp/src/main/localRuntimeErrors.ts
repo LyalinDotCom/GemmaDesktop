@@ -21,6 +21,9 @@ const CONNECTION_FAILURE_CODES = new Set([
 const CONNECTION_FAILURE_MESSAGE_PATTERN =
   /\b(fetch failed|connection refused|econnrefused|econnreset|ehostunreach|enetunreach|enotfound|etimedout|eai_again)\b/i
 
+const MODEL_NOT_LOADED_MESSAGE_PATTERN =
+  /\b(model not loaded|no loaded model|model is not loaded)\b/i
+
 export function getLocalRuntimeDisplayName(runtimeId: string): string {
   if (runtimeId === 'ollama-native' || runtimeId === 'ollama-openai') {
     return 'Ollama'
@@ -28,8 +31,11 @@ export function getLocalRuntimeDisplayName(runtimeId: string): string {
   if (runtimeId === 'lmstudio-native' || runtimeId === 'lmstudio-openai') {
     return 'LM Studio'
   }
-  if (runtimeId === 'llamacpp') {
+  if (runtimeId === 'llamacpp' || runtimeId === 'llamacpp-server') {
     return 'llama.cpp server'
+  }
+  if (runtimeId === 'omlx-openai') {
+    return 'oMLX'
   }
   return 'The selected local runtime'
 }
@@ -41,8 +47,11 @@ function getLocalRuntimeRecoveryHint(runtimeId: string): string {
   if (runtimeId === 'lmstudio-native' || runtimeId === 'lmstudio-openai') {
     return 'Start LM Studio and enable its local server, then retry or switch this session to another runtime.'
   }
-  if (runtimeId === 'llamacpp') {
+  if (runtimeId === 'llamacpp' || runtimeId === 'llamacpp-server') {
     return 'Start the llama.cpp server, then retry or switch this session to another runtime.'
+  }
+  if (runtimeId === 'omlx-openai') {
+    return 'Start oMLX, load the model there, then retry or switch this session to another runtime.'
   }
   return 'Start that runtime, then retry or switch this session to another runtime.'
 }
@@ -113,6 +122,12 @@ function getStringProperty(value: unknown, key: string): string | undefined {
     : undefined
 }
 
+function getErrorMessage(entry: unknown): string | undefined {
+  return entry instanceof Error
+    ? entry.message
+    : getStringProperty(entry, 'message')
+}
+
 export function isLocalRuntimeConnectionFailure(error: unknown): boolean {
   for (const entry of getErrorChain(error)) {
     const code = getStringProperty(entry, 'code')
@@ -120,10 +135,19 @@ export function isLocalRuntimeConnectionFailure(error: unknown): boolean {
       return true
     }
 
-    const message = entry instanceof Error
-      ? entry.message
-      : getStringProperty(entry, 'message')
+    const message = getErrorMessage(entry)
     if (message && CONNECTION_FAILURE_MESSAGE_PATTERN.test(message)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+export function isModelNotLoadedError(error: unknown): boolean {
+  for (const entry of getErrorChain(error)) {
+    const message = getErrorMessage(entry)
+    if (message && MODEL_NOT_LOADED_MESSAGE_PATTERN.test(message)) {
       return true
     }
   }

@@ -1,5 +1,18 @@
+import { clampToFirstGrapheme } from './emoji'
+
+export interface PinnedArea {
+  id: string
+  icon: string
+  collapsed: boolean
+  sessionIds: string[]
+}
+
+export const DEFAULT_PINNED_AREA_ID = 'pinned-area-default'
+export const DEFAULT_PINNED_AREA_ICON = '📌'
+
 export interface SidebarState {
   pinnedSessionIds: string[]
+  pinnedAreas?: PinnedArea[]
   followUpSessionIds: string[]
   closedProjectPaths: string[]
   projectPaths: string[]
@@ -15,12 +28,45 @@ export interface SidebarSessionReference {
 
 export const EMPTY_SIDEBAR_STATE: SidebarState = {
   pinnedSessionIds: [],
+  pinnedAreas: [],
   followUpSessionIds: [],
   closedProjectPaths: [],
   projectPaths: [],
   sessionOrderOverrides: {},
   projectOrderOverrides: {},
   lastActiveSessionId: null,
+}
+
+export function isDefaultPinnedArea(areaId: string): boolean {
+  return areaId === DEFAULT_PINNED_AREA_ID
+}
+
+export function createDefaultPinnedArea(
+  sessionIds: readonly string[] = [],
+): PinnedArea {
+  return {
+    id: DEFAULT_PINNED_AREA_ID,
+    icon: DEFAULT_PINNED_AREA_ICON,
+    collapsed: false,
+    sessionIds: [...sessionIds],
+  }
+}
+
+export function getPinnedAreaDestinations(
+  pinnedAreas: readonly PinnedArea[],
+): PinnedArea[] {
+  if (pinnedAreas.length === 0) {
+    return [createDefaultPinnedArea()]
+  }
+
+  if (pinnedAreas.some((area) => isDefaultPinnedArea(area.id))) {
+    return [...pinnedAreas]
+  }
+
+  return [
+    createDefaultPinnedArea(),
+    ...pinnedAreas,
+  ]
 }
 
 export function normalizeSidebarProjectPath(targetPath: string): string {
@@ -52,6 +98,12 @@ export function dedupePreserveOrder(values: readonly string[]): string[] {
 export function cloneSidebarState(state: SidebarState): SidebarState {
   return {
     pinnedSessionIds: [...state.pinnedSessionIds],
+    pinnedAreas: (state.pinnedAreas ?? []).map((area) => ({
+      id: area.id,
+      icon: area.icon,
+      collapsed: area.collapsed,
+      sessionIds: [...area.sessionIds],
+    })),
     followUpSessionIds: [...state.followUpSessionIds],
     closedProjectPaths: [...state.closedProjectPaths],
     projectPaths: [...state.projectPaths],
@@ -59,6 +111,50 @@ export function cloneSidebarState(state: SidebarState): SidebarState {
     projectOrderOverrides: { ...state.projectOrderOverrides },
     lastActiveSessionId: state.lastActiveSessionId,
   }
+}
+
+function sanitizeEmojiIcon(input: unknown): string {
+  return clampToFirstGrapheme(input)
+}
+
+function sanitizePinnedAreas(input: unknown): PinnedArea[] {
+  if (!Array.isArray(input)) {
+    return []
+  }
+
+  const seenAreaIds = new Set<string>()
+  const areas: PinnedArea[] = []
+
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+
+    const record = entry as Record<string, unknown>
+    const id = typeof record['id'] === 'string' ? record['id'].trim() : ''
+    if (!id || seenAreaIds.has(id)) {
+      continue
+    }
+
+    const rawSessionIds = Array.isArray(record['sessionIds'])
+      ? record['sessionIds'].filter(
+          (sessionId): sessionId is string =>
+            typeof sessionId === 'string' && sessionId.trim().length > 0,
+        )
+      : []
+
+    seenAreaIds.add(id)
+    areas.push({
+      id,
+      icon: isDefaultPinnedArea(id)
+        ? DEFAULT_PINNED_AREA_ICON
+        : sanitizeEmojiIcon(record['icon']),
+      collapsed: record['collapsed'] === true,
+      sessionIds: dedupePreserveOrder(rawSessionIds),
+    })
+  }
+
+  return areas
 }
 
 function sanitizeOrderRecord(input: unknown): Record<string, number> {
@@ -101,13 +197,6 @@ export function sanitizeSidebarState(input: unknown): SidebarState {
       ? input as Record<string, unknown>
       : null
 
-  const pinnedSessionIds = Array.isArray(record?.['pinnedSessionIds'])
-    ? record['pinnedSessionIds'].filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
-
   const followUpSessionIds = Array.isArray(record?.['followUpSessionIds'])
     ? record['followUpSessionIds'].filter(
         (entry): entry is string =>
@@ -146,7 +235,8 @@ export function sanitizeSidebarState(input: unknown): SidebarState {
   }
 
   return {
-    pinnedSessionIds: dedupePreserveOrder(pinnedSessionIds),
+    pinnedSessionIds: [],
+    pinnedAreas: sanitizePinnedAreas(record?.['pinnedAreas']),
     followUpSessionIds: dedupePreserveOrder(followUpSessionIds),
     closedProjectPaths: dedupePreserveOrder(
       closedProjectPaths.map((entry) => normalizeSidebarProjectPath(entry)),

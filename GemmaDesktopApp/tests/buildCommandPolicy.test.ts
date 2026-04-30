@@ -30,6 +30,11 @@ describe('build exec command policy', () => {
       rootCommand: 'npm',
     })
 
+    expect(evaluateBuildExecCommandPolicy('npm test')).toMatchObject({
+      kind: 'allow',
+      rootCommand: 'npm',
+    })
+
     expect(evaluateBuildExecCommandPolicy('cargo check')).toMatchObject({
       kind: 'allow',
       rootCommand: 'cargo',
@@ -70,6 +75,26 @@ describe('build exec command policy', () => {
       kind: 'ask',
       rootCommand: 'rg',
     })
+  })
+
+  it('denies backgrounded process-launch startup probes that can hide startup failures', () => {
+    const policy = evaluateBuildExecCommandPolicy('cd .tmp/sim10/ && npm run dev & sleep 5 && curl -I http://localhost:5173')
+
+    expect(policy).toMatchObject({
+      kind: 'deny',
+      rootCommand: 'cd',
+    })
+    expect(policy.reason).toContain('"& sleep/curl" style checks can hide startup failures')
+  })
+
+  it('requires approval for plain shell-backgrounded process-launch commands', () => {
+    const policy = evaluateBuildExecCommandPolicy('cd .tmp/sim10/ && npm run dev &')
+
+    expect(policy).toMatchObject({
+      kind: 'ask',
+      rootCommand: 'cd',
+    })
+    expect(policy.reason).toContain('shell-backgrounded process-launch commands')
   })
 
   it('requires approval for direct file mutation commands', () => {

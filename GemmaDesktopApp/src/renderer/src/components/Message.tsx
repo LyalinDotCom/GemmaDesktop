@@ -19,7 +19,7 @@ import {
   type ConversationUiControlLock,
 } from '@/lib/conversationUiControls'
 import {
-  buildTurnDurationLabel,
+  buildTurnDurationLabelParts,
   formatElapsedClock,
 } from '@/lib/turnStatus'
 import { buildLiveActivityPresentation } from '@/lib/liveActivityPresentation'
@@ -82,6 +82,7 @@ interface MessageProps {
    * the buttons on hover.
    */
   isLatestAssistantTurn?: boolean
+  fallbackPrimaryModelId?: string | null
 }
 
 interface ContentBlockProps {
@@ -613,12 +614,24 @@ export function Message({
   onToggleSentence,
   assistantActionLock,
   isLatestAssistantTurn = false,
+  fallbackPrimaryModelId = null,
 }: MessageProps) {
   const isUser = message.role === 'user'
   const [copiedTurn, setCopiedTurn] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const primaryModelLabel =
+    message.primaryModelId?.trim()
+    || fallbackPrimaryModelId?.trim()
+    || null
+  const durationLabelParts = !isStreaming && !isUser
+    ? buildTurnDurationLabelParts(
+        message.content,
+        message.durationMs,
+        primaryModelLabel,
+      )
+    : null
   const durationLabel = !isStreaming && !isUser
-    ? buildTurnDurationLabel(message.content, message.durationMs)
+    ? durationLabelParts?.label ?? null
     : null
   const shouldEnableSentenceSelection =
     Boolean(selectionMode)
@@ -803,6 +816,7 @@ export function Message({
           <AssistantActionRow
             isLatestTurn={isLatestAssistantTurn}
             durationLabel={durationLabel}
+            durationLabelParts={durationLabelParts}
             selection={
               selectionButtonVisible && onToggleSelectionMode
                 ? {

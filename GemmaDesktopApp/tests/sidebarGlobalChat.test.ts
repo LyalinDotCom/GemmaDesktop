@@ -64,9 +64,13 @@ function renderSidebar(
       onCloseProcess: () => {},
       onPinSession: () => {},
       onUnpinSession: () => {},
+      onCreatePinnedArea: () => {},
+      onDeletePinnedArea: () => {},
+      onUpdatePinnedAreaIcon: () => {},
+      onSetPinnedAreaCollapsed: () => {},
+      onMovePinnedArea: () => {},
       onFlagFollowUp: () => {},
       onUnflagFollowUp: () => {},
-      onSetSessionTags: () => {},
       onMovePinnedSession: () => {},
       onMoveProjectSession: () => {},
       onClearSessionOrder: () => {},
@@ -95,6 +99,9 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: ['alpha-chat'],
+      pinnedAreas: [
+        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
+      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -115,6 +122,9 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: ['alpha-chat'],
+      pinnedAreas: [
+        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
+      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -136,6 +146,7 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: [],
+      pinnedAreas: [],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -161,6 +172,14 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID],
+      pinnedAreas: [
+        {
+          id: 'area-1',
+          icon: '⭐',
+          collapsed: false,
+          sessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID],
+        },
+      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: [

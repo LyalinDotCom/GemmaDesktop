@@ -42,6 +42,7 @@ import type {
 } from '@gemma-desktop/sdk-node'
 import type {
   CapabilityRecord,
+  ConversationApprovalMode,
   SessionSnapshot,
   GemmaDesktopEvent,
   RuntimeDebugEvent,
@@ -50,7 +51,12 @@ import type {
   SessionInput,
   StructuredOutputSpec,
 } from '@gemma-desktop/sdk-core'
-import { GemmaDesktopError } from '@gemma-desktop/sdk-core'
+import {
+  DEFAULT_CONVERSATION_APPROVAL_MODE,
+  GemmaDesktopError,
+  normalizeConversationApprovalMode,
+  shouldRequireToolApproval,
+} from '@gemma-desktop/sdk-core'
 import {
   createHostTools,
   createWorkspaceSearchBackend,
@@ -125,6 +131,7 @@ import {
   scheduleToText,
   type AutomationLogEntry,
   type AutomationRecord,
+  type AutomationRunRecord,
   type AutomationSchedule,
 } from './automations'
 import { openLinkTarget } from './links'
@@ -223,6 +230,16 @@ import {
   type AppLmStudioSettings,
   type LmStudioManagedModelProfile,
 } from '../shared/lmstudioRuntimeConfig'
+import {
+  buildOmlxDisplayOptionsRecord,
+  buildOmlxModelSettingsRecord,
+  buildOmlxRequestOptionsRecord,
+  getDefaultOmlxSettings,
+  normalizeOmlxSettings,
+  resolveManagedOmlxProfile,
+  type AppOmlxSettings,
+  type OmlxManagedModelProfile,
+} from '../shared/omlxRuntimeConfig'
 import {
   buildDoctorReport,
   collectDoctorCommandChecks,
@@ -371,8 +388,10 @@ import {
 } from './chromeMcp'
 import {
   LocalRuntimeUnavailableError,
+  getLocalRuntimeDisplayName,
   getLocalRuntimeUnavailableError,
   isLocalRuntimeConnectionFailure,
+  isModelNotLoadedError,
   toLocalRuntimeUnavailableError,
 } from './localRuntimeErrors'
 import {
@@ -459,6 +478,34 @@ interface AppMessage {
   content: Array<Record<string, unknown>>
   timestamp: number
   durationMs?: number
+  primaryModelId?: string
+  primaryRuntimeId?: string
+}
+
+function attachPrimaryModelMetadataToAppMessage(
+  message: AppMessage,
+  target: PrimaryModelTarget,
+  options?: { enabled?: boolean },
+): AppMessage {
+  if (options?.enabled === false || message.role !== 'assistant') {
+    return message
+  }
+
+  return {
+    ...message,
+    primaryModelId: target.modelId,
+    primaryRuntimeId: target.runtimeId,
+  }
+}
+
+function attachPrimaryModelMetadataToNullableAppMessage(
+  message: AppMessage | null,
+  target: PrimaryModelTarget,
+  options?: { enabled?: boolean },
+): AppMessage | null {
+  return message
+    ? attachPrimaryModelMetadataToAppMessage(message, target, options)
+    : null
 }
 
 interface DebugLogEntry {
@@ -560,6 +607,7 @@ interface AppSessionConfig {
   selectedSkillNames: string[]
   selectedToolIds: string[]
   selectedToolNames: string[]
+  approvalMode: ConversationApprovalMode
   surface: AppSessionSurface
   visibility: AppSessionVisibility
   storageScope: AppSessionStorageScope
@@ -581,6 +629,7 @@ function normalizeSessionConfig(config: AppSessionConfig): AppSessionConfig {
       conversationKind === 'normal' && baseMode === 'build'
         ? Boolean(config.planMode)
         : false,
+    approvalMode: normalizeConversationApprovalMode(config.approvalMode),
     surface: normalizeAppSessionSurface(config.surface),
     visibility: normalizeAppSessionVisibility(config.visibility),
     storageScope: normalizeAppSessionStorageScope(config.storageScope),
@@ -1172,11 +1221,13 @@ const automationStore = new AutomationStore()
 let sidebarStore: SidebarStateStore | null = null
 const liveSessions = new Map<string, GemmaDesktopSession>()
 const activeAbortControllers = new Map<string, AbortController>()
-const pendingSessionTasks = new Map<string, ConversationExecutionTask>()
-const activeSessionTasks = new Map<string, ConversationExecutionTask>()
+const pendingSessionTasks = new Map<string, SessionConversationExecutionTask>()
+const activeSessionTasks = new Map<string, SessionConversationExecutionTask>()
 const activeAutomationRuns = new Set<string>()
 const activeAutomationAbortControllers = new Map<string, AbortController>()
 let automationScheduler: NodeJS.Timeout | null = null
+let automationSchedulerChecking = false
+const AUTOMATION_APPROVAL_MODE: ConversationApprovalMode = 'yolo'
 let keepAwakeProcess: ReturnType<typeof spawn> | null = null
 let gemmaInstallManager: ReturnType<typeof createGemmaInstallManager> | null = null
 const speechRuntimeManager = new SpeechRuntimeManager()
@@ -1202,8 +1253,9 @@ const PLACEHOLDER_SESSION_TITLE = 'New Conversation'
 const BUILT_IN_REQUIRED_PRIMARY_MODEL_IDS = [
   createDefaultModelSelectionSettings(os.totalmem()).mainModel.modelId,
 ]
+type SessionConversationExecutionTask = Exclude<ConversationExecutionTask, 'automation'>
 
-function getSessionExecutionTask(sessionId: string): ConversationExecutionTask | undefined {
+function getSessionExecutionTask(sessionId: string): SessionConversationExecutionTask | undefined {
   return activeSessionTasks.get(sessionId) ?? pendingSessionTasks.get(sessionId)
 }
 
@@ -1213,6 +1265,10 @@ function isSessionExecutionBusy(sessionId: string): boolean {
     || activeSessionTasks.has(sessionId)
     || pendingSessionTasks.has(sessionId)
   )
+}
+
+function getAutomationExecutionSessionId(automationId: string): string {
+  return `automation:${automationId}`
 }
 
 function listConversationExecutions(): ConversationExecutionRun[] {
@@ -1234,14 +1290,23 @@ function listConversationExecutions(): ConversationExecutionRun[] {
     })
   }
 
+  for (const automationId of activeAutomationRuns) {
+    const sessionId = getAutomationExecutionSessionId(automationId)
+    runs.set(sessionId, {
+      sessionId,
+      task: 'automation',
+      title: automationStore.get(automationId)?.name ?? 'Automation',
+    })
+  }
+
   return [...runs.values()]
 }
 
 function beginConversationExecutionGate(
   sessionId: string,
-  task: ConversationExecutionTask,
+  task: SessionConversationExecutionTask,
   options: {
-    allowExistingPendingTask?: ConversationExecutionTask
+    allowExistingPendingTask?: SessionConversationExecutionTask
   } = {},
 ): () => void {
   const currentPendingTask = pendingSessionTasks.get(sessionId)
@@ -1287,7 +1352,7 @@ function assertNoConversationExecutionRunning(): void {
 
 function markConversationExecutionActive(
   sessionId: string,
-  task: ConversationExecutionTask,
+  task: SessionConversationExecutionTask,
 ): void {
   if (pendingSessionTasks.get(sessionId) === task) {
     pendingSessionTasks.delete(sessionId)
@@ -1301,6 +1366,16 @@ interface PrimaryModelTarget {
   loadedInstanceId?: string
 }
 
+interface PrimaryModelAvailabilityIssue {
+  modelId: string
+  runtimeId: string
+  message: string
+  detectedAt: number
+  source: 'startup' | 'selected-session' | 'send' | 'global-default'
+  fallbackModelId?: string
+  fallbackRuntimeId?: string
+}
+
 interface BootstrapStateRecord {
   status: 'idle' | 'checking' | 'starting_ollama' | 'pulling_models' | 'loading_helper' | 'ready' | 'warning' | 'error'
   ready: boolean
@@ -1308,6 +1383,7 @@ interface BootstrapStateRecord {
   helperModelId: string
   helperRuntimeId: string
   requiredPrimaryModelIds: string[]
+  modelAvailabilityIssues: PrimaryModelAvailabilityIssue[]
   error?: string
   updatedAt: number
 }
@@ -1449,6 +1525,7 @@ function resolveBootstrapTargets(
 
 const primaryModelHoldCounts = new Map<string, number>()
 const helperModelHoldCounts = new Map<string, number>()
+const primaryModelAvailabilityIssues = new Map<string, PrimaryModelAvailabilityIssue>()
 let activePrimaryModelTarget: PrimaryModelTarget | null = null
 let primaryWarmupPromise: Promise<void> | null = null
 let lastOptionalPrimaryWarmupWarningKey: string | null = null
@@ -1459,6 +1536,31 @@ let primaryModelLoadTarget: PrimaryModelTarget | null = null
 
 function modelTargetKey(target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>): string {
   return `${target.runtimeId}::${target.modelId}`
+}
+
+class PrimaryModelUnavailableError extends Error {
+  public readonly issue: PrimaryModelAvailabilityIssue
+
+  public constructor(issue: PrimaryModelAvailabilityIssue) {
+    super(issue.message)
+    this.name = 'PrimaryModelUnavailableError'
+    this.issue = issue
+  }
+}
+
+function getPrimaryModelAvailabilityIssues(): PrimaryModelAvailabilityIssue[] {
+  return [...primaryModelAvailabilityIssues.values()]
+    .sort((left, right) => left.detectedAt - right.detectedAt)
+}
+
+function findPrimaryModelAvailabilityIssue(
+  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
+): PrimaryModelAvailabilityIssue | null {
+  return primaryModelAvailabilityIssues.get(modelTargetKey(target)) ?? null
+}
+
+function isPrimaryModelUnavailableError(error: unknown): error is PrimaryModelUnavailableError {
+  return error instanceof PrimaryModelUnavailableError
 }
 
 function listPendingModelLoadTargets(): PrimaryModelTarget[] {
@@ -1571,6 +1673,7 @@ let bootstrapState: BootstrapStateRecord = {
   ready: false,
   message: 'Local models will be prepared when needed.',
   ...resolveBootstrapTargets(),
+  modelAvailabilityIssues: [],
   updatedAt: Date.now(),
 }
 let bootstrapPromise: Promise<BootstrapStateRecord> | null = null
@@ -1617,6 +1720,7 @@ type AppSettingsRecord = {
   reasoning: AppReasoningSettings
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
+  omlx: AppOmlxSettings
   ambientEffects: {
     enabled: boolean
   }
@@ -2127,6 +2231,138 @@ function describeOptionalPrimaryWarmupUnavailable(
   return `${error.runtimeLabel} is offline, so Gemma Desktop skipped warming ${target.modelId}. Start the provider before using sessions that target ${target.runtimeId}.`
 }
 
+function getErrorDisplayMessage(error: unknown): string {
+  const rawMessage =
+    error instanceof Error && error.message.trim().length > 0
+      ? error.message.trim()
+      : String(error).trim()
+
+  if (rawMessage.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(rawMessage) as Record<string, unknown>
+      const nestedError =
+        parsed.error && typeof parsed.error === 'object'
+          ? parsed.error as Record<string, unknown>
+          : null
+      const nestedMessage = nestedError?.message
+      if (typeof nestedMessage === 'string' && nestedMessage.trim().length > 0) {
+        return nestedMessage.trim()
+      }
+    } catch {
+      // Fall through to the raw message.
+    }
+  }
+
+  return rawMessage
+}
+
+function describePrimaryModelLoadFailure(
+  target: PrimaryModelTarget,
+  error: unknown,
+): string {
+  const unavailable = getLocalRuntimeUnavailableError(error)
+  if (unavailable) {
+    return `${unavailable.runtimeLabel} is not reachable at ${unavailable.endpoint}, so Gemma Desktop cannot load ${target.modelId}. Chats using ${target.runtimeId} / ${target.modelId} are paused until you switch them to another model or restart after the model is available.`
+  }
+
+  const runtimeLabel = getLocalRuntimeDisplayName(target.runtimeId)
+  const rawMessage = getErrorDisplayMessage(error)
+  const reason = rawMessage.length > 0
+    ? ` Reason: ${rawMessage}.`
+    : ''
+  return `${runtimeLabel} could not load ${target.modelId}.${reason} Chats using ${target.runtimeId} / ${target.modelId} are paused until you switch them to another model or restart after the model is available.`
+}
+
+function getBuiltInDefaultPrimaryTarget(): PrimaryModelTarget {
+  const defaultSelection = createDefaultModelSelectionSettings(os.totalmem())
+  return {
+    modelId: defaultSelection.mainModel.modelId,
+    runtimeId: defaultSelection.mainModel.runtimeId,
+  }
+}
+
+function isSavedDefaultPrimaryTarget(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): boolean {
+  return primaryTargetsMatch(
+    target,
+    resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
+  )
+}
+
+async function fallBackDefaultPrimaryModelIfNeeded(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): Promise<AppSettingsRecord | null> {
+  if (!isSavedDefaultPrimaryTarget(target, currentSettings)) {
+    return null
+  }
+
+  const fallbackTarget = getBuiltInDefaultPrimaryTarget()
+  if (primaryTargetsMatch(target, fallbackTarget)) {
+    return null
+  }
+
+  const nextSettings = await saveSettings({
+    modelSelection: {
+      ...currentSettings.modelSelection,
+      mainModel: fallbackTarget,
+    },
+  })
+  broadcastSettingsChanged(nextSettings)
+  broadcastEnvironmentModelsChanged()
+
+  return nextSettings
+}
+
+async function recordPrimaryModelLoadFailure(
+  target: PrimaryModelTarget,
+  error: unknown,
+  source: PrimaryModelAvailabilityIssue['source'],
+  currentSettingsInput?: AppSettingsRecord,
+): Promise<PrimaryModelAvailabilityIssue> {
+  const currentSettings = currentSettingsInput ?? await getSettingsState()
+  const fallbackSettings = await fallBackDefaultPrimaryModelIfNeeded(
+    target,
+    currentSettings,
+  )
+  const fallbackTarget = fallbackSettings
+    ? resolveSavedDefaultSessionPrimaryTarget(fallbackSettings.modelSelection)
+    : null
+  const baseMessage = describePrimaryModelLoadFailure(target, error)
+  const message = fallbackTarget
+    ? `${baseMessage} The saved default model was reset to ${fallbackTarget.runtimeId} / ${fallbackTarget.modelId} for new chats.`
+    : baseMessage
+  const issue: PrimaryModelAvailabilityIssue = {
+    modelId: target.modelId,
+    runtimeId: target.runtimeId,
+    message,
+    detectedAt: Date.now(),
+    source: fallbackTarget ? 'global-default' : source,
+    ...(fallbackTarget
+      ? {
+          fallbackModelId: fallbackTarget.modelId,
+          fallbackRuntimeId: fallbackTarget.runtimeId,
+        }
+      : {}),
+  }
+  primaryModelAvailabilityIssues.set(modelTargetKey(target), issue)
+  activePrimaryModelTarget = primaryTargetsMatch(activePrimaryModelTarget, target)
+    ? null
+    : activePrimaryModelTarget
+
+  const stateSettings = fallbackSettings ?? currentSettings
+  setBootstrapState({
+    status: 'warning',
+    ready: true,
+    message,
+    error: undefined,
+  }, stateSettings)
+  await broadcastSessionsChanged()
+  return issue
+}
+
 async function handleOptionalPrimaryWarmupFailure(
   target: PrimaryModelTarget,
   error: unknown,
@@ -2140,24 +2376,17 @@ async function handleOptionalPrimaryWarmupFailure(
       console.warn(`[gemma-desktop] ${message}`)
       lastOptionalPrimaryWarmupWarningKey = warningKey
     }
-    const currentSettings = await getSettingsState()
-    if (bootstrapState.ready) {
-      setBootstrapState({
-        status: 'warning',
-        ready: true,
-        message,
-        error: undefined,
-      }, currentSettings)
-    }
-    return
+  } else {
+    console.warn(
+      context === 'startup'
+        ? '[gemma-desktop] Startup primary model is unavailable:'
+        : '[gemma-desktop] Selected session primary model is unavailable:',
+      getErrorDisplayMessage(error),
+    )
   }
 
-  console.warn(
-    context === 'startup'
-      ? '[gemma-desktop] Failed to warm the startup primary model:'
-      : '[gemma-desktop] Failed to warm selected session primary model:',
-    error,
-  )
+  const source = context === 'startup' ? 'startup' : 'selected-session'
+  await recordPrimaryModelLoadFailure(target, error, source)
 }
 
 async function isTrackedModelTargetResident(
@@ -2177,6 +2406,29 @@ async function isTrackedModelTargetResident(
     if (!ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)) {
       console.warn(
         `[gemma-desktop] Tracked Ollama model ${target.modelId} is resident with a context that does not match the managed profile; reloading it.`,
+      )
+      return false
+    }
+
+    return true
+  }
+
+  if (isOmlxModelRuntime(target.runtimeId)) {
+    const profile = resolveManagedOmlxLoadProfile(currentSettings, target)
+    const settingsPatch = buildOmlxModelSettingsRecord(profile)
+    const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
+    const modelStatus = await findOmlxModelStatus(
+      currentSettings.runtimes.omlx.endpoint,
+      apiKey,
+      target.modelId,
+    )
+
+    if (
+      modelStatus
+      && !omlxStatusMatchesManagedSettings(modelStatus, settingsPatch)
+    ) {
+      console.warn(
+        `[gemma-desktop] Tracked oMLX model ${target.modelId} is reporting settings that do not match the managed profile; resyncing it.`,
       )
       return false
     }
@@ -2461,6 +2713,7 @@ function setBootstrapState(
     ...bootstrapState,
     ...patch,
     ...resolveBootstrapTargets(currentSettings ?? settings),
+    modelAvailabilityIssues: getPrimaryModelAvailabilityIssues(),
     updatedAt: Date.now(),
   }
   broadcastBootstrapStateChanged()
@@ -2483,6 +2736,81 @@ async function requestJson(
     throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
   }
   return await response.json() as Record<string, unknown>
+}
+
+function extractCookieHeader(response: Response): string | undefined {
+  const rawCookie = response.headers.get('set-cookie')
+  if (!rawCookie) {
+    return undefined
+  }
+  const cookie = rawCookie.split(';')[0]?.trim()
+  return cookie && cookie.length > 0 ? cookie : undefined
+}
+
+async function createOmlxAdminSessionCookie(
+  endpoint: string,
+  apiKey: string,
+): Promise<string | undefined> {
+  if (!apiKey) {
+    return undefined
+  }
+
+  const response = await fetch(`${endpoint.replace(/\/$/, '')}/admin/api/login`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      remember: false,
+    }),
+  })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
+  }
+
+  return extractCookieHeader(response)
+}
+
+async function putOmlxModelSettings(
+  endpoint: string,
+  modelId: string,
+  settingsPatch: Record<string, number>,
+  cookie?: string,
+): Promise<Response> {
+  return await fetch(`${endpoint.replace(/\/$/, '')}/admin/api/models/${encodeURIComponent(modelId)}/settings`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify(settingsPatch),
+  })
+}
+
+async function updateOmlxModelSettings(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+  settingsPatch: Record<string, number> | undefined,
+): Promise<void> {
+  if (!settingsPatch || Object.keys(settingsPatch).length === 0) {
+    return
+  }
+
+  let response = await putOmlxModelSettings(endpoint, modelId, settingsPatch)
+  if ((response.status === 401 || response.status === 403) && apiKey) {
+    const cookie = await createOmlxAdminSessionCookie(endpoint, apiKey)
+    response = await putOmlxModelSettings(endpoint, modelId, settingsPatch, cookie)
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
+  }
 }
 
 async function canReachOllama(endpoint: string): Promise<boolean> {
@@ -2661,6 +2989,19 @@ function resolveManagedLmStudioLoadProfile(
   )
 }
 
+function resolveManagedOmlxLoadProfile(
+  currentSettings: AppSettingsRecord,
+  target: { modelId: string; runtimeId: string; displayName?: string },
+): OmlxManagedModelProfile | undefined {
+  return resolveManagedOmlxProfile(
+    currentSettings.omlx,
+    target.modelId,
+    target.runtimeId,
+    target.displayName,
+    os.totalmem(),
+  )
+}
+
 async function loadOllamaModel(
   endpoint: string,
   modelId: string,
@@ -2723,6 +3064,54 @@ function lmStudioLoadedConfigMatchesLoadOptions(
 
   const loadedContextLength = numericConfigValue(loadedConfig.context_length)
   return loadedContextLength == null || loadedContextLength === requestedContextLength
+}
+
+function omlxStatusMatchesManagedSettings(
+  modelStatus: Record<string, unknown>,
+  settingsPatch: Record<string, number> | undefined,
+): boolean {
+  if (!settingsPatch) {
+    return true
+  }
+
+  const requestedContextLength = numericConfigValue(settingsPatch.max_context_window)
+  const loadedContextLength = numericConfigValue(modelStatus.max_context_window)
+  if (
+    requestedContextLength != null
+    && loadedContextLength != null
+    && loadedContextLength !== requestedContextLength
+  ) {
+    return false
+  }
+
+  const requestedMaxTokens = numericConfigValue(settingsPatch.max_tokens)
+  const loadedMaxTokens = numericConfigValue(modelStatus.max_tokens)
+  if (
+    requestedMaxTokens != null
+    && loadedMaxTokens != null
+    && loadedMaxTokens !== requestedMaxTokens
+  ) {
+    return false
+  }
+
+  return true
+}
+
+async function findOmlxModelStatus(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+): Promise<Record<string, unknown> | undefined> {
+  const headers = apiKey
+    ? { authorization: `Bearer ${apiKey}` }
+    : undefined
+  const response = await requestJson(`${endpoint.replace(/\/$/, '')}/v1/models/status`, {
+    headers,
+  })
+  const models = Array.isArray(response.models)
+    ? response.models as Array<Record<string, unknown>>
+    : []
+  return models.find((model) => model.id === modelId)
 }
 
 async function loadLmStudioModel(
@@ -2874,6 +3263,18 @@ async function loadModelForRuntime(
     }
 
     if (isOmlxModelRuntime(target.runtimeId)) {
+      const apiKey = currentSettings.runtimes.omlx.apiKey.trim() || undefined
+      const settingsPatch = buildOmlxModelSettingsRecord(
+        resolveManagedOmlxLoadProfile(currentSettings, target),
+      )
+      await updateOmlxModelSettings(
+        currentSettings.runtimes.omlx.endpoint,
+        apiKey,
+        target.modelId,
+        settingsPatch,
+      ).catch((error) => {
+        console.warn('[gemma-desktop] Failed to sync managed oMLX model settings before use:', error)
+      })
       return target
     }
 
@@ -2888,6 +3289,12 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
 
   if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
     await unloadOllamaModel(currentSettings.runtimes.ollama.endpoint, target.modelId)
+      .catch((error) => {
+        if (isModelNotLoadedError(error)) {
+          return
+        }
+        throw error
+      })
     return
   }
 
@@ -2907,6 +3314,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({
         instance_id: loadedInstanceId,
       }),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
     return
   }
@@ -2920,6 +3332,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({
         model: target.modelId,
       }),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
     return
   }
@@ -2933,6 +3350,11 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       },
       body: JSON.stringify({}),
+    }).catch((error) => {
+      if (isModelNotLoadedError(error)) {
+        return
+      }
+      throw error
     })
   }
 }
@@ -2947,7 +3369,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
     }
   }
 
-  bootstrapPromise = (async () => {
+  const promise: Promise<BootstrapStateRecord> = (async (): Promise<BootstrapStateRecord> => {
     const currentSettings = await getSettingsState()
     const ollamaEndpoint = currentSettings.runtimes.ollama.endpoint
     const helperTarget = resolveHelperRouterTarget(currentSettings)
@@ -2986,7 +3408,19 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
           message: `Downloading ${modelId}…`,
           error: undefined,
         }, currentSettings)
-        await pullOllamaModel(ollamaEndpoint, modelId)
+        try {
+          await pullOllamaModel(ollamaEndpoint, modelId)
+        } catch (error) {
+          const target = resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection)
+          if (
+            target.modelId === modelId
+            && isOllamaModelRuntime(target.runtimeId)
+          ) {
+            return await recordPrimaryModelLoadFailure(target, error, 'global-default', currentSettings)
+              .then(() => bootstrapState)
+          }
+          throw error
+        }
         availableTags.add(modelId)
       }
 
@@ -3044,14 +3478,20 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
       bootstrapPromise = null
     }
   })()
+  bootstrapPromise = promise
 
-  return await bootstrapPromise
+  return await promise
 }
 
 async function acquirePrimaryModelLease(
   ownerId: string,
   target: PrimaryModelTarget,
 ): Promise<() => void> {
+  const existingIssue = findPrimaryModelAvailabilityIssue(target)
+  if (existingIssue) {
+    throw new PrimaryModelUnavailableError(existingIssue)
+  }
+
   if (isOllamaModelRuntime(target.runtimeId)) {
     const bootstrap = await ensureBootstrapReady()
     if (!bootstrap.ready) {
@@ -3069,7 +3509,12 @@ async function acquirePrimaryModelLease(
     )
   }
 
-  await ensurePrimaryModelTargetLoaded(target)
+  try {
+    await ensurePrimaryModelTargetLoaded(target)
+  } catch (error) {
+    const issue = await recordPrimaryModelLoadFailure(target, error, 'send')
+    throw new PrimaryModelUnavailableError(issue)
+  }
 
   primaryModelHoldCounts.set(ownerId, (primaryModelHoldCounts.get(ownerId) ?? 0) + 1)
 
@@ -3167,6 +3612,7 @@ function getDefaultSettings(): AppSettingsRecord {
     reasoning: getDefaultReasoningSettings(),
     ollama: getDefaultOllamaSettings(os.totalmem()),
     lmstudio: getDefaultLmStudioSettings(os.totalmem()),
+    omlx: getDefaultOmlxSettings(os.totalmem()),
     ambientEffects: {
       enabled: true,
     },
@@ -3383,6 +3829,10 @@ async function loadSettings(): Promise<AppSettingsRecord> {
       reusable.lmstudio,
       defaults.lmstudio,
     ),
+    omlx: normalizeOmlxSettings(
+      reusable.omlx,
+      defaults.omlx,
+    ),
     tools: {
       ...defaults.tools,
       ...(reusable.tools ?? {}),
@@ -3533,6 +3983,10 @@ async function saveSettings(
     lmstudio: normalizeLmStudioSettings(
       patch.lmstudio ?? current.lmstudio,
       current.lmstudio,
+    ),
+    omlx: normalizeOmlxSettings(
+      patch.omlx ?? current.omlx,
+      current.omlx,
     ),
     ambientEffects: {
       ...current.ambientEffects,
@@ -3984,6 +4438,21 @@ function resolveEffectiveLmStudioOptions(
   )
 }
 
+function resolveEffectiveOmlxOptions(
+  currentSettings: AppSettingsRecord,
+  target: { modelId: string; runtimeId: string; displayName?: string },
+): Record<string, number> | undefined {
+  return buildOmlxRequestOptionsRecord(
+    resolveManagedOmlxProfile(
+      currentSettings.omlx,
+      target.modelId,
+      target.runtimeId,
+      target.displayName,
+      os.totalmem(),
+    ),
+  )
+}
+
 function resolveBaseMode(mode: SessionSnapshot['mode']): BaseSessionMode {
   if (typeof mode === 'string') {
     if (mode === 'build') {
@@ -4087,6 +4556,7 @@ function getSessionConfigFromMetadata(
     selectedSkillNames,
     selectedToolIds,
     selectedToolNames,
+    approvalMode: normalizeConversationApprovalMode(metadata?.approvalMode),
     surface: normalizeAppSessionSurface(metadata?.surface),
     visibility: normalizeAppSessionVisibility(metadata?.visibility),
     storageScope: normalizeAppSessionStorageScope(metadata?.storageScope),
@@ -4124,6 +4594,7 @@ function createSessionMetadata(
       selectedSkillNames: [...config.selectedSkillNames],
       selectedToolIds: [...config.selectedToolIds],
       selectedToolNames: [...config.selectedToolNames],
+      approvalMode: config.approvalMode,
       surface: config.surface,
       visibility: config.visibility,
       storageScope: config.storageScope,
@@ -4167,7 +4638,9 @@ function resolveSessionStorageDirectory(
   )
 }
 
-function buildTalkSessionConfig(): AppSessionConfig {
+function buildTalkSessionConfig(
+  approvalMode: ConversationApprovalMode = DEFAULT_CONVERSATION_APPROVAL_MODE,
+): AppSessionConfig {
   return normalizeSessionConfig({
     conversationKind: 'normal',
     baseMode: 'explore',
@@ -4177,6 +4650,7 @@ function buildTalkSessionConfig(): AppSessionConfig {
     selectedSkillNames: [],
     selectedToolIds: [],
     selectedToolNames: [],
+    approvalMode,
     surface: 'talk',
     visibility: 'hidden',
     storageScope: 'global',
@@ -4239,7 +4713,7 @@ function normalizePersistedSessionData(
     || isTalkSessionId(data.snapshot.sessionId)
     || isTalkSessionSurface(metadataRecord?.surface)
   const nextConfig: AppSessionConfig = shouldForceTalkConfig
-    ? buildTalkSessionConfig()
+    ? buildTalkSessionConfig(currentConfig.approvalMode)
     : {
         ...currentConfig,
         baseMode:
@@ -4290,6 +4764,7 @@ function withResolvedRequestPreferencesMetadata(
   const reasoningMode = resolveEffectiveReasoningMode(currentSettings, target)
   const ollamaOptions = resolveEffectiveOllamaOptions(currentSettings, target)
   const lmstudioOptions = resolveEffectiveLmStudioOptions(currentSettings, target)
+  const omlxOptions = resolveEffectiveOmlxOptions(currentSettings, target)
   const ollamaKeepAlive = resolveEffectiveOllamaKeepAlive(currentSettings, target)
   const currentPreferences = readRequestPreferences(metadata)
   const currentReasoningMode =
@@ -4308,12 +4783,16 @@ function withResolvedRequestPreferencesMetadata(
   const currentLmStudioOptions = normalizeRequestPreferenceNumericOptions(
     currentPreferences?.lmstudioOptions,
   )
+  const currentOmlxOptions = normalizeRequestPreferenceNumericOptions(
+    currentPreferences?.omlxOptions,
+  )
 
   if (
     currentReasoningMode === reasoningMode
     && currentOllamaKeepAlive === ollamaKeepAlive
     && sameNumericRecord(currentOllamaOptions, ollamaOptions)
     && sameNumericRecord(currentLmStudioOptions, lmstudioOptions)
+    && sameNumericRecord(currentOmlxOptions, omlxOptions)
   ) {
     return metadata
   }
@@ -4340,6 +4819,11 @@ function withResolvedRequestPreferencesMetadata(
     nextPreferences.lmstudioOptions = lmstudioOptions
   } else {
     delete nextPreferences.lmstudioOptions
+  }
+  if (omlxOptions) {
+    nextPreferences.omlxOptions = omlxOptions
+  } else {
+    delete nextPreferences.omlxOptions
   }
 
   if (Object.keys(nextPreferences).length > 0) {
@@ -4446,9 +4930,10 @@ async function applyCoBrowseSessionComposition(
   }>
 }> {
   const restoreFrame = captureSessionCompositionFrame(snapshot)
+  const rawConfig = getSessionConfig(snapshot)
   const currentConfig = isTalkSessionSnapshot(snapshot)
-    ? buildTalkSessionConfig()
-    : getSessionConfig(snapshot)
+    ? buildTalkSessionConfig(rawConfig.approvalMode)
+    : rawConfig
   const sessionMode = resolveAppSessionMode(currentConfig)
   const target = resolveSessionPrimaryTarget(snapshot.sessionId, currentConfig, snapshot)
   const runtimeSelection = normalizeRuntimeForSessionMode(
@@ -4465,6 +4950,7 @@ async function applyCoBrowseSessionComposition(
     preferredRuntimeId: target.runtimeId,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
     coBrowseActive: true,
     surface: currentConfig.surface,
     visibility: currentConfig.visibility,
@@ -4806,6 +5292,7 @@ async function resolveSessionComposition(input: {
   preferredRuntimeId: string
   selectedSkillIds: string[]
   selectedToolIds: string[]
+  approvalMode: ConversationApprovalMode
   coBrowseActive?: boolean
   surface?: AppSessionSurface
   visibility?: AppSessionVisibility
@@ -4828,6 +5315,7 @@ async function resolveSessionComposition(input: {
     selectedSkillNames: [],
     selectedToolIds: [],
     selectedToolNames: [],
+    approvalMode: input.approvalMode,
     surface: input.surface ?? 'default',
     visibility: input.visibility ?? 'visible',
     storageScope: input.storageScope ?? 'project',
@@ -4950,18 +5438,19 @@ async function resolveSessionComposition(input: {
     toolMode,
     currentSettings.toolPolicy,
   )
+  const exposesInteractiveBuildSurfaces =
+    nextSessionConfig.baseMode === 'build'
+    && nextSessionConfig.conversationKind === 'normal'
+    && !nextSessionConfig.planMode
+    && !isHiddenSessionConfig(nextSessionConfig)
   const toolAugmentedMode = addSessionTools(
     baseMode,
     [
       ...((input.coBrowseActive
-        || (nextSessionConfig.baseMode === 'build'
-          && nextSessionConfig.conversationKind === 'normal'
-          && !nextSessionConfig.planMode))
+        || exposesInteractiveBuildSurfaces)
         ? [...PROJECT_BROWSER_TOOL_NAMES]
         : []),
-      ...(nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      ...(exposesInteractiveBuildSurfaces
         ? [...BACKGROUND_PROCESS_TOOL_NAMES]
         : []),
       ...(!nextSessionConfig.planMode
@@ -5011,15 +5500,11 @@ async function resolveSessionComposition(input: {
     sessionTools: sessionToolInstructions,
     coBrowseTools: input.coBrowseActive ? buildCoBrowseToolInstructions() : undefined,
     projectBrowser:
-      nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      exposesInteractiveBuildSurfaces
         ? buildProjectBrowserInstructions()
         : undefined,
     backgroundProcesses:
-      nextSessionConfig.baseMode === 'build'
-        && nextSessionConfig.conversationKind === 'normal'
-        && !nextSessionConfig.planMode
+      exposesInteractiveBuildSurfaces
         ? buildBackgroundProcessInstructions()
         : undefined,
     userMemory: userMemorySection,
@@ -5061,12 +5546,40 @@ function normalizeRuntimeForSessionMode(
 
 function createAppToolPermissionPolicy(): ToolPermissionPolicy {
   return {
-    async authorize({ tool, toolCall, context }) {
+    async authorize({ tool, toolCall, context, permission }) {
       const sessionConfig = getSessionConfigFromMetadata(
         context.sessionMetadata,
         resolveBaseMode(context.mode),
       )
+      const approvalsRequired = shouldRequireToolApproval(sessionConfig.approvalMode)
       const currentSettings = await getSettingsState()
+
+      if (permission?.kind === 'workspace_escape') {
+        if (!approvalsRequired) {
+          return { allowed: true }
+        }
+
+        const approved = await requestToolApproval({
+          sessionId: context.sessionId,
+          signal: context.signal,
+          turnId: context.turnId,
+          toolName: tool.name,
+          argumentsSummary: [
+            `Workspace: ${permission.details.workingDirectory}`,
+            `Requested path: ${permission.details.requestedPath}`,
+            `Resolved path: ${permission.details.resolvedPath}`,
+          ].join('\n'),
+          reason: permission.reason,
+        })
+
+        if (!approved) {
+          return {
+            allowed: false,
+            reason:
+              'Out-of-workspace tool access was denied by the user.',
+          }
+        }
+      }
 
       if (CHROME_BROWSER_TOOL_NAME_SET.has(tool.name)) {
         return { allowed: true }
@@ -5107,7 +5620,11 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
             ? record.action.trim()
             : undefined
 
-        if (action && CHROME_DEVTOOLS_MUTATING_ACTION_SET.has(action)) {
+        if (
+          action
+          && CHROME_DEVTOOLS_MUTATING_ACTION_SET.has(action)
+          && approvalsRequired
+        ) {
           const approved = await requestToolApproval({
             sessionId: context.sessionId,
             signal: context.signal,
@@ -5171,6 +5688,13 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
           return { allowed: true }
         }
 
+        if (isHiddenSessionConfig(sessionConfig)) {
+          return {
+            allowed: false,
+            reason: 'Project Browser tools are only available in visible Build conversations.',
+          }
+        }
+
         if (sessionConfig.baseMode !== 'build' || sessionConfig.planMode) {
           return {
             allowed: false,
@@ -5182,6 +5706,13 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
       }
 
       if (BACKGROUND_PROCESS_TOOL_NAMES.includes(tool.name as (typeof BACKGROUND_PROCESS_TOOL_NAMES)[number])) {
+        if (isHiddenSessionConfig(sessionConfig)) {
+          return {
+            allowed: false,
+            reason: 'Background process tools are only available in visible Build conversations.',
+          }
+        }
+
         if (sessionConfig.baseMode !== 'build' || sessionConfig.planMode) {
           return {
             allowed: false,
@@ -5232,7 +5763,7 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
           })
         }
 
-        if (commandPolicy.kind === 'ask') {
+        if (commandPolicy.kind === 'ask' && approvalsRequired) {
           const approved = await requestToolApproval({
             sessionId: context.sessionId,
             signal: context.signal,
@@ -5316,7 +5847,7 @@ async function rehydrateSessionSnapshot(
   const rawConfig = getSessionConfig(snapshot)
   const isTalkSnapshot = isTalkSessionSnapshot(snapshot)
   const currentConfig = isTalkSnapshot
-    ? buildTalkSessionConfig()
+    ? buildTalkSessionConfig(rawConfig.approvalMode)
     : rawConfig
   const talkWorkingDirectory = isTalkSnapshot
     ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
@@ -5337,6 +5868,7 @@ async function rehydrateSessionSnapshot(
     preferredRuntimeId: target.runtimeId,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
     surface: currentConfig.surface,
     visibility: currentConfig.visibility,
     storageScope: currentConfig.storageScope,
@@ -5492,15 +6024,26 @@ async function recoverInterruptedPendingTurns(): Promise<void> {
     )
 
     if (!alreadyRecovered) {
-      const recoveredMessage = buildInterruptedAssistantMessage({
-        turnId: pendingTurn.turnId,
-        content: pendingTurn.content,
-        timestamp: resolveInterruptedTurnTimestamp({
-          turnStartedAt: pendingTurn.startedAt,
-          history: persisted.snapshot.history,
-          appMessages: persisted.appMessages,
-        }),
-      })
+      const recoveredMessage = attachPrimaryModelMetadataToNullableAppMessage(
+        buildInterruptedAssistantMessage({
+          turnId: pendingTurn.turnId,
+          content: pendingTurn.content,
+          timestamp: resolveInterruptedTurnTimestamp({
+            turnStartedAt: pendingTurn.startedAt,
+            history: persisted.snapshot.history,
+            appMessages: persisted.appMessages,
+          }),
+        }) as AppMessage | null,
+        {
+          modelId: persisted.snapshot.modelId,
+          runtimeId: persisted.snapshot.runtimeId,
+        },
+        {
+          enabled:
+            !isTalkSessionId(meta.id)
+            && !isTalkSessionConfig(getSessionConfig(persisted.snapshot)),
+        },
+      )
 
       if (recoveredMessage) {
         store.upsertAppMessage(meta.id, recoveredMessage)
@@ -5606,6 +6149,7 @@ function sidebarStateToRecord(state: SidebarState): Record<string, unknown> {
   const nextState = cloneSidebarState(state)
   return {
     pinnedSessionIds: nextState.pinnedSessionIds,
+    pinnedAreas: nextState.pinnedAreas,
     followUpSessionIds: nextState.followUpSessionIds,
     closedProjectPaths: nextState.closedProjectPaths,
     projectPaths: nextState.projectPaths,
@@ -8741,6 +9285,7 @@ async function buildPdfWorkerSessionMetadata(
         selectedSkillNames: [],
         selectedToolIds: [],
         selectedToolNames: [],
+        approvalMode: DEFAULT_CONVERSATION_APPROVAL_MODE,
         surface: 'default',
         visibility: 'visible',
         storageScope: 'project',
@@ -9554,7 +10099,9 @@ async function getOrResumeLiveSession(sessionId: string): Promise<{
 
 async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
   let persisted = await getPersistedSession(TALK_SESSION_ID)
-  const talkConfig = buildTalkSessionConfig()
+  const talkConfig = buildTalkSessionConfig(
+    persisted?.snapshot ? getSessionConfig(persisted.snapshot).approvalMode : undefined,
+  )
   const talkWorkingDirectory = await ensureDirectoryExists(
     getTalkSessionWorkspaceDirectory(app.getPath('userData')),
   )
@@ -9571,6 +10118,7 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
       preferredRuntimeId: defaultTarget.runtimeId,
       selectedSkillIds: [],
       selectedToolIds: [],
+      approvalMode: talkConfig.approvalMode,
       surface: talkConfig.surface,
       visibility: talkConfig.visibility,
       storageScope: talkConfig.storageScope,
@@ -9631,6 +10179,7 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
     preferredRuntimeId: currentConfig.preferredRuntimeId,
     selectedSkillIds: talkConfig.selectedSkillIds,
     selectedToolIds: talkConfig.selectedToolIds,
+    approvalMode: talkConfig.approvalMode,
     surface: talkConfig.surface,
     visibility: talkConfig.visibility,
     storageScope: talkConfig.storageScope,
@@ -10787,43 +11336,81 @@ async function refreshKeepAwakeState(): Promise<void> {
   stopKeepAwake()
 }
 
-async function runAutomation(
+type AutomationRunStartResult = 'started' | 'skipped' | 'deferred'
+
+function findAutomationExecutionBlocker(
+  automationId: string,
+): ConversationExecutionRun | null {
+  return findBlockingConversationExecution(
+    listConversationExecutions(),
+    getAutomationExecutionSessionId(automationId),
+  )
+}
+
+async function updateScheduledAutomationAfterRun(
   automationId: string,
   trigger: 'schedule' | 'manual',
 ): Promise<void> {
+  const latest = automationStore.get(automationId)
+  if (latest && trigger === 'schedule') {
+    await automationStore.update(automationId, {
+      nextRunAt: computeNextRunAt(latest),
+    })
+  }
+}
+
+async function runAutomation(
+  automationId: string,
+  trigger: 'schedule' | 'manual',
+): Promise<AutomationRunStartResult> {
   if (activeAutomationRuns.has(automationId)) {
-    return
+    return 'skipped'
   }
 
   const record = automationStore.get(automationId)
   if (!record) {
-    return
+    return 'skipped'
+  }
+
+  const blocker = findAutomationExecutionBlocker(automationId)
+  if (blocker) {
+    if (trigger === 'schedule') {
+      return 'deferred'
+    }
+
+    throw new Error(buildConversationExecutionBlockedMessage(blocker))
   }
 
   const abortController = new AbortController()
-  activeAutomationRuns.add(automationId)
-  activeAutomationAbortControllers.set(automationId, abortController)
-  await refreshKeepAwakeState()
-
-  const run = await automationStore.createRun(
-    automationId,
-    trigger === 'schedule' ? 'Scheduled run started' : 'Manual run started',
-    trigger,
-  )
-  broadcastAutomationsChanged()
-
   let assistantText = ''
   let reasoningText = ''
+  let run: AutomationRunRecord | null = null
+  let releasePrimaryLease: (() => void) | null = null
+  let registeredActiveRun = false
   const startedAt = Date.now()
-  const releasePrimaryLease = await acquirePrimaryModelLease(
-    `automation:${automationId}`,
-    {
-      modelId: record.modelId,
-      runtimeId: record.runtimeId,
-    },
-  )
 
   try {
+    activeAutomationRuns.add(automationId)
+    activeAutomationAbortControllers.set(automationId, abortController)
+    registeredActiveRun = true
+    await refreshKeepAwakeState()
+
+    run = await automationStore.createRun(
+      automationId,
+      trigger === 'schedule' ? 'Scheduled run started' : 'Manual run started',
+      trigger,
+    )
+    const activeRun = run
+    broadcastAutomationsChanged()
+
+    releasePrimaryLease = await acquirePrimaryModelLease(
+      getAutomationExecutionSessionId(automationId),
+      {
+        modelId: record.modelId,
+        runtimeId: record.runtimeId,
+      },
+    )
+
     const sessionMode: AppSessionMode = 'build'
     const runtimeSelection = normalizeRuntimeForSessionMode(
       record.runtimeId,
@@ -10839,6 +11426,9 @@ async function runAutomation(
       preferredRuntimeId: record.runtimeId,
       selectedSkillIds: record.selectedSkillIds,
       selectedToolIds: [],
+      approvalMode: AUTOMATION_APPROVAL_MODE,
+      visibility: 'hidden',
+      storageScope: 'global',
     })
 
     const session = await gemmaDesktop.sessions.create({
@@ -10855,7 +11445,7 @@ async function runAutomation(
       debug: (event) => {
         void automationStore.appendRunLog(
           automationId,
-          run.id,
+          activeRun.id,
           createAutomationLogEntry({
             layer: 'runtime',
             event: `runtime.${event.transport}.${event.stage}`,
@@ -10879,7 +11469,7 @@ async function runAutomation(
 
       await automationStore.appendRunLog(
         automationId,
-        run.id,
+        activeRun.id,
         createAutomationLogEntry({
           layer: 'sdk',
           event: gemmaDesktopEvent.type,
@@ -10912,7 +11502,7 @@ async function runAutomation(
 
     recordSessionTokens(result.runtimeId, result.modelId, result.usage)
 
-    await automationStore.completeRun(automationId, run.id, {
+    await automationStore.completeRun(automationId, activeRun.id, {
       status: 'success',
       summary:
         result.text.slice(0, 180)
@@ -10926,16 +11516,11 @@ async function runAutomation(
       finishedAt: Date.now(),
     })
 
-    const latest = automationStore.get(automationId)
-    if (latest && trigger === 'schedule') {
-      await automationStore.update(automationId, {
-        nextRunAt: computeNextRunAt(latest),
-      })
-    }
+    await updateScheduledAutomationAfterRun(automationId, trigger)
 
     notificationManager.notifyAutomationFinished({
       automationId,
-      runId: run.id,
+      runId: activeRun.id,
       name: record.name,
       status: 'success',
       summary:
@@ -10943,7 +11528,12 @@ async function runAutomation(
         || assistantText.slice(0, 180)
         || 'Completed successfully',
     })
+    return 'started'
   } catch (error) {
+    if (!run) {
+      throw error
+    }
+
     const cancelled = abortController.signal.aborted
     const message = cancelled
       ? 'Run cancelled'
@@ -10960,12 +11550,7 @@ async function runAutomation(
       finishedAt: Date.now(),
     })
 
-    const latest = automationStore.get(automationId)
-    if (latest && trigger === 'schedule') {
-      await automationStore.update(automationId, {
-        nextRunAt: computeNextRunAt(latest),
-      })
-    }
+    await updateScheduledAutomationAfterRun(automationId, trigger)
 
     notificationManager.notifyAutomationFinished({
       automationId,
@@ -10974,29 +11559,50 @@ async function runAutomation(
       status: cancelled ? 'cancelled' : 'error',
       summary: message,
     })
+    return 'started'
   } finally {
-    activeAutomationRuns.delete(automationId)
-    activeAutomationAbortControllers.delete(automationId)
-    releasePrimaryLease()
+    if (registeredActiveRun) {
+      activeAutomationRuns.delete(automationId)
+      activeAutomationAbortControllers.delete(automationId)
+    }
+    releasePrimaryLease?.()
     await refreshKeepAwakeState()
     broadcastAutomationsChanged()
   }
 }
 
 async function checkDueAutomations(): Promise<void> {
-  const now = Date.now()
-  const dueAutomations = automationStore
-    .list()
-    .filter(
-      (record) =>
-        record.enabled
-        && record.nextRunAt !== null
-        && record.nextRunAt <= now
-        && !activeAutomationRuns.has(record.id),
-    )
+  if (automationSchedulerChecking) {
+    return
+  }
 
-  for (const record of dueAutomations) {
-    void runAutomation(record.id, 'schedule')
+  automationSchedulerChecking = true
+  try {
+    while (true) {
+      const now = Date.now()
+      const record = automationStore
+        .list()
+        .find(
+          (item) =>
+            item.enabled
+            && item.nextRunAt !== null
+            && item.nextRunAt <= now
+            && !activeAutomationRuns.has(item.id),
+        )
+
+      if (!record) {
+        return
+      }
+
+      const result = await runAutomation(record.id, 'schedule')
+      if (result !== 'started') {
+        return
+      }
+    }
+  } catch (error) {
+    console.error('Failed to run due automation:', error)
+  } finally {
+    automationSchedulerChecking = false
   }
 }
 
@@ -12094,6 +12700,10 @@ function createAppTools(): RegisteredTool[] {
         context: contextText,
         model: requestedModel ?? configuredModel,
         workingDirectory: context.workingDirectory,
+        approvalMode: getSessionConfigFromMetadata(
+          context.sessionMetadata,
+          resolveBaseMode(context.mode),
+        ).approvalMode,
       })
 
       appendDebugLog(context.sessionId, {
@@ -12281,6 +12891,67 @@ function computeApproxGpuResidencyPercent(
   return Math.max(0, Math.min(100, Math.round((sizeVram / size) * 100)))
 }
 
+const MLX_OPTIMIZATION_TOKEN = /(?:^|[^a-z0-9])mlx(?:[^a-z0-9]|$)/i
+
+function valueHasMlxOptimizationHint(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return MLX_OPTIMIZATION_TOKEN.test(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(valueHasMlxOptimizationHint)
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(valueHasMlxOptimizationHint)
+  }
+
+  return false
+}
+
+function deriveOptimizationTags(input: {
+  runtimeId: string
+  modelId: string
+  displayName: string
+  metadata: Record<string, unknown>
+}): string[] | undefined {
+  const tags = new Set<string>()
+
+  if (input.runtimeId === 'omlx-openai') {
+    tags.add('MLX')
+  }
+
+  const metadata = input.metadata
+  const candidates = [
+    input.modelId,
+    input.displayName,
+    metadata.format,
+    metadata.modelFormat,
+    metadata.model_format,
+    metadata.optimizedFor,
+    metadata.optimized_for,
+    metadata.optimization,
+    metadata.optimizations,
+    metadata.accelerator,
+    metadata.accelerators,
+    metadata.engineType,
+    metadata.engine_type,
+    metadata.modelType,
+    metadata.model_type,
+    metadata.modelPath,
+    metadata.model_path,
+    metadata.sourceId,
+    metadata.publisher,
+    metadata.description,
+  ]
+
+  if (candidates.some(valueHasMlxOptimizationHint)) {
+    tags.add('MLX')
+  }
+
+  return tags.size > 0 ? [...tags] : undefined
+}
+
 function createConfiguredRuntimeAdapters(currentSettings: AppSettingsRecord) {
   return [
     createOllamaNativeAdapter({
@@ -12324,6 +12995,7 @@ type MappedModelSummary = {
   parameterCount?: string
   quantization?: string
   contextLength?: number
+  optimizationTags?: string[]
   status: 'loaded' | 'available' | 'loading'
   attachmentSupport: ReturnType<typeof deriveAttachmentSupport>
   runtimeConfig?: MappedModelRuntimeConfig
@@ -12331,7 +13003,7 @@ type MappedModelSummary = {
 
 function mapModels(
   inspectionResults: Array<{ runtime: { id: string; displayName: string }; models: Array<{ id: string; runtimeId: string; kind: string; metadata: Record<string, unknown>; capabilities: Array<{ id: string; status: string; scope?: string; source?: string }> }>; loadedInstances: Array<{ modelId: string; status: string }> }>,
-  currentSettings?: Pick<AppSettingsRecord, 'ollama' | 'lmstudio'> | null,
+  currentSettings?: Pick<AppSettingsRecord, 'ollama' | 'lmstudio' | 'omlx'> | null,
 ): MappedModelSummary[] {
   const models: MappedModelSummary[] = []
   const pendingLoadTargets = listPendingModelLoadTargets()
@@ -12445,6 +13117,17 @@ function mapModels(
             ),
           )
         : undefined
+      const omlxRequestedOptions = currentSettings
+        ? buildOmlxDisplayOptionsRecord(
+            resolveManagedOmlxProfile(
+              currentSettings.omlx,
+              m.id,
+              m.runtimeId,
+              displayName,
+              os.totalmem(),
+            ),
+          )
+        : undefined
       const runtimeConfig =
         m.runtimeId === 'ollama-native' || m.runtimeId === 'ollama-openai'
           ? {
@@ -12479,6 +13162,7 @@ function mapModels(
               : m.runtimeId === 'omlx-openai'
                 ? {
                     provider: 'omlx' as const,
+                    requestedOptions: omlxRequestedOptions,
                     loadedOptions:
                       Object.keys(loadedConfig).length > 0
                         ? loadedConfig
@@ -12487,6 +13171,12 @@ function mapModels(
                     loadedContextLength,
                   }
           : undefined
+      const optimizationTags = deriveOptimizationTags({
+        runtimeId: m.runtimeId,
+        modelId: m.id,
+        displayName,
+        metadata: meta,
+      })
 
       const modelKey = modelTargetKey({
         runtimeId: rt.runtime.id,
@@ -12502,6 +13192,7 @@ function mapModels(
         parameterCount,
         quantization,
         contextLength,
+        optimizationTags,
         status: pendingLoadKeys.has(modelKey) || loadingIds.has(m.id)
           ? 'loading'
           : loadedIds.has(m.id)
@@ -12639,6 +13330,7 @@ function snapshotToDetail(
     conversationKind: config.conversationKind,
     workMode: sessionMode,
     planMode: config.planMode,
+    approvalMode: config.approvalMode,
     selectedSkillIds: config.selectedSkillIds,
     selectedSkillNames: config.selectedSkillNames,
     selectedToolIds: config.selectedToolIds,
@@ -12679,6 +13371,7 @@ function metaToSummary(
     conversationKind: config?.conversationKind ?? 'normal',
     workMode: config ? resolveAppSessionMode(config) : 'explore',
     planMode: config?.planMode ?? false,
+    approvalMode: config?.approvalMode ?? DEFAULT_CONVERSATION_APPROVAL_MODE,
     selectedSkillIds: config?.selectedSkillIds ?? [],
     selectedSkillNames: config?.selectedSkillNames ?? [],
     selectedToolIds: config?.selectedToolIds ?? [],
@@ -12835,6 +13528,7 @@ async function getSystemStats() {
 export async function initializeGemmaDesktop(): Promise<void> {
   const currentSettings = await loadSettings()
   primaryModelHoldCounts.clear()
+  primaryModelAvailabilityIssues.clear()
   activePrimaryModelTarget = null
   primaryWarmupPromise = null
   primaryModelLoadPromise = null
@@ -12845,6 +13539,7 @@ export async function initializeGemmaDesktop(): Promise<void> {
     ready: false,
     message: 'Local models will be prepared when needed.',
     ...resolveBootstrapTargets(currentSettings),
+    modelAvailabilityIssues: [],
     updatedAt: Date.now(),
   }
   notificationManager.setPermissionStatus(undefined)
@@ -13150,6 +13845,9 @@ async function sendSessionMessageInternal(
     modelId: sessionSnapshot.modelId,
     runtimeId: sessionSnapshot.runtimeId,
   }
+  const shouldPersistPrimaryModelMetadata =
+    !isTalkSessionId(sessionId)
+    && !isTalkSessionConfig(getSessionConfig(sessionSnapshot))
   let releasePrimaryLease: (() => void) | null = null
   try {
     releasePrimaryLease = await acquirePrimaryModelLease(sessionId, primaryTarget)
@@ -13908,7 +14606,7 @@ async function sendSessionMessageInternal(
       finalizeHelperToolBlock()
 
       const durationMs = Math.max(Date.now() - turnStartedAt, 1)
-      const assistantMessage =
+      const completedAssistantMessage =
         buildCompletedAssistantMessageFromBlocks(
           runtimeTurnId ?? streamResult.turnId,
           contentBlocks,
@@ -13926,6 +14624,11 @@ async function sendSessionMessageInternal(
           timestamp: Date.now(),
           durationMs,
         }
+      const assistantMessage = attachPrimaryModelMetadataToAppMessage(
+        completedAssistantMessage,
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
+      )
 
       store.clearPendingTurn(sessionId)
       store.upsertAppMessage(sessionId, assistantMessage)
@@ -14173,19 +14876,23 @@ async function sendSessionMessageInternal(
     }
     const durationMs = Math.max(Date.now() - turnStartedAt, 1)
 
-    const assistantMessage: AppMessage = {
-      id: assistantHistoryMessage?.id ?? effectiveResult.turnId,
-      role: 'assistant',
-      content:
-        finalContent.length > 0
-          ? finalContent
-          : [{
-              type: 'text',
-              text: (helperCompletionMessage ?? effectiveResult.text) || '',
-            }],
-      timestamp: Date.now(),
-      durationMs,
-    }
+    const assistantMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+      {
+        id: assistantHistoryMessage?.id ?? effectiveResult.turnId,
+        role: 'assistant',
+        content:
+          finalContent.length > 0
+            ? finalContent
+            : [{
+                type: 'text',
+                text: (helperCompletionMessage ?? effectiveResult.text) || '',
+              }],
+        timestamp: Date.now(),
+        durationMs,
+      },
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
     store.clearPendingTurn(sessionId)
     store.upsertAppMessage(sessionId, assistantMessage)
 
@@ -14245,10 +14952,14 @@ async function sendSessionMessageInternal(
   } catch (err: unknown) {
     const aborted = abortController.signal.aborted
     if (aborted) {
-      const cancelledMessage = buildCancelledAssistantMessage(
-        runtimeTurnId ?? randomUUID(),
-        contentBlocks,
-        Math.max(Date.now() - turnStartedAt, 1),
+      const cancelledMessage = attachPrimaryModelMetadataToNullableAppMessage(
+        buildCancelledAssistantMessage(
+          runtimeTurnId ?? randomUUID(),
+          contentBlocks,
+          Math.max(Date.now() - turnStartedAt, 1),
+        ),
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
       )
 
       if (cancelledMessage) {
@@ -14275,8 +14986,26 @@ async function sendSessionMessageInternal(
         },
       })
     } else {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(`[gemma-desktop] Session ${sessionId} turn failed:`, err)
+      let errMsg = err instanceof Error ? err.message : String(err)
+      const modelAvailabilityError = isModelNotLoadedError(err)
+        ? err
+        : wrapLocalRuntimeLoadError(err, currentSettings, primaryTarget, 'running')
+      const modelAvailabilityIssue =
+        isModelNotLoadedError(modelAvailabilityError)
+        || getLocalRuntimeUnavailableError(modelAvailabilityError)
+          ? await recordPrimaryModelLoadFailure(
+              primaryTarget,
+              modelAvailabilityError,
+              'send',
+              currentSettings,
+            )
+          : null
+      if (modelAvailabilityIssue) {
+        errMsg = modelAvailabilityIssue.message
+        console.warn(`[gemma-desktop] Session ${sessionId} is paused because its primary model is unavailable: ${errMsg}`)
+      } else {
+        console.error(`[gemma-desktop] Session ${sessionId} turn failed:`, err)
+      }
       store.clearPendingTurn(sessionId)
       sendToSession(sessionId, { type: 'live_activity', activity: null })
 
@@ -14399,22 +15128,27 @@ async function sendSessionMessageInternal(
           }
         }
 
-        const errorMessage: AppMessage =
+        const failedMessage =
           recoveredMessage
           ?? buildFailedAssistantMessage({
-              turnId: runtimeTurnId ?? randomUUID(),
-              content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
-              errorMessage: errMsg,
-              timestamp: Date.now(),
-              durationMs,
-            })
+            turnId: runtimeTurnId ?? randomUUID(),
+            content: serializeStreamingBlocks(contentBlocks, { cancelled: true }),
+            errorMessage: errMsg,
+            timestamp: Date.now(),
+            durationMs,
+          })
           ?? {
-              id: `err-${Date.now()}`,
-              role: 'assistant',
-              content: [{ type: 'error', message: errMsg }],
-              timestamp: Date.now(),
-              durationMs,
-            }
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: [{ type: 'error', message: errMsg }],
+            timestamp: Date.now(),
+            durationMs,
+          }
+        const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+          failedMessage,
+          primaryTarget,
+          { enabled: shouldPersistPrimaryModelMetadata },
+        )
 
         sendToSession(sessionId, {
           type: 'turn_complete',
@@ -14453,15 +15187,23 @@ async function sendSessionMessageInternal(
     }
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
-
-    const errorMessage: AppMessage = {
-      id: `err-${Date.now()}`,
-      role: 'assistant',
-      content: [{ type: 'error', message: errMsg }],
-      timestamp: Date.now(),
-      durationMs: Math.max(Date.now() - requestStartedAt, 1),
+    if (isPrimaryModelUnavailableError(err)) {
+      console.warn(`[gemma-desktop] Session ${sessionId} is paused because its primary model is unavailable: ${errMsg}`)
+    } else {
+      console.error(`[gemma-desktop] Session ${sessionId} preflight failed:`, err)
     }
+
+    const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+      {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: [{ type: 'error', message: errMsg }],
+        timestamp: Date.now(),
+        durationMs: Math.max(Date.now() - requestStartedAt, 1),
+      },
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
 
     sendToSession(sessionId, {
       type: 'turn_complete',
@@ -14535,11 +15277,16 @@ async function runSessionResearchInternal(
     lastMessagePreview: userMessagePreview,
   })
 
+  const primaryTarget: PrimaryModelTarget = {
+    modelId: session.snapshot().modelId,
+    runtimeId: session.snapshot().runtimeId,
+  }
+  const shouldPersistPrimaryModelMetadata =
+    !isTalkSessionId(sessionId)
+    && !isTalkSessionConfig(getSessionConfig(session.snapshot()))
+
   try {
-    releasePrimaryLease = await acquirePrimaryModelLease(sessionId, {
-      modelId: session.snapshot().modelId,
-      runtimeId: session.snapshot().runtimeId,
-    })
+    releasePrimaryLease = await acquirePrimaryModelLease(sessionId, primaryTarget)
     abortController = new AbortController()
     const pendingTurnId = `research-${requestStartedAt}-${randomUUID()}`
     const initialResearchActivity: SessionLiveActivity = {
@@ -14617,7 +15364,11 @@ async function runSessionResearchInternal(
       },
     })
     const durationMs = Math.max(Date.now() - requestStartedAt, 1)
-    const assistantMessage = buildResearchAssistantMessage(result, durationMs)
+    const assistantMessage = attachPrimaryModelMetadataToAppMessage(
+      buildResearchAssistantMessage(result, durationMs),
+      primaryTarget,
+      { enabled: shouldPersistPrimaryModelMetadata },
+    )
 
     store.clearPendingTurn(sessionId)
     store.upsertAppMessage(sessionId, assistantMessage)
@@ -14677,16 +15428,20 @@ async function runSessionResearchInternal(
           label: 'Open research artifacts',
         })
       }
-      const errorMessage: AppMessage = {
-        id: `research-err-${Date.now()}`,
-        role: 'assistant',
-        content:
-          failureContent.length > 0
-            ? failureContent
-            : [{ type: 'error', message: errMsg }],
-        timestamp: Date.now(),
-        durationMs: Math.max(Date.now() - requestStartedAt, 1),
-      }
+      const errorMessage: AppMessage = attachPrimaryModelMetadataToAppMessage(
+        {
+          id: `research-err-${Date.now()}`,
+          role: 'assistant',
+          content:
+            failureContent.length > 0
+              ? failureContent
+              : [{ type: 'error', message: errMsg }],
+          timestamp: Date.now(),
+          durationMs: Math.max(Date.now() - requestStartedAt, 1),
+        },
+        primaryTarget,
+        { enabled: shouldPersistPrimaryModelMetadata },
+      )
       store.clearPendingTurn(sessionId)
       store.upsertAppMessage(sessionId, errorMessage)
       sendToSession(sessionId, { type: 'live_activity', activity: null })
@@ -14860,9 +15615,10 @@ export function registerIpcHandlers(): void {
     return sidebarStateToRecord(await syncSidebarState())
   })
 
-  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string) => {
+  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string, areaId: string) => {
     const result = await getSidebarStateStore().pinSession(
       sessionId,
+      areaId,
       await listSidebarSessionReferences(),
     )
 
@@ -14934,6 +15690,90 @@ export function registerIpcHandlers(): void {
       const result = await getSidebarStateStore().movePinnedSession(
         sessionId,
         toIndex,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:create-pinned-area',
+    async (_, icon: string, sessionId: string | null) => {
+      const result = await getSidebarStateStore().createPinnedArea(
+        icon,
+        sessionId,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:delete-pinned-area',
+    async (_, areaId: string) => {
+      const result = await getSidebarStateStore().deletePinnedArea(
+        areaId,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:update-pinned-area-icon',
+    async (_, areaId: string, icon: string) => {
+      const result = await getSidebarStateStore().updatePinnedAreaIcon(
+        areaId,
+        icon,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:set-pinned-area-collapsed',
+    async (_, areaId: string, collapsed: boolean) => {
+      const result = await getSidebarStateStore().setPinnedAreaCollapsed(
+        areaId,
+        collapsed,
+        await listSidebarSessionReferences(),
+      )
+
+      if (result.changed) {
+        broadcastSidebarChanged(result.state)
+      }
+
+      return sidebarStateToRecord(result.state)
+    },
+  )
+
+  ipcMain.handle(
+    'sidebar:move-pinned-area',
+    async (_, areaId: string, direction: 'up' | 'down') => {
+      const result = await getSidebarStateStore().movePinnedArea(
+        areaId,
+        direction,
         await listSidebarSessionReferences(),
       )
 
@@ -15195,6 +16035,7 @@ export function registerIpcHandlers(): void {
         conversationKind?: ConversationKind
         workMode?: AppSessionMode
         planMode?: boolean
+        approvalMode?: ConversationApprovalMode
         selectedSkillIds?: string[]
         selectedToolIds?: string[]
         workingDirectory?: string
@@ -15217,6 +16058,7 @@ export function registerIpcHandlers(): void {
         selectedSkillNames: [],
         selectedToolIds: [],
         selectedToolNames: [],
+        approvalMode: normalizeConversationApprovalMode(opts.approvalMode),
         surface: 'default',
         visibility: 'visible',
         storageScope: 'project',
@@ -15249,6 +16091,7 @@ export function registerIpcHandlers(): void {
                 Array.isArray(opts.selectedToolIds) ? opts.selectedToolIds : undefined,
                 currentSettings,
               ),
+        approvalMode: nextSessionConfig.approvalMode,
         surface: nextSessionConfig.surface,
         visibility: nextSessionConfig.visibility,
         storageScope: nextSessionConfig.storageScope,
@@ -15347,6 +16190,7 @@ export function registerIpcHandlers(): void {
         conversationKind?: ConversationKind
         workMode?: AppSessionMode
         planMode?: boolean
+        approvalMode?: ConversationApprovalMode
         modelId?: string
         runtimeId?: string
         selectedSkillIds?: string[]
@@ -15381,7 +16225,7 @@ export function registerIpcHandlers(): void {
 
       const currentSnapshotIsTalk = isTalkSessionSnapshot(currentSnapshot)
       const currentConfig = currentSnapshotIsTalk
-        ? buildTalkSessionConfig()
+        ? buildTalkSessionConfig(getSessionConfig(currentSnapshot).approvalMode)
         : getSessionConfig(currentSnapshot)
       const nextWorkingDirectory = currentSnapshotIsTalk
         ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
@@ -15429,10 +16273,15 @@ export function registerIpcHandlers(): void {
         typeof opts.planMode === 'boolean'
           ? opts.planMode
           : currentConfig.planMode
+      const requestedApprovalMode =
+        opts.approvalMode !== undefined
+          ? normalizeConversationApprovalMode(opts.approvalMode)
+          : currentConfig.approvalMode
       const nextSessionConfig = normalizeSessionConfig({
         ...currentConfig,
         baseMode: sessionMode,
         planMode: requestedPlanMode,
+        approvalMode: requestedApprovalMode,
       })
       if (opts.planMode === true && !nextSessionConfig.planMode) {
         throw new Error('Plan mode is only available in Build conversations.')
@@ -15474,6 +16323,7 @@ export function registerIpcHandlers(): void {
         preferredRuntimeId: nextTarget.runtimeId,
         selectedSkillIds,
         selectedToolIds,
+        approvalMode: nextSessionConfig.approvalMode,
         surface: nextSessionConfig.surface,
         visibility: nextSessionConfig.visibility,
         storageScope: nextSessionConfig.storageScope,
@@ -16135,6 +16985,7 @@ export function registerIpcHandlers(): void {
         preferredRuntimeId: executionTarget.runtimeId,
         selectedSkillIds: config.selectedSkillIds,
         selectedToolIds: config.selectedToolIds,
+        approvalMode: config.approvalMode,
         surface: config.surface,
         visibility: config.visibility,
         storageScope: config.storageScope,
@@ -16401,7 +17252,14 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('automations:run-now', async (_, automationId: string) => {
-    void runAutomation(automationId, 'manual')
+    const blocker = findAutomationExecutionBlocker(automationId)
+    if (blocker) {
+      throw new Error(buildConversationExecutionBlockedMessage(blocker))
+    }
+
+    void runAutomation(automationId, 'manual').catch((error) => {
+      console.error('Failed to run automation:', error)
+    })
     return { ok: true }
   })
 
@@ -16658,6 +17516,11 @@ export function registerIpcHandlers(): void {
   // ── System Stats ──
 
   ipcMain.handle('system:stats', () => getSystemStats())
+
+  ipcMain.handle('system:open-emoji-panel', () => {
+    app.showEmojiPanel()
+    return { ok: true }
+  })
 
   ipcMain.handle('system:model-token-usage', () => getModelTokenUsageReport())
 
@@ -17290,8 +18153,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'settings:update',
     async (_, patch: Record<string, unknown>) => {
-      const nextSettings = await saveSettings(patch as Partial<AppSettingsRecord>)
+      let nextSettings = await saveSettings(patch as Partial<AppSettingsRecord>)
       await refreshBootstrapModelSelection(nextSettings, patch)
+      nextSettings = await getSettingsState()
       if (
         Object.prototype.hasOwnProperty.call(patch, 'toolPolicy')
         || Object.prototype.hasOwnProperty.call(patch, 'skills')

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Circle, Download, Loader2, Search } from 'lucide-react'
 import { ModelPickerList } from '@/components/ModelPickerList'
+import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
   sortGuidedGemmaModelsHighestFirst,
@@ -115,9 +116,13 @@ export function GemmaSizeSelector({
   const buttonLabel = selectedGemma
     ? displayTierLabel(selectedGemma)
     : 'Custom'
+  const selectedCustomOptimizationTags = selectedCustomModel?.optimizationTags ?? []
+  const selectedCustomOptimizationLabel = selectedCustomOptimizationTags.length > 0
+    ? ` · ${selectedCustomOptimizationTags.map((tag) => `${tag} optimized`).join(' · ')}`
+    : ''
   const buttonTitle = selectedGemma
     ? `Session model size: ${displayTierLabel(selectedGemma)}`
-    : `Session model: ${selectedCustomModel?.name ?? selectedModelId}`
+    : `Session model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
 
   useEffect(() => {
     if (!open) {
@@ -147,6 +152,10 @@ export function GemmaSizeSelector({
           className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-900"
         >
           <span>{buttonLabel}</span>
+          <ModelOptimizationBadges
+            tags={selectedCustomOptimizationTags}
+            compact
+          />
           <ChevronDown size={12} className="text-zinc-400" />
         </button>
       </div>

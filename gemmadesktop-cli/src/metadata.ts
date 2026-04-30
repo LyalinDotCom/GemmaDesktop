@@ -1,4 +1,4 @@
-import type { ModeSelection } from "@gemma-desktop/sdk-core";
+import type { ConversationApprovalMode, ModeSelection } from "@gemma-desktop/sdk-core";
 
 export const APP_SESSION_METADATA_KEY = "gemmaDesktopApp";
 export const REQUEST_PREFERENCES_METADATA_KEY = "requestPreferences";
@@ -8,6 +8,7 @@ export interface RequestPreferences {
   ollamaOptions?: Record<string, number>;
   ollamaKeepAlive?: string;
   lmstudioOptions?: Record<string, number>;
+  omlxOptions?: Record<string, number>;
 }
 
 export interface DesktopParitySessionMetadataOptions {
@@ -15,6 +16,7 @@ export interface DesktopParitySessionMetadataOptions {
   runtimeId: string;
   preferredRuntimeId?: string;
   selectedToolNames?: string[];
+  approvalMode: ConversationApprovalMode;
   requestPreferences?: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
 }
@@ -45,6 +47,7 @@ export function buildDesktopParitySessionMetadata(
       selectedSkillNames: [],
       selectedToolIds: [],
       selectedToolNames,
+      approvalMode: options.approvalMode,
       surface: "default",
       visibility: "visible",
       storageScope: "project",
@@ -55,6 +58,7 @@ export function buildDesktopParitySessionMetadata(
     ollamaOptions: options.requestPreferences?.ollamaOptions,
     ollamaKeepAlive: options.requestPreferences?.ollamaKeepAlive,
     lmstudioOptions: options.requestPreferences?.lmstudioOptions,
+    omlxOptions: options.requestPreferences?.omlxOptions,
   });
 
   if (Object.keys(requestPreferences).length > 0) {

@@ -5,7 +5,6 @@ import {
   FINALIZE_BUILD_TOOL_NAME,
   buildFailedBuildVerificationInstruction,
   buildMissingBuildFinalizationInstruction,
-  buildMissingBuildVerificationInstruction,
   buildRejectedBuildFinalizationInstruction,
   buildRejectedBuildVerifierInstruction,
   createBuildTurnState,
@@ -689,28 +688,6 @@ function assertInputCapabilitySupport(
   }
 }
 
-const CONTINUE_INCOMPLETE_TOOL_WORK_INSTRUCTION = [
-  "Continue the current task now.",
-  "Do not stop at intent or next steps.",
-  "If tool use or file changes are still needed, emit the next tool call now.",
-  "Only finish when the work is complete or truly blocked on missing user input.",
-].join("\n");
-
-const CONTINUE_DRAFTED_FILE_CREATION_INSTRUCTION = [
-  "This act turn is not complete yet.",
-  "You drafted file contents or shell commands in the assistant text, but that did not create files in the workspace.",
-  "Create the actual files now by calling write_file, edit_file, workspace_editor_agent, or exec_command.",
-  "Do not repeat the file contents in markdown. Emit the next tool call now.",
-].join("\n");
-
-const CONTINUE_AFTER_TOOL_USE_INSTRUCTION = [
-  "You already used tools in this turn.",
-  "Do not stop at intent, promises, or next steps.",
-  "If another materially different tool call is still needed, emit it now.",
-  "Otherwise answer the user now or state the exact blocker plainly.",
-  "Do not end with text like 'I'll try' or 'I'll check again.'",
-].join("\n");
-
 const RETRY_EMPTY_RESPONSE_INSTRUCTION = [
   "Your previous reply was empty.",
   "Respond to the current user request now.",
@@ -746,54 +723,9 @@ const MAX_STEP_FINALIZATION_WARNING =
   "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
 const REPEATED_TOOL_FAILURE_THRESHOLD = 3;
 const REPEATED_TOOL_CALL_THRESHOLD = 3;
-const REPEATED_TEXT_ONLY_CONTINUATION_OVERLAP = 0.7;
 
 const TOOL_SURFACE_REGISTRATION_ERROR_PATTERN =
   /^Tool "([^"]+)" is not registered in the active tool surface\.$/;
-
-function normalizeContinuationText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\bi['’]ve\b/g, "i have")
-    .replace(/\bi['’]m\b/g, "i am")
-    .replace(/\bi['’]ll\b/g, "i will")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function looksLikeRepeatedTextOnlyContinuation(
-  previousText: string | undefined,
-  currentText: string,
-): boolean {
-  if (!previousText) {
-    return false;
-  }
-
-  const previous = normalizeContinuationText(previousText);
-  const current = normalizeContinuationText(currentText);
-  if (previous.length < 12 || current.length < 12) {
-    return false;
-  }
-  if (previous.includes(current) || current.includes(previous)) {
-    return true;
-  }
-
-  const previousWords = new Set(previous.split(" ").filter((word) => word.length > 3));
-  const currentWords = new Set(current.split(" ").filter((word) => word.length > 3));
-  const smallerSize = Math.min(previousWords.size, currentWords.size);
-  if (smallerSize === 0) {
-    return false;
-  }
-
-  let shared = 0;
-  for (const word of previousWords) {
-    if (currentWords.has(word)) {
-      shared += 1;
-    }
-  }
-  return shared / smallerSize >= REPEATED_TEXT_ONLY_CONTINUATION_OVERLAP;
-}
 
 function buildRequiredToolContinuationInstruction(requiredTools: readonly string[]): string {
   return [
@@ -933,6 +865,10 @@ function buildRequestSettings(
   const lmstudioOptions = normalizeRequestNumericOptions(preferences?.lmstudioOptions);
   if (lmstudioOptions) {
     settings.lmstudioOptions = lmstudioOptions;
+  }
+  const omlxOptions = normalizeRequestNumericOptions(preferences?.omlxOptions);
+  if (omlxOptions) {
+    settings.omlxOptions = omlxOptions;
   }
   return settings;
 }
@@ -2018,7 +1954,6 @@ export class SessionEngine {
     let continuationInstruction: string | undefined;
     let continuationAttempts = 0;
     let buildValidationContinuationAttempts = 0;
-    let lastBuildValidationTextOnlyContinuationText: string | undefined;
     let buildFinalizationContinuationAttempts = 0;
     let buildVerifierAttempts = 0;
     let latestBuildVerifierResult: BuildCompletionVerifierResult | undefined;
@@ -2026,7 +1961,8 @@ export class SessionEngine {
     let completedFromFinalizationToolResponse = false;
     let nextStepAvailableTools: ToolDefinition[] | undefined;
     const failedToolSignatureCounts = new Map<string, number>();
-    const toolCallSignatureCounts = new Map<string, number>();
+    let consecutiveToolCallSignatureKey: string | undefined;
+    let consecutiveToolCallSignatureCount = 0;
     const requiredTools = resolveRequiredTools(this.mode).filter((toolName) =>
       this.availableTools.some((tool) => tool.name === toolName),
     );
@@ -2130,63 +2066,6 @@ export class SessionEngine {
             validationStatus: buildValidationStatus,
             verifier: latestBuildVerifierResult,
           });
-
-          if (
-            buildValidationStatus
-            && !buildValidationStatus.attempted
-            && buildValidationStatus.recommendedCommands.length > 0
-            && buildValidationContinuationAttempts < (turnBuildPolicy?.verificationContinuationLimit ?? 2)
-            && step < maxSteps
-          ) {
-            if (
-              response.text.trim().length > 0
-              && looksLikeRepeatedTextOnlyContinuation(
-                lastBuildValidationTextOnlyContinuationText,
-                response.text,
-              )
-            ) {
-              const warning =
-                "Assistant kept replying with text instead of running required build verification. Stopping automatic continuation to avoid a repeat loop.";
-              warnings.push(warning);
-              this.emit(queue, turnId, "warning.raised", {
-                step,
-                warning,
-              });
-              break;
-            }
-
-            if (response.text.trim().length > 0) {
-              lastBuildValidationTextOnlyContinuationText = response.text;
-            }
-            buildValidationContinuationAttempts += 1;
-            continuationInstruction = buildMissingBuildVerificationInstruction(buildValidationStatus);
-            this.emit(queue, turnId, "build.validation.required", {
-              step,
-              status: buildValidationStatus,
-            });
-            this.emit(queue, turnId, "warning.raised", {
-              step,
-              warning: "Assistant changed files in build mode without running verification. Continuing the turn automatically.",
-            });
-            this.discardAssistantResponse(assistantMessage);
-            continue;
-          }
-
-          if (
-            buildValidationStatus
-            && !buildValidationStatus.attempted
-            && buildValidationStatus.recommendedCommands.length > 0
-          ) {
-            throw new GemmaDesktopError(
-              "build_budget_exhausted",
-              "Build turn ended before required verification could run.",
-              {
-                details: {
-                  build: latestBuildSummary,
-                },
-              },
-            );
-          }
 
           if (
             buildValidationStatus
@@ -2416,68 +2295,6 @@ export class SessionEngine {
           );
         }
 
-        const planningOnlyAfterToolUse =
-          modeBase !== "minimal"
-          && !hasFailedToolResult(toolResults)
-          && toolResults.length > 0
-          && response.text.trim().length > 0
-          && looksLikeIncompleteActionText(response.text);
-
-        if (
-          planningOnlyAfterToolUse
-          && continuationAttempts < 2
-          && step < maxSteps
-        ) {
-          continuationAttempts += 1;
-          continuationInstruction = CONTINUE_AFTER_TOOL_USE_INSTRUCTION;
-          this.emit(queue, turnId, "warning.raised", {
-            step,
-            warning:
-              "Assistant ended on next-step text after tool use. Continuing the turn automatically so it either calls the next tool or gives a grounded answer.",
-          });
-          this.discardAssistantResponse(assistantMessage);
-          continue;
-        }
-
-        if (planningOnlyAfterToolUse) {
-          throw new GemmaDesktopError(
-            "transport_error",
-            "Turn ended on plan-only text after tool use instead of continuing the work or giving a grounded answer.",
-          );
-        }
-
-        const draftedFileCreationWithoutMutation =
-          (buildTurnState?.mutations.length ?? 0) === 0
-          && looksLikeDraftedFileCreationText(response.text);
-        const shouldContinueAfterIncompleteReply =
-          this.availableTools.length > 0
-          && modeBase === "build"
-          && continuationAttempts < 2
-          && step < maxSteps
-          && response.text.trim().length > 0
-          && (
-            looksLikeIncompleteActionText(response.text)
-            || draftedFileCreationWithoutMutation
-          );
-
-        if (shouldContinueAfterIncompleteReply) {
-          continuationAttempts += 1;
-          const draftedFileCreation = draftedFileCreationWithoutMutation;
-          continuationInstruction = draftedFileCreation
-            ? CONTINUE_DRAFTED_FILE_CREATION_INSTRUCTION
-            : CONTINUE_INCOMPLETE_TOOL_WORK_INSTRUCTION;
-          this.emit(queue, turnId, "warning.raised", {
-            step,
-            warning: draftedFileCreation
-              ? "Assistant drafted file creation in text instead of creating files. Continuing the turn automatically."
-              : toolResults.length > 0
-              ? "Assistant response looked incomplete after tool use. Continuing the turn automatically."
-              : "Assistant response only announced the next act step without using tools. Continuing the turn automatically.",
-          });
-          this.discardAssistantResponse(assistantMessage);
-          continue;
-        }
-
         const missingUserFacingSummaryAfterToolUse =
           modeBase !== "minimal"
           && toolResults.length > 0
@@ -2538,20 +2355,23 @@ export class SessionEngine {
       }
 
       continuationAttempts = 0;
-      lastBuildValidationTextOnlyContinuationText = undefined;
 
       let repeatedToolCall:
         | { toolName: string; inputPreview: string; count: number }
         | undefined;
       for (const toolCall of response.toolCalls) {
         const signature = buildToolCallSignature(toolCall);
-        const count = (toolCallSignatureCounts.get(signature.key) ?? 0) + 1;
-        toolCallSignatureCounts.set(signature.key, count);
-        if (count >= REPEATED_TOOL_CALL_THRESHOLD && !repeatedToolCall) {
+        if (signature.key === consecutiveToolCallSignatureKey) {
+          consecutiveToolCallSignatureCount += 1;
+        } else {
+          consecutiveToolCallSignatureKey = signature.key;
+          consecutiveToolCallSignatureCount = 1;
+        }
+        if (consecutiveToolCallSignatureCount >= REPEATED_TOOL_CALL_THRESHOLD && !repeatedToolCall) {
           repeatedToolCall = {
             toolName: toolCall.name,
             inputPreview: signature.preview,
-            count,
+            count: consecutiveToolCallSignatureCount,
           };
         }
       }
@@ -2828,26 +2648,6 @@ export class SessionEngine {
           finalizationStatus: buildFinalizationStatus,
           verifier: latestBuildVerifierResult,
         });
-
-        if (
-          buildValidationStatus
-          && !buildValidationStatus.attempted
-          && buildValidationStatus.recommendedCommands.length > 0
-          && buildValidationContinuationAttempts < activeBuildPolicy.verificationContinuationLimit
-          && step < maxSteps
-        ) {
-          buildValidationContinuationAttempts += 1;
-          continuationInstruction = buildMissingBuildVerificationInstruction(buildValidationStatus);
-          this.emit(queue, turnId, "build.validation.required", {
-            step,
-            status: buildValidationStatus,
-          });
-          this.emit(queue, turnId, "warning.raised", {
-            step,
-            warning: "Assistant recorded build completion evidence before running verification. Continuing the turn automatically.",
-          });
-          continue;
-        }
 
         if (
           buildValidationStatus

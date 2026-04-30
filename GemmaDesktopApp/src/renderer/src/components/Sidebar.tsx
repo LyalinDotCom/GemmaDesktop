@@ -12,12 +12,11 @@ import {
   PinOff,
   Plus,
   Search,
-  SlidersHorizontal,
+  SmilePlus,
   SquareTerminal,
   Sparkles,
   Stethoscope,
   Settings,
-  Tag as TagIcon,
   Trash2,
   X,
 } from 'lucide-react'
@@ -39,14 +38,40 @@ import type {
   ModelTokenUsageReport,
   SessionSearchResult,
   SessionSummary,
-  SessionTag,
   SidebarState,
   SystemStats,
   TerminalAppInfo,
 } from '@/types'
-import { SessionTagPicker } from '@/components/SessionTagPicker'
+import { clampToFirstGrapheme } from '@shared/emoji'
+import {
+  DEFAULT_PINNED_AREA_ID,
+  getPinnedAreaDestinations,
+  isDefaultPinnedArea,
+} from '@shared/sidebar'
 
 type SidebarSearchStatus = 'idle' | 'searching' | 'ready' | 'error'
+
+const PINNED_AREA_EMOJIS = [
+  { emoji: '⭐', words: 'star favorite important pinned' },
+  { emoji: '🔥', words: 'fire hot urgent active' },
+  { emoji: '🧪', words: 'test experiment lab regression' },
+  { emoji: '🚀', words: 'rocket launch shipping release' },
+  { emoji: '🧠', words: 'brain thinking research idea' },
+  { emoji: '🛠️', words: 'tools build fix maintenance' },
+  { emoji: '📚', words: 'docs documentation reading reference' },
+  { emoji: '💬', words: 'chat conversation talk support' },
+  { emoji: '🎯', words: 'target goal focus priority' },
+  { emoji: '✅', words: 'done complete verified check' },
+  { emoji: '⚙️', words: 'settings config runtime system' },
+  { emoji: '🔒', words: 'security private locked auth' },
+  { emoji: '📦', words: 'package release dependency bundle' },
+  { emoji: '🌐', words: 'web browser network internet' },
+  { emoji: '💡', words: 'idea insight note lightbulb' },
+]
+
+function clampPinnedAreaIcon(input: string): string {
+  return clampToFirstGrapheme(input)
+}
 
 interface SidebarInitialSearchState {
   query: string
@@ -68,11 +93,15 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onCloseProcess: (sessionId: string, terminalId: string) => void
-  onPinSession: (id: string) => void
+  onPinSession: (id: string, areaId: string) => void
   onUnpinSession: (id: string) => void
+  onCreatePinnedArea: (icon: string, sessionId: string | null) => void
+  onDeletePinnedArea: (areaId: string) => void
+  onUpdatePinnedAreaIcon: (areaId: string, icon: string) => void
+  onSetPinnedAreaCollapsed: (areaId: string, collapsed: boolean) => void
+  onMovePinnedArea: (areaId: string, direction: 'up' | 'down') => void
   onFlagFollowUp: (id: string) => void
   onUnflagFollowUp: (id: string) => void
-  onSetSessionTags: (id: string, tags: SessionTag[]) => void
   onMovePinnedSession: (id: string, toIndex: number) => void
   onMoveProjectSession: (id: string, toIndex: number) => void
   onClearSessionOrder: (id: string) => void
@@ -170,9 +199,13 @@ export function Sidebar({
   onCloseProcess,
   onPinSession,
   onUnpinSession,
+  onCreatePinnedArea,
+  onDeletePinnedArea,
+  onUpdatePinnedAreaIcon,
+  onSetPinnedAreaCollapsed,
+  onMovePinnedArea,
   onFlagFollowUp,
   onUnflagFollowUp,
-  onSetSessionTags,
   onMovePinnedSession,
   onMoveProjectSession,
   onClearSessionOrder,
@@ -213,16 +246,18 @@ export function Sidebar({
   } | null>(null)
   const [quickCreateMenuPinned, setQuickCreateMenuPinned] = useState(false)
   const [modelMemoryPanelOpen, setModelMemoryPanelOpen] = useState(false)
-  const [tagFilterEmoji, setTagFilterEmoji] = useState<string | null>(null)
-  const [tagFilterMenuOpen, setTagFilterMenuOpen] = useState(false)
-  const [tagPicker, setTagPicker] = useState<{
+  const [pinnedAreaDialog, setPinnedAreaDialog] = useState<{
+    mode: 'create' | 'edit'
+    areaId?: string
+    sessionId?: string | null
+  } | null>(null)
+  const [pinnedAreaIconSearch, setPinnedAreaIconSearch] = useState('')
+  const [pinnedAreaIcon, setPinnedAreaIcon] = useState('⭐')
+  const [confirmDeletePinnedAreaId, setConfirmDeletePinnedAreaId] = useState<string | null>(null)
+  const [pinAreaMenu, setPinAreaMenu] = useState<{
     sessionId: string
     x: number
     y: number
-  } | null>(null)
-  const [confirmRemoveTag, setConfirmRemoveTag] = useState<{
-    sessionId: string
-    tag: SessionTag
   } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -259,69 +294,21 @@ export function Sidebar({
     initialSearchState?.errorMessage ?? null,
   )
   const renameRef = useRef<HTMLInputElement>(null)
+  const pinnedAreaIconInputRef = useRef<HTMLInputElement>(null)
   const searchTimeoutRef = useRef<number | null>(null)
   const searchRequestRef = useRef(0)
 
-  const availableTagEmojis = useMemo(() => {
-    const index = new Map<
-      string,
-      { emoji: string; count: number; names: Set<string> }
-    >()
-
-    for (const session of sessions) {
-      for (const tag of session.sessionTags ?? []) {
-        const entry =
-          index.get(tag.emoji)
-          ?? { emoji: tag.emoji, count: 0, names: new Set<string>() }
-        entry.count += 1
-        if (tag.name) {
-          entry.names.add(tag.name)
-        }
-        index.set(tag.emoji, entry)
-      }
-    }
-
-    return Array.from(index.values())
-  }, [sessions])
-
-  useEffect(() => {
-    if (
-      tagFilterEmoji
-      && !availableTagEmojis.some((entry) => entry.emoji === tagFilterEmoji)
-    ) {
-      setTagFilterEmoji(null)
-    }
-  }, [availableTagEmojis, tagFilterEmoji])
-
-  useEffect(() => {
-    if (availableTagEmojis.length === 0 && tagFilterMenuOpen) {
-      setTagFilterMenuOpen(false)
-    }
-  }, [availableTagEmojis, tagFilterMenuOpen])
-
-  useEffect(() => {
-    if (currentView !== 'chat' && tagFilterMenuOpen) {
-      setTagFilterMenuOpen(false)
-    }
-  }, [currentView, tagFilterMenuOpen])
-
-  const filteredSessions = useMemo(() => {
-    if (!tagFilterEmoji) {
-      return sessions
-    }
-
-    return sessions.filter((session) =>
-      (session.sessionTags ?? []).some((tag) => tag.emoji === tagFilterEmoji),
-    )
-  }, [sessions, tagFilterEmoji])
-
   const sidebarModel = useMemo(
-    () => buildSidebarModel(filteredSessions, sidebarState),
-    [filteredSessions, sidebarState],
+    () => buildSidebarModel(sessions, sidebarState),
+    [sessions, sidebarState],
   )
   const pinnedSessionIds = useMemo(
-    () => new Set(sidebarState.pinnedSessionIds),
-    [sidebarState.pinnedSessionIds],
+    () => new Set((sidebarState.pinnedAreas ?? []).flatMap((area) => area.sessionIds)),
+    [sidebarState.pinnedAreas],
+  )
+  const pinnedAreaDestinations = useMemo(
+    () => getPinnedAreaDestinations(sidebarState.pinnedAreas ?? []),
+    [sidebarState.pinnedAreas],
   )
   const followUpSessionIds = useMemo(
     () => new Set(sidebarState.followUpSessionIds),
@@ -348,6 +335,7 @@ export function Sidebar({
     const handler = () => {
       setContextMenu(null)
       setQuickCreateMenuPinned(false)
+      setPinAreaMenu(null)
     }
     window.addEventListener('click', handler)
     return () => window.removeEventListener('click', handler)
@@ -481,6 +469,61 @@ export function Sidebar({
   const quickCreateMenuClassName = quickCreateMenuPinned
     ? 'pointer-events-auto translate-y-0 opacity-100'
     : 'pointer-events-none translate-y-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'
+  const filteredPinnedAreaEmojis = useMemo(() => {
+    const query = pinnedAreaIconSearch.trim().toLowerCase()
+    if (!query) {
+      return PINNED_AREA_EMOJIS
+    }
+    return PINNED_AREA_EMOJIS.filter((entry) =>
+      entry.emoji.includes(query) || entry.words.includes(query),
+    )
+  }, [pinnedAreaIconSearch])
+
+  const updatePinnedAreaIconDraft = (value: string) => {
+    setPinnedAreaIcon(clampPinnedAreaIcon(value))
+  }
+
+  const openSystemEmojiPanel = () => {
+    pinnedAreaIconInputRef.current?.focus()
+    pinnedAreaIconInputRef.current?.select()
+    void window.gemmaDesktopBridge.system.openEmojiPanel().catch((error) => {
+      console.error('Failed to open emoji picker:', error)
+    })
+  }
+
+  const openCreatePinnedAreaDialog = (sessionId: string | null = null) => {
+    setPinnedAreaDialog({ mode: 'create', sessionId })
+    setPinnedAreaIcon('⭐')
+    setPinnedAreaIconSearch('')
+    setPinAreaMenu(null)
+    setContextMenu(null)
+  }
+
+  const openEditPinnedAreaDialog = (areaId: string, icon: string) => {
+    setPinnedAreaDialog({ mode: 'edit', areaId })
+    setPinnedAreaIcon(clampPinnedAreaIcon(icon))
+    setPinnedAreaIconSearch('')
+    setPinAreaMenu(null)
+    setContextMenu(null)
+  }
+
+  const pinSessionToArea = (sessionId: string, areaId: string) => {
+    onPinSession(sessionId, areaId)
+    setPinAreaMenu(null)
+    setContextMenu(null)
+  }
+
+  const requestPinSession = (sessionId: string, x: number, y: number) => {
+    if (pinnedAreaDestinations.length <= 1) {
+      pinSessionToArea(
+        sessionId,
+        pinnedAreaDestinations[0]?.id ?? DEFAULT_PINNED_AREA_ID,
+      )
+      return
+    }
+    setPinAreaMenu({ sessionId, x, y })
+    setContextMenu(null)
+  }
 
   const startRenamingSession = (session: SessionSummary) => {
     setRenameValue(session.title)
@@ -768,7 +811,6 @@ export function Sidebar({
       !inPinnedSection && session.runningProcesses
         ? session.runningProcesses
         : []
-    const sessionTags = session.sessionTags ?? []
     const projectDropMatch =
       !inPinnedSection
       && projectKey
@@ -965,7 +1007,7 @@ export function Sidebar({
                         if (isPinnedSession) {
                           onUnpinSession(session.id)
                         } else {
-                          onPinSession(session.id)
+                          requestPinSession(session.id, event.clientX, event.clientY)
                         }
                       }}
                       title={isPinnedSession ? 'Unpin conversation' : 'Pin conversation'}
@@ -994,38 +1036,6 @@ export function Sidebar({
             </>
           )}
         </div>
-
-        {sessionTags.length > 0 && (
-          <div
-            className={`relative mt-0.5 flex flex-wrap items-center gap-1 pb-1 ${
-              inPinnedSection ? 'pl-7' : 'pl-9'
-            }`}
-          >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-[18px] top-[-2px] h-2 w-px bg-zinc-300 dark:bg-zinc-700"
-            />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-[18px] top-[6px] h-px w-2 bg-zinc-300 dark:bg-zinc-700"
-            />
-            {sessionTags.map((tag) => (
-              <button
-                type="button"
-                key={tag.id}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setConfirmRemoveTag({ sessionId: session.id, tag })
-                }}
-                title={tag.name ? `${tag.name} - click to remove` : 'Click to remove tag'}
-                aria-label={tag.name ? `Remove tag ${tag.name}` : 'Remove tag'}
-                className="inline-flex h-5 items-center justify-center rounded-full border border-zinc-200 bg-white/80 px-1.5 text-[11px] leading-none text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-              >
-                <span className="leading-none">{tag.emoji}</span>
-              </button>
-            ))}
-          </div>
-        )}
 
         {runningProcesses.length > 0 && (
           <div className="ml-9 mt-1.5 space-y-1.5 pb-1">
@@ -1075,6 +1085,133 @@ export function Sidebar({
       </div>
     )
   }
+
+  const renderPinnedAreas = () => (
+    <section className="mb-4">
+      <div className="group/pinned mb-1 flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+        <Pin size={12} />
+        <span className="min-w-0 flex-1">Pinned</span>
+        <button
+          type="button"
+          onClick={() => openCreatePinnedAreaDialog(null)}
+          className="rounded-md p-1 text-zinc-400 opacity-0 transition-all hover:bg-zinc-200 hover:text-zinc-700 group-hover/pinned:opacity-100 group-focus-within/pinned:opacity-100 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          title="Create pinned area"
+          aria-label="Create pinned area"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+
+      {sidebarModel.pinnedAreas.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-zinc-200/80 px-3 py-3 text-xs text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
+          No pinned areas yet.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {sidebarModel.pinnedAreas.map((area, index) => {
+            const ChevronIcon = area.collapsed ? ChevronRight : ChevronDown
+            const defaultArea = isDefaultPinnedArea(area.id)
+            const previousArea = sidebarModel.pinnedAreas[index - 1]
+            const canMoveUp =
+              !defaultArea
+              && index > 0
+              && !isDefaultPinnedArea(previousArea?.id ?? '')
+            const canMoveDown =
+              !defaultArea
+              && index < sidebarModel.pinnedAreas.length - 1
+
+            return (
+              <div
+                key={area.id}
+                className="rounded-xl border border-zinc-200/70 bg-white/45 p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/30"
+              >
+                <div className="group/area flex items-center gap-1.5 rounded-lg px-1.5 py-1">
+                  <button
+                    type="button"
+                    onClick={() => onSetPinnedAreaCollapsed(area.id, !area.collapsed)}
+                    className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                    title={area.collapsed ? 'Expand pinned area' : 'Collapse pinned area'}
+                    aria-label={area.collapsed ? 'Expand pinned area' : 'Collapse pinned area'}
+                  >
+                    <ChevronIcon size={13} />
+                  </button>
+                  {defaultArea ? (
+                    <span
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-base"
+                      title="Default pinned area"
+                      role="img"
+                      aria-label="Default pinned area"
+                    >
+                      {area.icon}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openEditPinnedAreaDialog(area.id, area.icon)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-base transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                      title="Change pinned area icon"
+                      aria-label="Change pinned area icon"
+                    >
+                      {area.icon}
+                    </button>
+                  )}
+                  <span className="min-w-0 flex-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    {area.sessions.length}
+                  </span>
+                  {!defaultArea && (
+                    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/area:opacity-100 group-focus-within/area:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => onMovePinnedArea(area.id, 'up')}
+                        disabled={!canMoveUp}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        title="Move pinned area up"
+                        aria-label="Move pinned area up"
+                      >
+                        <ChevronDown size={12} className="rotate-180" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onMovePinnedArea(area.id, 'down')}
+                        disabled={!canMoveDown}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        title="Move pinned area down"
+                        aria-label="Move pinned area down"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePinnedAreaId(area.id)}
+                        className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                        title="Delete pinned area"
+                        aria-label="Delete pinned area"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {!area.collapsed && (
+                  <div className="mt-0.5 space-y-0.5">
+                    {area.sessions.length > 0 ? (
+                      area.sessions.map((session) =>
+                        renderSessionRow(session, { inPinnedSection: true }),
+                      )
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-zinc-400 dark:text-zinc-500">
+                        Empty
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
 
   const renderProjectGroup = (group: SessionProjectGroup) => {
     const projectBusy = group.sessions.some(
@@ -1366,21 +1503,6 @@ export function Sidebar({
                   size={13}
                   className="flex-shrink-0 text-zinc-400 dark:text-zinc-500"
                 />
-                {tagFilterEmoji && (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setTagFilterEmoji(null)
-                    }}
-                    title="Clear tag filter"
-                    aria-label="Clear tag filter"
-                    className="inline-flex h-5 flex-shrink-0 items-center gap-1 rounded-full bg-sky-500/15 px-1.5 text-[11px] leading-none text-sky-700 transition-colors hover:bg-sky-500/25 dark:text-sky-300"
-                  >
-                    <span className="leading-none">{tagFilterEmoji}</span>
-                    <X size={9} aria-hidden="true" />
-                  </button>
-                )}
                 <input
                   id="sidebar-session-search"
                   value={searchQuery}
@@ -1391,7 +1513,7 @@ export function Sidebar({
                       clearSearch()
                     }
                   }}
-                  placeholder={tagFilterEmoji ? 'Filtered' : 'Search'}
+                  placeholder="Search"
                   className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 />
                 {searchStatus === 'searching' ? (
@@ -1410,89 +1532,7 @@ export function Sidebar({
                     <X size={12} />
                   </button>
                 ) : null}
-                {availableTagEmojis.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setTagFilterMenuOpen((open) => !open)
-                    }}
-                    aria-expanded={tagFilterMenuOpen}
-                    aria-haspopup="menu"
-                    title={tagFilterEmoji ? 'Change tag filter' : 'Filter by tag'}
-                    aria-label={tagFilterEmoji ? 'Change tag filter' : 'Filter by tag'}
-                    className={`rounded-full p-1 transition-colors ${
-                      tagFilterEmoji || tagFilterMenuOpen
-                        ? 'text-sky-600 hover:bg-sky-500/10 dark:text-sky-300'
-                        : 'text-zinc-400 hover:bg-zinc-900/10 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/10 dark:hover:text-zinc-200'
-                    }`}
-                  >
-                    <SlidersHorizontal size={12} />
-                  </button>
-                )}
               </div>
-
-              {tagFilterMenuOpen && availableTagEmojis.length > 0 && (
-                <div
-                  role="menu"
-                  aria-label="Filter by tag"
-                  className="mt-2 rounded-xl border border-zinc-200/80 bg-white/95 p-1.5 shadow-[0_18px_40px_-28px_rgba(24,24,27,0.45)] backdrop-blur dark:border-zinc-700/80 dark:bg-zinc-900/95"
-                >
-                  <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-0.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-                      Filter by tag
-                    </span>
-                    {tagFilterEmoji && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTagFilterEmoji(null)
-                        }}
-                        className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1 px-1 pb-1">
-                    {availableTagEmojis.map((entry) => {
-                      const isActive = tagFilterEmoji === entry.emoji
-                      const namesList = Array.from(entry.names)
-                      const tooltipPrefix = namesList.length > 0
-                        ? namesList.join(', ')
-                        : entry.emoji
-                      const tooltip = entry.count > 1
-                        ? `${tooltipPrefix} (${entry.count})`
-                        : tooltipPrefix
-
-                      return (
-                        <button
-                          type="button"
-                          key={entry.emoji}
-                          role="menuitemcheckbox"
-                          aria-checked={isActive}
-                          onClick={() => {
-                            setTagFilterEmoji(isActive ? null : entry.emoji)
-                            setTagFilterMenuOpen(false)
-                          }}
-                          title={tooltip}
-                          aria-label={tooltip}
-                          className={`inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] leading-none transition-colors ${
-                            isActive
-                              ? 'border-sky-300 bg-sky-50 text-sky-800 shadow-sm dark:border-sky-500/40 dark:bg-sky-500/15 dark:text-sky-200'
-                              : 'border-transparent bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
-                          }`}
-                        >
-                          <span className="leading-none">{entry.emoji}</span>
-                          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                            {entry.count}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         ) : (
@@ -1514,29 +1554,14 @@ export function Sidebar({
         {currentView === 'chat' ? (
           hasActiveSearch ? renderSearchResults() : (
           <>
-            {sidebarModel.pinnedSessions.length > 0 && (
-              <section className="mb-4">
-                <div className="mb-1 flex items-center gap-2 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
-                  <Pin size={12} />
-                  <span className="min-w-0 flex-1">Pinned</span>
-                </div>
-                <div className="space-y-0.5">
-                  {sidebarModel.pinnedSessions.map((session) =>
-                    renderSessionRow(session, { inPinnedSection: true }),
-                  )}
-                </div>
-              </section>
-            )}
+            {renderPinnedAreas()}
 
             {sidebarModel.projectGroups.map((group) => renderProjectGroup(group))}
 
-            {sidebarModel.pinnedSessions.length === 0
-              && sidebarModel.projectGroups.length === 0 && (
+            {sidebarModel.projectGroups.length === 0 && (
               <div className="px-3 py-8 text-center text-sm text-zinc-400">
                 {sessions.length === 0
                   ? 'No conversations yet.'
-                  : tagFilterEmoji
-                    ? `No conversations tagged ${tagFilterEmoji}.`
                   : 'No open projects. Use New project to reopen a folder or start a new one.'}
               </div>
             )}
@@ -1790,7 +1815,8 @@ export function Sidebar({
               if (contextSessionPinned) {
                 onUnpinSession(contextSession.id)
               } else {
-                onPinSession(contextSession.id)
+                requestPinSession(contextSession.id, contextMenu.x, contextMenu.y)
+                return
               }
               setContextMenu(null)
             }}
@@ -1816,24 +1842,6 @@ export function Sidebar({
           >
             <Flag size={14} />
             {contextSessionFollowUp ? 'Remove follow-up' : 'Follow up'}
-          </button>
-          <button
-            onClick={() => {
-              if (!contextSession) {
-                return
-              }
-
-              setTagPicker({
-                sessionId: contextSession.id,
-                x: contextMenu.x,
-                y: contextMenu.y,
-              })
-              setContextMenu(null)
-            }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            <TagIcon size={14} />
-            Add tag
           </button>
           <button
             onClick={() => {
@@ -1899,7 +1907,7 @@ export function Sidebar({
               Close project folder?
             </h3>
             <p className="mt-1.5 text-xs text-zinc-500">
-              This will hide &ldquo;{confirmCloseProject.name}&rdquo; from the sidebar. Its chats stay on disk, and any pinned chats from this project will be removed from the pinned list until you reopen the folder.
+              This will hide &ldquo;{confirmCloseProject.name}&rdquo; from the sidebar. Its chats stay on disk, and any pinned chats from this project will be removed from pinned areas until you reopen the folder.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -1922,56 +1930,157 @@ export function Sidebar({
         </div>
       )}
 
-      {tagPicker && (() => {
-        const pickerSession = sessions.find((entry) => entry.id === tagPicker.sessionId) ?? null
-        if (!pickerSession) {
-          return null
-        }
-        const existingTags = pickerSession.sessionTags ?? []
-        return (
-          <SessionTagPicker
-            existingTags={existingTags}
-            anchorX={tagPicker.x}
-            anchorY={tagPicker.y}
-            onClose={() => setTagPicker(null)}
-            onSave={(tag) => {
-              const nextTags = [...existingTags, tag]
-              onSetSessionTags(pickerSession.id, nextTags)
-              setTagPicker(null)
-            }}
-          />
-        )
-      })()}
+      {pinAreaMenu && (
+        <div
+          className="fixed z-50 min-w-[180px] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          style={{ left: pinAreaMenu.x, top: pinAreaMenu.y }}
+          role="menu"
+          aria-label="Pin conversation to area"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {pinnedAreaDestinations.map((area) => (
+            <button
+              key={area.id}
+              type="button"
+              onClick={() => pinSessionToArea(pinAreaMenu.sessionId, area.id)}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              role="menuitem"
+            >
+              <span className="w-5 text-center leading-none">{area.icon}</span>
+              <span className="flex-1">
+                {isDefaultPinnedArea(area.id) ? 'Default' : 'Pin here'}
+              </span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => openCreatePinnedAreaDialog(pinAreaMenu.sessionId)}
+            className="mt-1 flex w-full items-center gap-2 border-t border-zinc-100 px-3 py-1.5 pt-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            role="menuitem"
+          >
+            <Plus size={14} />
+            New pinned area
+          </button>
+        </div>
+      )}
 
-      {confirmRemoveTag && (
+      {pinnedAreaDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-80 rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="w-[22rem] rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
             <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-              Remove tag?
+              {pinnedAreaDialog.mode === 'create' ? 'Create pinned area' : 'Change pinned area icon'}
             </h3>
-            <p className="mt-1.5 text-xs text-zinc-500">
-              Remove {confirmRemoveTag.tag.emoji}
-              {confirmRemoveTag.tag.name ? ` ${confirmRemoveTag.tag.name}` : ''} from this conversation?
-            </p>
+            <div className="mt-4">
+              <div className="flex items-center gap-2">
+                <label htmlFor="pinned-area-icon-value" className="sr-only">
+                  Pinned area icon
+                </label>
+                <input
+                  ref={pinnedAreaIconInputRef}
+                  id="pinned-area-icon-value"
+                  value={pinnedAreaIcon}
+                  onChange={(event) => updatePinnedAreaIconDraft(event.target.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="h-10 w-12 rounded-lg border border-zinc-200 bg-zinc-50 text-center text-xl leading-none text-zinc-900 outline-none focus:border-sky-300 focus:ring-1 focus:ring-sky-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-sky-500/60 dark:focus:ring-sky-500/30"
+                  aria-label="Pinned area icon"
+                />
+                <button
+                  type="button"
+                  onClick={openSystemEmojiPanel}
+                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:border-sky-500/35 dark:hover:bg-sky-500/15 dark:hover:text-sky-300"
+                  title="Open macOS emoji picker"
+                  aria-label="Open macOS emoji picker"
+                >
+                  <SmilePlus size={16} />
+                </button>
+                <label htmlFor="pinned-area-icon-search" className="sr-only">
+                  Search quick picks
+                </label>
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                  <Search size={14} className="flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+                  <input
+                    id="pinned-area-icon-search"
+                    value={pinnedAreaIconSearch}
+                    onChange={(event) => setPinnedAreaIconSearch(event.target.value)}
+                    placeholder="Search quick picks"
+                    className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  />
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-8 gap-1">
+                {filteredPinnedAreaEmojis.map((entry) => (
+                  <button
+                    key={entry.emoji}
+                    type="button"
+                    onClick={() => setPinnedAreaIcon(entry.emoji)}
+                    className={`flex h-8 items-center justify-center rounded-lg text-lg transition-colors ${
+                      pinnedAreaIcon === entry.emoji
+                        ? 'bg-sky-100 ring-1 ring-sky-300 dark:bg-sky-500/20 dark:ring-sky-500/50'
+                        : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                    }`}
+                    title={entry.words}
+                    aria-label={`Use ${entry.emoji}`}
+                  >
+                    {entry.emoji}
+                  </button>
+                ))}
+              </div>
+              {pinnedAreaIconSearch.trim() && filteredPinnedAreaEmojis.length === 0 && (
+                <div className="mt-3 text-xs text-zinc-500">
+                  No matching icons.
+                </div>
+              )}
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                onClick={() => setConfirmRemoveTag(null)}
+                onClick={() => setPinnedAreaDialog(null)}
                 className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
                 Cancel
               </button>
               <button
                 onClick={() => {
-                  const { sessionId, tag } = confirmRemoveTag
-                  const targetSession = sessions.find((entry) => entry.id === sessionId)
-                  const existingTags = targetSession?.sessionTags ?? []
-                  const nextTags = existingTags.filter((entry) => entry.id !== tag.id)
-                  onSetSessionTags(sessionId, nextTags)
-                  setConfirmRemoveTag(null)
+                  const icon = clampPinnedAreaIcon(pinnedAreaIcon)
+                  if (pinnedAreaDialog.mode === 'create') {
+                    onCreatePinnedArea(icon, pinnedAreaDialog.sessionId ?? null)
+                  } else if (pinnedAreaDialog.areaId) {
+                    onUpdatePinnedAreaIcon(pinnedAreaDialog.areaId, icon)
+                  }
+                  setPinnedAreaDialog(null)
+                }}
+                className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeletePinnedAreaId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-80 rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+              Delete pinned area?
+            </h3>
+            <p className="mt-1.5 text-xs text-zinc-500">
+              Conversations in this area will be unpinned, but the conversations themselves stay untouched.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeletePinnedAreaId(null)}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDeletePinnedArea(confirmDeletePinnedAreaId)
+                  setConfirmDeletePinnedAreaId(null)
                 }}
                 className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
               >
-                Remove
+                Delete
               </button>
             </div>
           </div>

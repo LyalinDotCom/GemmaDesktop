@@ -16,6 +16,7 @@ const BASE_BOOTSTRAP: BootstrapState = {
   helperModelId: 'gemma4:e2b',
   helperRuntimeId: 'ollama-native',
   requiredPrimaryModelIds: ['gemma4:26b'],
+  modelAvailabilityIssues: [],
   updatedAt: 0,
 }
 
@@ -202,6 +203,37 @@ describe('StartupLoadingOverlay', () => {
     expect(markup).toContain('Gemma Desktop needs attention')
     expect(markup).toContain('LM Studio is offline')
     expect(markup).toContain('1 of 1 ready')
+    expect(markup).toContain('data-task-status="warning"')
+  })
+
+  it('shows a clear startup warning when a selected primary model cannot load', () => {
+    const message =
+      'oMLX could not load gemma-4-26b-a4b-it-nvfp4. Reason: Model not loaded: gemma-4-26b-a4b-it-nvfp4. Chats using omlx-openai / gemma-4-26b-a4b-it-nvfp4 are paused until you switch them to another model or restart after the model is available.'
+    const markup = renderToStaticMarkup(
+      createElement(StartupLoadingOverlay, {
+        bootstrap: {
+          ...READY_BOOTSTRAP,
+          status: 'warning',
+          message,
+          modelAvailabilityIssues: [{
+            modelId: 'gemma-4-26b-a4b-it-nvfp4',
+            runtimeId: 'omlx-openai',
+            message,
+            detectedAt: 1,
+            source: 'startup',
+          }],
+        },
+        readAloudEnabled: false,
+        readAloudStatus: null,
+        dismissed: false,
+        onDismiss: () => {},
+        onRetryBootstrap: () => {},
+      }),
+    )
+
+    expect(markup).toContain('Gemma Desktop needs attention')
+    expect(markup).toContain('oMLX could not load gemma-4-26b-a4b-it-nvfp4')
+    expect(markup).toContain('Chats using omlx-openai / gemma-4-26b-a4b-it-nvfp4 are paused')
     expect(markup).toContain('data-task-status="warning"')
   })
 })

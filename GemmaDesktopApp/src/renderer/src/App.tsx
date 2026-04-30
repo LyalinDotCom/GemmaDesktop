@@ -35,6 +35,7 @@ import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
   AppSettings,
+  BootstrapState,
   FileAttachment,
   MessageContent,
   ProjectBrowserState,
@@ -104,6 +105,7 @@ import {
   type ConversationExecutionRun,
 } from '@shared/conversationExecutionPolicy'
 import { createDefaultModelSelectionSettings } from '@shared/sessionModelDefaults'
+import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 
 const DEFAULT_NOTIFICATION_PERMISSION_STATE: NotificationPermissionState = {
   status: 'default',
@@ -285,6 +287,21 @@ function findLatestNewAssistantText(
   return null
 }
 
+function findBootstrapModelAvailabilityIssue(
+  bootstrap: BootstrapState,
+  target: { modelId: string; runtimeId: string } | null | undefined,
+): string | null {
+  if (!target) {
+    return null
+  }
+
+  return bootstrap.modelAvailabilityIssues.find(
+    (issue) =>
+      issue.modelId === target.modelId
+      && issue.runtimeId === target.runtimeId,
+  )?.message ?? null
+}
+
 export function App() {
   const [startupRiskAccepted, setStartupRiskAccepted] = useState(false)
   const [startupOverlayDismissed, setStartupOverlayDismissed] = useState(false)
@@ -344,6 +361,7 @@ export function App() {
   const projectBrowserOpenRef = useRef(false)
   const projectBrowserCoBrowseActiveRef = useRef(false)
   const drainingGlobalQueuedMessagesRef = useRef(new Set<string>())
+  const startupAttentionKeyRef = useRef<string | null>(null)
   const {
     state,
     dispatch,
@@ -362,10 +380,14 @@ export function App() {
     installSkill,
     removeSkill,
     pinSession,
+    createPinnedArea,
+    deletePinnedArea,
+    updatePinnedAreaIcon,
+    setPinnedAreaCollapsed,
+    movePinnedArea,
     unpinSession,
     flagFollowUp,
     unflagFollowUp,
-    setSessionTags,
     movePinnedSession,
     setSessionOrder,
     clearSessionOrder,
@@ -483,6 +505,19 @@ export function App() {
       })
     }
 
+    for (const automation of state.automations) {
+      if (automation.lastRunStatus !== 'running') {
+        continue
+      }
+
+      const sessionId = `automation:${automation.id}`
+      runs.set(sessionId, {
+        sessionId,
+        task: 'automation',
+        title: automation.name,
+      })
+    }
+
     return [...runs.values()]
   }, [
     globalChatBusy,
@@ -493,6 +528,7 @@ export function App() {
     state.activeSession,
     state.isCompacting,
     state.isGenerating,
+    state.automations,
     state.sessions,
   ])
 
@@ -509,20 +545,56 @@ export function App() {
     return () => window.clearInterval(interval)
   }, [globalChatBusy])
 
+  useEffect(() => {
+    const bootstrap = state.bootstrapState
+    const attentionKey =
+      bootstrap.status === 'warning' || bootstrap.status === 'error'
+        ? `${bootstrap.status}:${bootstrap.message}:${bootstrap.error ?? ''}`
+        : null
+
+    if (!attentionKey) {
+      startupAttentionKeyRef.current = null
+      return
+    }
+
+    if (startupAttentionKeyRef.current !== attentionKey) {
+      startupAttentionKeyRef.current = attentionKey
+      setStartupOverlayDismissed(false)
+    }
+  }, [
+    state.bootstrapState.error,
+    state.bootstrapState.message,
+    state.bootstrapState.status,
+  ])
+
   const newConversationRunDisabledReason = activeConversationRuns[0]
     ? formatConversationExecutionBlockedReason(activeConversationRuns[0])
     : null
+  const activeModelUnavailableReason = findBootstrapModelAvailabilityIssue(
+    state.bootstrapState,
+    state.activeSession,
+  )
+  const globalModelUnavailableReason = findBootstrapModelAvailabilityIssue(
+    state.bootstrapState,
+    globalChatDetail,
+  )
   const primaryConversationBlocker = state.activeSessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
       state.activeSessionId,
     )
     : null
+  const primaryConversationBlockerReason = primaryConversationBlocker
+    ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
+    : null
   const globalConversationBlocker = globalChatSession.sessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
       globalChatSession.sessionId,
     )
+    : null
+  const globalConversationBlockerReason = globalConversationBlocker
+    ? formatConversationExecutionBlockedReason(globalConversationBlocker)
     : null
   const primaryCoBrowseUserControlDisabledReason =
     getCoBrowseUserControlComposerLockReason({
@@ -533,9 +605,12 @@ export function App() {
       targetSessionId: state.activeSessionId,
     })
   const primaryConversationRunDisabledReason = primaryCoBrowseUserControlDisabledReason
-    ?? (primaryConversationBlocker
-      ? formatConversationExecutionBlockedReason(primaryConversationBlocker)
-      : null)
+    ?? activeModelUnavailableReason
+    ?? primaryConversationBlockerReason
+  const primaryModelSelectionDisabled =
+    isBusy
+    || Boolean(primaryCoBrowseUserControlDisabledReason)
+    || Boolean(primaryConversationBlockerReason)
   const globalCoBrowseUserControlDisabledReason =
     getCoBrowseUserControlComposerLockReason({
       coBrowseActive,
@@ -545,9 +620,12 @@ export function App() {
       targetSessionId: globalChatSession.sessionId,
     })
   const globalConversationRunDisabledReason = globalCoBrowseUserControlDisabledReason
-    ?? (globalConversationBlocker
-      ? formatConversationExecutionBlockedReason(globalConversationBlocker)
-      : null)
+    ?? globalModelUnavailableReason
+    ?? globalConversationBlockerReason
+  const globalModelSelectionDisabled =
+    globalChatBusy
+    || Boolean(globalCoBrowseUserControlDisabledReason)
+    || Boolean(globalConversationBlockerReason)
   const primaryCoBrowseBusyQueueDisabledReason =
     coBrowseActive
     && state.activeSessionId != null
@@ -1157,8 +1235,7 @@ export function App() {
   }) => {
     const sessionId = globalChatSession.sessionId
     if (
-      globalChatBusy
-      || globalConversationRunDisabledReason
+      globalModelSelectionDisabled
       || !sessionId
       || !globalChatDetail
       || globalChatDetail.conversationKind !== 'normal'
@@ -1185,6 +1262,37 @@ export function App() {
     })().catch((error) => {
       console.error('Failed to update Assistant Chat model:', error)
     })
+  }, [
+    globalModelSelectionDisabled,
+    globalChatDetail,
+    globalChatSession,
+    refreshSessionSummaries,
+  ])
+
+  const handleSelectGlobalChatApprovalMode = useCallback((approvalMode: ConversationApprovalMode) => {
+    const sessionId = globalChatSession.sessionId
+    if (
+      globalChatBusy
+      || globalConversationRunDisabledReason
+      || !sessionId
+      || !globalChatDetail
+      || globalChatDetail.conversationKind !== 'normal'
+      || globalChatDetail.approvalMode === approvalMode
+    ) {
+      return
+    }
+
+    void window.gemmaDesktopBridge.sessions
+      .update(sessionId, {
+        approvalMode,
+      })
+      .then(async () => {
+        await globalChatSession.retry()
+        await refreshSessionSummaries()
+      })
+      .catch((error) => {
+        console.error('Failed to update Assistant Chat approval mode:', error)
+      })
   }, [
     globalChatBusy,
     globalConversationRunDisabledReason,
@@ -1255,8 +1363,7 @@ export function App() {
     const activeSession = state.activeSession
 
     if (
-      isBusy
-      || primaryConversationRunDisabledReason
+      primaryModelSelectionDisabled
       || !sessionId
       || !activeSession
       || activeConversationKind !== 'normal'
@@ -1275,6 +1382,27 @@ export function App() {
       await switchActiveSessionModel(selection)
     })().catch((error) => {
       console.error('Failed to update conversation model:', error)
+    })
+  }
+  const handleSelectConversationApprovalMode = (approvalMode: ConversationApprovalMode) => {
+    const sessionId = state.activeSessionId
+    const activeSession = state.activeSession
+
+    if (
+      isBusy
+      || primaryConversationRunDisabledReason
+      || !sessionId
+      || !activeSession
+      || activeConversationKind !== 'normal'
+      || activeSession.approvalMode === approvalMode
+    ) {
+      return
+    }
+
+    updateSession(sessionId, {
+      approvalMode,
+    }).catch((error) => {
+      console.error('Failed to update conversation approval mode:', error)
     })
   }
   const sessionContext = {
@@ -1824,6 +1952,7 @@ export function App() {
           pendingCompaction={state.pendingCompaction}
           pendingToolApproval={state.pendingToolApproval}
           autoExpandActiveBlocks={false}
+          latestAssistantFallbackPrimaryModelId={state.activeSession?.modelId ?? null}
           topPaddingClass="pt-16"
           contentLayout={mainChatContentLayout}
         />
@@ -2228,9 +2357,12 @@ export function App() {
       selectedMode={activeMode}
       conversationKind={state.activeSession.conversationKind}
       planMode={activePlanMode}
+      approvalMode={state.activeSession.approvalMode}
       onSelectConversationMode={handleSelectConversationMode}
+      onSelectApprovalMode={handleSelectConversationApprovalMode}
       onSelectModel={handleSelectConversationModel}
       modeChangeDisabled={isBusy || !state.activeSessionId}
+      modelSelectionDisabled={primaryModelSelectionDisabled}
       conversationRunDisabledReason={primaryConversationRunDisabledReason}
       busyQueueDisabledReason={primaryCoBrowseBusyQueueDisabledReason}
       messages={state.activeSession.messages}
@@ -2348,9 +2480,12 @@ export function App() {
       selectedMode={globalChatMode}
       conversationKind={globalChatDetail.conversationKind}
       planMode={globalChatPlanMode}
+      approvalMode={globalChatDetail.approvalMode}
       onSelectConversationMode={handleSelectGlobalChatMode}
+      onSelectApprovalMode={handleSelectGlobalChatApprovalMode}
       onSelectModel={handleSelectGlobalChatModel}
       modeChangeDisabled={globalChatBusy || !globalChatSession.sessionId}
+      modelSelectionDisabled={globalModelSelectionDisabled}
       conversationRunDisabledReason={globalConversationRunDisabledReason}
       busyQueueDisabledReason={globalCoBrowseBusyQueueDisabledReason}
       messages={globalChatDetail.messages}
@@ -2593,8 +2728,23 @@ export function App() {
           onDeleteSession={deleteSession}
           onRenameSession={renameSession}
           onCloseProcess={handleCloseBackgroundProcess}
-          onPinSession={(sessionId) => {
-            void pinSession(sessionId)
+          onPinSession={(sessionId, areaId) => {
+            void pinSession(sessionId, areaId)
+          }}
+          onCreatePinnedArea={(icon, sessionId) => {
+            void createPinnedArea(icon, sessionId)
+          }}
+          onDeletePinnedArea={(areaId) => {
+            void deletePinnedArea(areaId)
+          }}
+          onUpdatePinnedAreaIcon={(areaId, icon) => {
+            void updatePinnedAreaIcon(areaId, icon)
+          }}
+          onSetPinnedAreaCollapsed={(areaId, collapsed) => {
+            void setPinnedAreaCollapsed(areaId, collapsed)
+          }}
+          onMovePinnedArea={(areaId, direction) => {
+            void movePinnedArea(areaId, direction)
           }}
           onUnpinSession={(sessionId) => {
             void unpinSession(sessionId)
@@ -2604,9 +2754,6 @@ export function App() {
           }}
           onUnflagFollowUp={(sessionId) => {
             void unflagFollowUp(sessionId)
-          }}
-          onSetSessionTags={(sessionId, tags) => {
-            void setSessionTags(sessionId, tags)
           }}
           onMovePinnedSession={(sessionId, toIndex) => {
             void movePinnedSession(sessionId, toIndex)

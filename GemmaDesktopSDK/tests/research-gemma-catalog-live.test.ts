@@ -3,19 +3,38 @@ import path from "node:path";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createGemmaDesktop, type ResearchRunStatus } from "@gemma-desktop/sdk-node";
-import { withLoadedLiveOllamaModel } from "./helpers/ollama-live.js";
+import {
+  createLiveRuntimeAdapters,
+  withLiveRuntimeModel,
+} from "./helpers/ollama-live.js";
 
 const GEMMA_CATALOG_PROMPT =
   "I'd like you to research all the versions of Gemma models available and report back a summary of the models, types, sources";
 
 const itIfLive = process.env.GEMMA_DESKTOP_RUN_LIVE_RESEARCH === "1" ? it : it.skip;
 
+function configuredEnvValue(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function resolveConfiguredRuntime(): string {
-  return process.env.GEMMA_DESKTOP_RESEARCH_RUNTIME_ID?.trim() || "ollama-native";
+  return configuredEnvValue(
+    "GEMMA_DESKTOP_RESEARCH_RUNTIME_ID",
+    "GEMMA_DESKTOP_LIVE_RUNTIME_ID",
+  ) ?? "ollama-native";
 }
 
 function resolveConfiguredModel(): string {
-  return process.env.GEMMA_DESKTOP_RESEARCH_MODEL_ID?.trim() || "gemma4:31b";
+  return configuredEnvValue(
+    "GEMMA_DESKTOP_RESEARCH_MODEL_ID",
+    "GEMMA_DESKTOP_LIVE_MODEL_ID",
+  ) ?? "gemma4:31b";
 }
 
 describe.sequential("live gemma catalog research", () => {
@@ -24,19 +43,16 @@ describe.sequential("live gemma catalog research", () => {
     async () => {
       const runtimeId = resolveConfiguredRuntime();
       const modelId = resolveConfiguredModel();
+      const adapters = createLiveRuntimeAdapters();
 
-      expect(
-        runtimeId.startsWith("ollama"),
-        `Live Ollama research suites only support Ollama runtimes so model cleanup can be enforced. Received "${runtimeId}".`,
-      ).toBe(true);
-
-      await withLoadedLiveOllamaModel({ modelId }, async () => {
+      await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const workingDirectory = await mkdtemp(
           path.join(os.tmpdir(), "gemma-desktop-live-gemma-catalog-"),
         );
 
         const gemmaDesktop = await createGemmaDesktop({
           workingDirectory,
+          adapters,
         });
         const environment = await gemmaDesktop.inspectEnvironment();
         const runtime = environment.runtimes.find(

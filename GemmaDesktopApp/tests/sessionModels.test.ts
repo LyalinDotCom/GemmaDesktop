@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSessionModelContextLength } from '../src/renderer/src/lib/sessionModels'
+import { buildSelectableModels, resolveSessionModelContextLength } from '../src/renderer/src/lib/sessionModels'
 import type { ModelSummary } from '../src/renderer/src/types'
 
 function makeModel(
@@ -59,5 +59,28 @@ describe('resolveSessionModelContextLength', () => {
         runtimeId: 'ollama-openai',
       }),
     ).toBe(65_536)
+  })
+})
+
+describe('buildSelectableModels', () => {
+  it('carries optimization tags across same-family runtime variants', () => {
+    const models: ModelSummary[] = [
+      makeModel({
+        id: 'minimax-m2.7-ram-90gb-mlx',
+        runtimeId: 'lmstudio-openai',
+      }),
+      makeModel({
+        id: 'minimax-m2.7-ram-90gb-mlx',
+        runtimeId: 'lmstudio-native',
+        optimizationTags: ['MLX'],
+      }),
+    ]
+
+    expect(buildSelectableModels(models, 'build')).toContainEqual(
+      expect.objectContaining({
+        id: 'minimax-m2.7-ram-90gb-mlx',
+        optimizationTags: ['MLX'],
+      }),
+    )
   })
 })

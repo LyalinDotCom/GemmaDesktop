@@ -12,6 +12,7 @@ import {
 import type { AppSettings, BootstrapState, ModelSummary } from '../src/renderer/src/types'
 import { getDefaultLmStudioSettings } from '../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../src/shared/ollamaRuntimeConfig'
+import { getDefaultOmlxSettings } from '../src/shared/omlxRuntimeConfig'
 import { getDefaultReasoningSettings } from '../src/shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '../src/shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../src/shared/geminiModels'
@@ -61,6 +62,7 @@ function makeSettings(): AppSettings {
     reasoning: getDefaultReasoningSettings(),
     ollama: getDefaultOllamaSettings(),
     lmstudio: getDefaultLmStudioSettings(),
+    omlx: getDefaultOmlxSettings(),
     ambientEffects: {
       enabled: true,
     },
@@ -123,6 +125,7 @@ const bootstrapState: BootstrapState = {
   helperModelId: 'gemma4:e2b',
   helperRuntimeId: 'ollama-native',
   requiredPrimaryModelIds: ['gemma4:26b'],
+  modelAvailabilityIssues: [],
   updatedAt: 0,
 }
 
@@ -170,6 +173,7 @@ function modelOption(
   runtimeId: string,
   providerLabel: string,
   apiTypeLabel: string,
+  optimizationTags?: string[],
 ): DefaultModelOption {
   return {
     modelId,
@@ -177,6 +181,7 @@ function modelOption(
     label,
     providerLabel,
     apiTypeLabel,
+    optimizationTags,
   }
 }
 
@@ -240,7 +245,7 @@ describe('SettingsModal layout', () => {
 
   it('opens default model pickers as bounded searchable lists', () => {
     const groups = groupDefaultModelOptions([
-      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API', ['MLX']),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
     ])
     const markup = renderToStaticMarkup(
@@ -261,6 +266,7 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('max-h-64 overflow-y-auto overscroll-contain')
     expect(markup).toContain('LM Studio')
     expect(markup).toContain('Alpha 7B')
+    expect(markup).toContain('MLX optimized')
   })
 
   it('does not expose reasoning-off controls on Ollama model cards', () => {

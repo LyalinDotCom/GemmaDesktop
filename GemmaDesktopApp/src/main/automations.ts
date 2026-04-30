@@ -83,6 +83,56 @@ function normalizeRunRecord(run: AutomationRunRecord): AutomationRunRecord {
   }
 }
 
+function createInterruptedRunLogEntry(): AutomationLogEntry {
+  return {
+    id: randomUUID(),
+    timestamp: Date.now(),
+    layer: 'automation',
+    event: 'automation.interrupted',
+    summary: 'Run was interrupted before Gemma Desktop finished it.',
+    data: {
+      reason: 'app_shutdown_or_crash',
+    },
+  }
+}
+
+function recoverInterruptedRuns(record: AutomationRecord): {
+  record: AutomationRecord
+  changed: boolean
+} {
+  let changed = false
+  const runs = record.runs.map((run) => {
+    if (run.status !== 'running') {
+      return run
+    }
+
+    changed = true
+    return {
+      ...run,
+      status: 'cancelled' as const,
+      finishedAt: run.finishedAt ?? Date.now(),
+      summary: 'Run interrupted before completion',
+      errorMessage: 'Gemma Desktop stopped before this automation finished.',
+      logs: [...run.logs, createInterruptedRunLogEntry()].slice(-MAX_LOGS_PER_RUN),
+    }
+  })
+
+  if (!changed) {
+    return { record, changed: false }
+  }
+
+  return {
+    changed: true,
+    record: {
+      ...record,
+      runs,
+      lastRunStatus: record.lastRunStatus === 'running'
+        ? 'cancelled'
+        : record.lastRunStatus,
+    },
+  }
+}
+
 function normalizeAutomationRecord(record: AutomationRecord): AutomationRecord {
   return {
     ...record,
@@ -159,8 +209,12 @@ export class AutomationStore {
 
       try {
         const raw = await fs.readFile(path.join(this.dir, file), 'utf8')
-        const record = normalizeAutomationRecord(JSON.parse(raw) as AutomationRecord)
-        this.records.set(record.id, record)
+        const normalized = normalizeAutomationRecord(JSON.parse(raw) as AutomationRecord)
+        const recovered = recoverInterruptedRuns(normalized)
+        this.records.set(recovered.record.id, recovered.record)
+        if (recovered.changed) {
+          await this.save(recovered.record)
+        }
       } catch {
         continue
       }

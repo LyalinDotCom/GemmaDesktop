@@ -9,7 +9,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import type { ToolExecutionContext } from "@gemma-desktop/sdk-core";
-import { createHostTools } from "@gemma-desktop/sdk-tools";
+import { runShellCommand } from "@gemma-desktop/sdk-core";
+import { createHostTools, ToolRegistry, ToolRuntime } from "@gemma-desktop/sdk-tools";
 
 describe("host tools", () => {
   const tempDirectories: string[] = [];
@@ -36,6 +37,29 @@ describe("host tools", () => {
       throw new Error(`Tool ${name} is not registered.`);
     }
     return tool;
+  }
+
+  function createToolRuntime(options?: {
+    allowWorkspaceEscape?: boolean;
+    onWorkspaceEscape?: (details: unknown) => void;
+  }): ToolRuntime {
+    const registry = new ToolRegistry();
+    registry.registerMany(createHostTools());
+    return new ToolRuntime({
+      registry,
+      policy: {
+        async authorize({ permission }) {
+          if (permission?.kind === "workspace_escape") {
+            options?.onWorkspaceEscape?.(permission.details);
+            return {
+              allowed: options?.allowWorkspaceEscape === true,
+              reason: "workspace escape requires explicit approval",
+            };
+          }
+          return { allowed: true };
+        },
+      },
+    });
   }
 
   afterEach(async () => {
@@ -778,5 +802,66 @@ describe("host tools", () => {
     });
     expect(result.output).toContain("Command failed with exit code 7.");
     expect(result.output).toContain("boom");
+  });
+
+  it("requires explicit permission before file and command tools target paths outside the workspace", async () => {
+    const workingDirectory = await createWorkspace();
+    const outsideDirectory = await createWorkspace();
+    const outsideFile = path.join(outsideDirectory, "outside.txt");
+    const context = createContext(workingDirectory);
+    const permissionDetails: unknown[] = [];
+    const deniedRuntime = createToolRuntime({
+      onWorkspaceEscape: (details) => permissionDetails.push(details),
+    });
+
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-write-outside",
+          name: "write_file",
+          input: {
+            path: outsideFile,
+            content: "outside\n",
+          },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
+    expect(permissionDetails).toHaveLength(1);
+    expect(permissionDetails[0]).toMatchObject({
+      workingDirectory,
+      requestedPath: outsideFile,
+      resolvedPath: outsideFile,
+    });
+
+    const approvedRuntime = createToolRuntime({ allowWorkspaceEscape: true });
+    await approvedRuntime.execute(
+      {
+        id: "call-exec-outside",
+        name: "exec_command",
+        input: {
+          command: "pwd",
+          cwd: outsideDirectory,
+        },
+      },
+      context,
+    );
+  });
+
+  it("hard-kills shell commands that ignore SIGTERM after timing out", async () => {
+    const workingDirectory = await createWorkspace();
+    const startedAt = Date.now();
+    const result = await runShellCommand(
+      "node -e 'process.on(\"SIGTERM\",()=>{}); setInterval(()=>{}, 1000)'",
+      {
+        cwd: workingDirectory,
+        timeoutMs: 50,
+        killGraceMs: 50,
+      },
+    );
+
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 });

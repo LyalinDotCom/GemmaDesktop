@@ -18,7 +18,10 @@ import {
   buildResearchLiveActivity,
   buildResearchProgressContent,
 } from '../src/main/researchPresentation'
-import { withLoadedLiveOllamaModel } from './helpers/ollama-live.js'
+import {
+  createLiveRuntimeAdapters,
+  withLiveRuntimeModel,
+} from './helpers/ollama-live.js'
 
 const itIfLive = process.env.GEMMA_DESKTOP_RUN_APP_LIVE_RESEARCH === '1' ? it : it.skip
 const suspiciousOutputPattern = /<channel\|>|```|(?:^|\W)jsonset(?:\W|$)|\bthought:\s/i
@@ -198,12 +201,28 @@ const SCENARIOS: Scenario[] = [
   },
 ]
 
+function configuredEnvValue(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim()
+    if (value) {
+      return value
+    }
+  }
+  return undefined
+}
+
 function resolveConfiguredRuntime(): string {
-  return process.env.GEMMA_DESKTOP_RESEARCH_RUNTIME_ID?.trim() || 'ollama-native'
+  return configuredEnvValue(
+    'GEMMA_DESKTOP_RESEARCH_RUNTIME_ID',
+    'GEMMA_DESKTOP_LIVE_RUNTIME_ID',
+  ) ?? 'ollama-native'
 }
 
 function resolveConfiguredModel(): string {
-  return process.env.GEMMA_DESKTOP_RESEARCH_MODEL_ID?.trim() || 'gemma4:26b'
+  return configuredEnvValue(
+    'GEMMA_DESKTOP_RESEARCH_MODEL_ID',
+    'GEMMA_DESKTOP_LIVE_MODEL_ID',
+  ) ?? 'gemma4:26b'
 }
 
 function shouldRunScenario(id: string): boolean {
@@ -284,14 +303,11 @@ describe.sequential('app live deep research harness', () => {
       const runtimeId = resolveConfiguredRuntime()
       const modelId = resolveConfiguredModel()
       const scenarios = SCENARIOS.filter((scenario) => shouldRunScenario(scenario.id))
+      const adapters = createLiveRuntimeAdapters()
 
       expect(scenarios.length).toBeGreaterThan(0)
-      expect(
-        runtimeId.startsWith('ollama'),
-        `Live Ollama research suites only support Ollama runtimes so model cleanup can be enforced. Received "${runtimeId}".`,
-      ).toBe(true)
 
-      await withLoadedLiveOllamaModel({ modelId }, async () => {
+      await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const harnessRoot = await mkdtemp(
           path.join(os.tmpdir(), 'gemma-desktop-app-live-research-'),
         )
@@ -300,6 +316,7 @@ describe.sequential('app live deep research harness', () => {
 
         const gemmaDesktop = await createGemmaDesktop({
           workingDirectory: harnessRoot,
+          adapters,
         })
         const environment = await gemmaDesktop.inspectEnvironment()
         const runtime = environment.runtimes.find((entry) => entry.runtime.id === runtimeId)

@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./approvalMode": {
+      "types": "./dist/approvalMode.d.ts",
+      "default": "./dist/approvalMode.js"
     }
   }
 }

@@ -73,10 +73,12 @@ export function describeMemoryModelStatus(
 }
 
 const OLLAMA_PARAMETER_ORDER = [
+  'max_context_window',
   'context_length',
   'temperature',
   'top_p',
   'top_k',
+  'max_tokens',
   'max_output_tokens',
   'num_predict',
   'repeat_penalty',
@@ -122,14 +124,32 @@ export function buildRuntimeParameterChips(model: ModelSummary): string[] {
   }
 
   const chips: string[] = []
-  const runtimeContext =
-    runtimeConfig.loadedContextLength
+  const requestedContext =
+    runtimeConfig.requestedOptions?.max_context_window
     ?? runtimeConfig.requestedOptions?.context_length
     ?? runtimeConfig.requestedOptions?.num_ctx
+  const runtimeContext =
+    runtimeConfig.loadedContextLength
     ?? model.contextLength
-  const contextLabel = formatContextLengthLabel(runtimeContext)
-  if (contextLabel) {
-    chips.push(contextLabel)
+  if (
+    runtimeConfig.provider === 'omlx'
+    && requestedContext
+    && runtimeContext
+    && requestedContext !== runtimeContext
+  ) {
+    const requestedLabel = formatContextLengthLabel(requestedContext)
+    const runtimeLabel = formatContextLengthLabel(runtimeContext)
+    if (requestedLabel) {
+      chips.push(`${requestedLabel} requested`)
+    }
+    if (runtimeLabel) {
+      chips.push(`${runtimeLabel} runtime`)
+    }
+  } else {
+    const contextLabel = formatContextLengthLabel(runtimeContext ?? requestedContext)
+    if (contextLabel) {
+      chips.push(contextLabel)
+    }
   }
 
   if (typeof runtimeConfig.approxGpuResidencyPercent === 'number') {
@@ -143,7 +163,12 @@ export function buildRuntimeParameterChips(model: ModelSummary): string[] {
 
   const seen = new Set<string>()
   const emit = (parameter: string) => {
-    if (seen.has(parameter) || parameter === 'num_ctx' || parameter === 'context_length') {
+    if (
+      seen.has(parameter)
+      || parameter === 'num_ctx'
+      || parameter === 'context_length'
+      || parameter === 'max_context_window'
+    ) {
       return
     }
     const value = formatParameterValue(parameterSource[parameter])

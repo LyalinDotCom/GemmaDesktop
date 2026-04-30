@@ -16,6 +16,9 @@
     "start": "node dist/index.js",
     "test": "npm run test:default",
     "test:default": "vitest run",
+    "test:live": "npm run test:scenario-preflight",
+    "test:scenario-preflight": "GEMMA_DESKTOP_RUN_CLI_SCENARIOS_LIVE=1 GEMMA_DESKTOP_CLI_SCENARIOS=web-hacker-news-frontpage vitest run tests/scenariosLive.test.ts",
+    "test:scenarios-live": "GEMMA_DESKTOP_RUN_CLI_SCENARIOS_LIVE=1 vitest run tests/scenariosLive.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
@@ -24,7 +27,8 @@
     "@gemma-desktop/sdk-runtime-llamacpp": "0.1.0",
     "@gemma-desktop/sdk-runtime-lmstudio": "0.1.0",
     "@gemma-desktop/sdk-runtime-omlx": "0.1.0",
-    "@gemma-desktop/sdk-runtime-ollama": "0.1.0"
+    "@gemma-desktop/sdk-runtime-ollama": "0.1.0",
+    "@gemma-desktop/sdk-tools": "0.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",

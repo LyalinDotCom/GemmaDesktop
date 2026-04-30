@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Ajv } from "ajv";
 import type {
   ModelToolCall,
@@ -13,11 +14,22 @@ export interface ToolPermissionDecision {
   reason?: string;
 }
 
+export interface ToolPermissionRequest {
+  kind: "workspace_escape";
+  reason: string;
+  details: {
+    workingDirectory: string;
+    requestedPath: string;
+    resolvedPath: string;
+  };
+}
+
 export interface ToolPermissionPolicy {
   authorize(input: {
     tool: ToolDefinition;
     toolCall: ModelToolCall;
     context: ToolExecutionContext;
+    permission?: ToolPermissionRequest;
   }): Promise<ToolPermissionDecision>;
 }
 
@@ -177,6 +189,59 @@ function normalizeToolName(name: string): string {
 
 function isToolExposed(name: string, toolNames?: string[]): boolean {
   return !toolNames || toolNames.includes(name);
+}
+
+function workspaceRelativePath(workingDirectory: string, absolutePath: string): string | null {
+  const relative = path.relative(workingDirectory, absolutePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
+    ? relative
+    : null;
+}
+
+function resolveWorkspaceEscapePermission(input: {
+  toolName: string;
+  toolInput: unknown;
+  workingDirectory: string;
+}): ToolPermissionRequest | undefined {
+  if (!input.toolInput || typeof input.toolInput !== "object" || Array.isArray(input.toolInput)) {
+    return undefined;
+  }
+
+  const record = input.toolInput as Record<string, unknown>;
+  const requestedPath =
+    input.toolName === "write_file" || input.toolName === "edit_file"
+      ? record.path
+      : input.toolName === "exec_command"
+        ? record.cwd
+        : undefined;
+  if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
+    return undefined;
+  }
+
+  const workingDirectory = path.resolve(input.workingDirectory);
+  const resolvedPath = path.resolve(workingDirectory, requestedPath);
+  if (workspaceRelativePath(workingDirectory, resolvedPath) !== null) {
+    return undefined;
+  }
+
+  const action =
+    input.toolName === "exec_command"
+      ? "run a shell command"
+      : input.toolName === "edit_file"
+        ? "edit a file"
+        : "write a file";
+
+  return {
+    kind: "workspace_escape",
+    reason:
+      `The ${input.toolName} tool is trying to ${action} outside the session workspace. `
+      + "This can be valid when the user explicitly asked for that path, but it needs separate approval.",
+    details: {
+      workingDirectory,
+      requestedPath,
+      resolvedPath,
+    },
+  };
 }
 
 function schemaAcceptsActionAlias(schema: ToolDefinition["inputSchema"], action: string): boolean {
@@ -339,10 +404,17 @@ export class ToolRuntime implements ToolExecutor {
       });
     }
 
+    const workspaceEscapePermission = resolveWorkspaceEscapePermission({
+      toolName: activeToolName,
+      toolInput: normalizedToolCall.input,
+      workingDirectory: context.workingDirectory,
+    });
+
     const decision = await this.policy.authorize({
       tool: activeTool,
       toolCall: normalizedToolCall,
       context,
+      ...(workspaceEscapePermission ? { permission: workspaceEscapePermission } : {}),
     });
 
     if (!decision.allowed) {

@@ -3,13 +3,16 @@ import fsSync from 'fs'
 import path from 'path'
 import {
   cloneSidebarState,
+  createDefaultPinnedArea,
   dedupePreserveOrder,
   EMPTY_SIDEBAR_STATE,
+  isDefaultPinnedArea,
   normalizeSidebarProjectPath,
   sanitizeSidebarState,
   type SidebarSessionReference,
   type SidebarState,
 } from '../shared/sidebar'
+import { clampToFirstGrapheme } from '../shared/emoji'
 
 export interface SidebarStateUpdateResult {
   state: SidebarState
@@ -23,6 +26,10 @@ export function normalizeStoredSidebarProjectPath(targetPath: string): string {
   }
 
   return normalizeSidebarProjectPath(path.resolve(trimmed))
+}
+
+function normalizePinnedAreaIcon(icon: string): string {
+  return clampToFirstGrapheme(icon)
 }
 
 function orderRecordsEqual(
@@ -43,11 +50,18 @@ function orderRecordsEqual(
 }
 
 function sidebarStatesEqual(left: SidebarState, right: SidebarState): boolean {
+  const leftPinnedAreas = left.pinnedAreas ?? []
+  const rightPinnedAreas = right.pinnedAreas ?? []
+
   if (left.lastActiveSessionId !== right.lastActiveSessionId) {
     return false
   }
 
   if (left.pinnedSessionIds.length !== right.pinnedSessionIds.length) {
+    return false
+  }
+
+  if (leftPinnedAreas.length !== rightPinnedAreas.length) {
     return false
   }
 
@@ -64,6 +78,15 @@ function sidebarStatesEqual(left: SidebarState, right: SidebarState): boolean {
   }
 
   return left.pinnedSessionIds.every((entry, index) => entry === right.pinnedSessionIds[index])
+    && leftPinnedAreas.every((area, index) => {
+      const rightArea = rightPinnedAreas[index]
+      return rightArea
+        && area.id === rightArea.id
+        && area.icon === rightArea.icon
+        && area.collapsed === rightArea.collapsed
+        && area.sessionIds.length === rightArea.sessionIds.length
+        && area.sessionIds.every((entry, sessionIndex) => entry === rightArea.sessionIds[sessionIndex])
+    })
     && left.followUpSessionIds.every((entry, index) => entry === right.followUpSessionIds[index])
     && left.closedProjectPaths.every((entry, index) => entry === right.closedProjectPaths[index])
     && left.projectPaths.every((entry, index) => entry === right.projectPaths[index])
@@ -93,18 +116,40 @@ export class SidebarStateStore {
 
   async pinSession(
     sessionId: string,
+    areaId: string,
     sessionRefs: SidebarSessionReference[],
   ): Promise<SidebarStateUpdateResult> {
     const validSessionIds = new Set(sessionRefs.map((session) => session.id))
     const nextState = this.pruneState(this.state, sessionRefs)
+    if (!validSessionIds.has(sessionId)) {
+      return await this.commit(nextState)
+    }
 
-    if (!validSessionIds.has(sessionId) || nextState.pinnedSessionIds.includes(sessionId)) {
+    let pinnedAreas = nextState.pinnedAreas ?? []
+    if (
+      isDefaultPinnedArea(areaId)
+      && !pinnedAreas.some((area) => isDefaultPinnedArea(area.id))
+    ) {
+      pinnedAreas = [createDefaultPinnedArea(), ...pinnedAreas]
+    }
+    const targetArea = pinnedAreas.find((area) => area.id === areaId)
+    if (!targetArea) {
       return await this.commit(nextState)
     }
 
     return await this.commit({
       ...nextState,
-      pinnedSessionIds: [...nextState.pinnedSessionIds, sessionId],
+      pinnedAreas: pinnedAreas.map((area) =>
+        area.id === areaId
+          ? {
+              ...area,
+              sessionIds: dedupePreserveOrder([...area.sessionIds, sessionId]),
+            }
+          : {
+              ...area,
+              sessionIds: area.sessionIds.filter((entry) => entry !== sessionId),
+            },
+      ),
     })
   }
 
@@ -116,6 +161,10 @@ export class SidebarStateStore {
     return await this.commit({
       ...nextState,
       pinnedSessionIds: nextState.pinnedSessionIds.filter((entry) => entry !== sessionId),
+      pinnedAreas: (nextState.pinnedAreas ?? []).map((area) => ({
+        ...area,
+        sessionIds: area.sessionIds.filter((entry) => entry !== sessionId),
+      })),
     })
   }
 
@@ -125,13 +174,17 @@ export class SidebarStateStore {
     sessionRefs: SidebarSessionReference[],
   ): Promise<SidebarStateUpdateResult> {
     const nextState = this.pruneState(this.state, sessionRefs)
-    const currentIndex = nextState.pinnedSessionIds.indexOf(sessionId)
+    const pinnedAreas = nextState.pinnedAreas ?? []
+    const flattened = pinnedAreas.flatMap((area) =>
+      area.sessionIds.map((entry) => ({ areaId: area.id, sessionId: entry })),
+    )
+    const currentIndex = flattened.findIndex((entry) => entry.sessionId === sessionId)
 
     if (currentIndex === -1) {
       return await this.commit(nextState)
     }
 
-    const reordered = [...nextState.pinnedSessionIds]
+    const reordered = [...flattened]
     reordered.splice(currentIndex, 1)
 
     const boundedIndex = Math.max(
@@ -142,11 +195,144 @@ export class SidebarStateStore {
       ),
     )
 
-    reordered.splice(boundedIndex, 0, sessionId)
+    const targetAreaId =
+      reordered[boundedIndex]?.areaId
+      ?? reordered[boundedIndex - 1]?.areaId
+      ?? flattened[currentIndex]?.areaId
+    if (!targetAreaId) {
+      return await this.commit(nextState)
+    }
+
+    reordered.splice(boundedIndex, 0, {
+      areaId: targetAreaId,
+      sessionId,
+    })
+
+    const sessionIdsByArea = new Map<string, string[]>()
+    for (const entry of reordered) {
+      const entries = sessionIdsByArea.get(entry.areaId) ?? []
+      entries.push(entry.sessionId)
+      sessionIdsByArea.set(entry.areaId, entries)
+    }
 
     return await this.commit({
       ...nextState,
-      pinnedSessionIds: reordered,
+      pinnedAreas: pinnedAreas.map((area) => ({
+        ...area,
+        sessionIds: sessionIdsByArea.get(area.id) ?? [],
+      })),
+    })
+  }
+
+  async createPinnedArea(
+    icon: string,
+    sessionId: string | null,
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const nextState = this.pruneState(this.state, sessionRefs)
+    const validSessionIds = new Set(sessionRefs.map((session) => session.id))
+    const areaId = `pinned-area-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const sessionIds =
+      sessionId && validSessionIds.has(sessionId) ? [sessionId] : []
+
+    return await this.commit({
+      ...nextState,
+      pinnedAreas: [
+        ...(nextState.pinnedAreas ?? []).map((area) => ({
+          ...area,
+          sessionIds: area.sessionIds.filter((entry) => !sessionIds.includes(entry)),
+        })),
+        {
+          id: areaId,
+          icon: normalizePinnedAreaIcon(icon),
+          collapsed: false,
+          sessionIds,
+        },
+      ],
+    })
+  }
+
+  async deletePinnedArea(
+    areaId: string,
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const nextState = this.pruneState(this.state, sessionRefs)
+    if (isDefaultPinnedArea(areaId)) {
+      return await this.commit(nextState)
+    }
+
+    return await this.commit({
+      ...nextState,
+      pinnedAreas: (nextState.pinnedAreas ?? []).filter((area) => area.id !== areaId),
+    })
+  }
+
+  async updatePinnedAreaIcon(
+    areaId: string,
+    icon: string,
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const nextState = this.pruneState(this.state, sessionRefs)
+    if (isDefaultPinnedArea(areaId)) {
+      return await this.commit(nextState)
+    }
+
+    return await this.commit({
+      ...nextState,
+      pinnedAreas: (nextState.pinnedAreas ?? []).map((area) =>
+        area.id === areaId
+          ? { ...area, icon: normalizePinnedAreaIcon(icon) }
+          : area,
+      ),
+    })
+  }
+
+  async setPinnedAreaCollapsed(
+    areaId: string,
+    collapsed: boolean,
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const nextState = this.pruneState(this.state, sessionRefs)
+    return await this.commit({
+      ...nextState,
+      pinnedAreas: (nextState.pinnedAreas ?? []).map((area) =>
+        area.id === areaId ? { ...area, collapsed } : area,
+      ),
+    })
+  }
+
+  async movePinnedArea(
+    areaId: string,
+    direction: 'up' | 'down',
+    sessionRefs: SidebarSessionReference[],
+  ): Promise<SidebarStateUpdateResult> {
+    const nextState = this.pruneState(this.state, sessionRefs)
+    const currentPinnedAreas = nextState.pinnedAreas ?? []
+    const index = currentPinnedAreas.findIndex((area) => area.id === areaId)
+    if (index === -1 || isDefaultPinnedArea(areaId)) {
+      return await this.commit(nextState)
+    }
+
+    const toIndex = direction === 'up' ? index - 1 : index + 1
+    const targetArea = currentPinnedAreas[toIndex]
+    if (
+      toIndex < 0
+      || toIndex >= currentPinnedAreas.length
+      || (targetArea && isDefaultPinnedArea(targetArea.id))
+    ) {
+      return await this.commit(nextState)
+    }
+
+    const pinnedAreas = [...currentPinnedAreas]
+    const [area] = pinnedAreas.splice(index, 1)
+    if (!area) {
+      return await this.commit(nextState)
+    }
+    pinnedAreas.splice(toIndex, 0, area)
+
+    return await this.commit({
+      ...nextState,
+      pinnedAreas,
     })
   }
 
@@ -307,6 +493,12 @@ export class SidebarStateStore {
       pinnedSessionIds: nextState.pinnedSessionIds.filter(
         (sessionId) => !projectSessionIds.has(sessionId),
       ),
+      pinnedAreas: (nextState.pinnedAreas ?? []).map((area) => ({
+        ...area,
+        sessionIds: area.sessionIds.filter(
+          (sessionId) => !projectSessionIds.has(sessionId),
+        ),
+      })),
       followUpSessionIds: nextState.followUpSessionIds.filter(
         (sessionId) => !projectSessionIds.has(sessionId),
       ),
@@ -373,6 +565,12 @@ export class SidebarStateStore {
       pinnedSessionIds: dedupePreserveOrder(
         currentState.pinnedSessionIds.filter((entry) => validSessionIds.has(entry)),
       ),
+      pinnedAreas: (currentState.pinnedAreas ?? []).map((area) => ({
+        ...area,
+        sessionIds: dedupePreserveOrder(
+          area.sessionIds.filter((entry) => validSessionIds.has(entry)),
+        ),
+      })),
       followUpSessionIds: dedupePreserveOrder(
         currentState.followUpSessionIds.filter((entry) => validSessionIds.has(entry)),
       ),

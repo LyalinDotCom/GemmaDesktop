@@ -159,6 +159,36 @@ describe('buildRuntimeParameterChips', () => {
       }),
     ).toEqual([])
   })
+
+  it('shows oMLX requested context separately from the live runtime limit', () => {
+    const model: ModelSummary = {
+      id: 'gemma-4-26b-a4b-it-nvfp4',
+      name: 'Gemma 4 26B',
+      runtimeId: 'omlx-openai',
+      runtimeName: 'oMLX',
+      status: 'loaded',
+      runtimeConfig: {
+        provider: 'omlx',
+        requestedOptions: {
+          max_context_window: 262_144,
+          max_tokens: 32_768,
+          temperature: 1,
+          top_p: 0.95,
+          top_k: 64,
+        },
+        loadedContextLength: 32_768,
+      },
+    }
+
+    expect(buildRuntimeParameterChips(model)).toEqual([
+      '262.1k ctx requested',
+      '32.8k ctx runtime',
+      'temperature 1',
+      'top p 0.95',
+      'top k 64',
+      'max tokens 32768',
+    ])
+  })
 })
 
 describe('MemoryStatusIndicator layout', () => {

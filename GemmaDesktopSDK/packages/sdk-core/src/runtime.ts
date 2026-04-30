@@ -669,7 +669,10 @@ export interface RunShellCommandOptions {
   cwd?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  killGraceMs?: number;
 }
+
+const DEFAULT_SHELL_COMMAND_KILL_GRACE_MS = 1000;
 
 function terminateChildProcess(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid;
@@ -709,6 +712,7 @@ export async function runShellCommand(
     let stderr = "";
     let timedOut = false;
     let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
 
     const settleReject = (error: Error): void => {
       if (settled) {
@@ -717,6 +721,9 @@ export async function runShellCommand(
       settled = true;
       if (timer) {
         clearTimeout(timer);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
       }
       options.signal?.removeEventListener("abort", abort);
       reject(error);
@@ -729,6 +736,9 @@ export async function runShellCommand(
       settled = true;
       if (timer) {
         clearTimeout(timer);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
       }
       options.signal?.removeEventListener("abort", abort);
       resolve(result);
@@ -748,6 +758,9 @@ export async function runShellCommand(
         : setTimeout(() => {
             timedOut = true;
             terminateChildProcess(child, "SIGTERM");
+            killTimer = setTimeout(() => {
+              terminateChildProcess(child, "SIGKILL");
+            }, options.killGraceMs ?? DEFAULT_SHELL_COMMAND_KILL_GRACE_MS);
           }, options.timeoutMs);
 
     const abort = () => {
