@@ -236,6 +236,13 @@ export function formatTokenCount(count: number): string {
   return TOKEN_FORMATTER.format(Math.round(count))
 }
 
+function formatTokenUsageWindowLabel(turns: number): string {
+  if (turns <= 0) {
+    return 'No turns yet'
+  }
+  return `${turns} turn${turns === 1 ? '' : 's'} · since first turn`
+}
+
 export function findTokenUsageForModel(
   usage: ModelTokenUsageSnapshot[] | undefined,
   model: Pick<ModelSummary, 'id' | 'runtimeId'>,
@@ -313,7 +320,10 @@ export function MemoryStatusPanel({
     (sum, entry) => sum + (entry.turns ?? 0),
     0,
   )
-  const sessionStartedAtMs = modelTokenUsage?.startedAtMs ?? now
+  const hasTokenUsage = sessionTotalTurns > 0 || sessionTotalTokens > 0
+  const sessionStartedAtMs = hasTokenUsage
+    ? modelTokenUsage?.startedAtMs ?? now
+    : now
   const elapsedLabel = formatElapsedSince(sessionStartedAtMs, now)
 
   useEffect(() => {
@@ -351,10 +361,7 @@ export function MemoryStatusPanel({
           </span>
         </div>
         <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
-          <span>
-            {sessionTotalTurns} turn{sessionTotalTurns === 1 ? '' : 's'}
-            {' · since app start'}
-          </span>
+          <span>{formatTokenUsageWindowLabel(sessionTotalTurns)}</span>
           <span className="font-mono tabular-nums">{elapsedLabel}</span>
         </div>
       </div>
@@ -526,6 +533,13 @@ export function MemoryStatusIndicator({
     (sum, entry) => sum + (entry.totalTokens ?? 0),
     0,
   )
+  const sessionTotalTurns = usageEntries.reduce(
+    (sum, entry) => sum + (entry.turns ?? 0),
+    0,
+  )
+  const tokenUsageWindowDescription = sessionTotalTurns > 0
+    ? 'since the first completed turn'
+    : 'with no completed turns yet'
   const memoryRatio =
     systemStats.memoryTotalGB > 0
       ? systemStats.memoryUsedGB / systemStats.memoryTotalGB
@@ -541,7 +555,7 @@ export function MemoryStatusIndicator({
     <button
       type="button"
       onClick={onTogglePanel}
-      aria-label={`${panelOpen ? 'Hide' : 'Show'} model memory. RAM ${systemStats.memoryUsedGB} of ${systemStats.memoryTotalGB} GB. ${loadedModelCount} loaded model${loadedModelCount === 1 ? '' : 's'} and ${loadingModelCount} loading model${loadingModelCount === 1 ? '' : 's'}. ${formatTokenCount(sessionTotalTokens)} tokens processed this session.`}
+      aria-label={`${panelOpen ? 'Hide' : 'Show'} model memory. RAM ${systemStats.memoryUsedGB} of ${systemStats.memoryTotalGB} GB. ${loadedModelCount} loaded model${loadedModelCount === 1 ? '' : 's'} and ${loadingModelCount} loading model${loadingModelCount === 1 ? '' : 's'}. ${formatTokenCount(sessionTotalTokens)} model tokens processed ${tokenUsageWindowDescription}.`}
       aria-pressed={panelOpen}
       aria-expanded={panelOpen}
       className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums outline-none transition-colors hover:bg-zinc-200 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:hover:bg-zinc-800 dark:focus-visible:ring-zinc-600 ${

@@ -280,4 +280,35 @@ describe('MemoryStatusIndicator layout', () => {
     expect(markup).toContain('Assistant helper')
     expect(markup).toContain('Q4_K_M')
   })
+
+  it('labels token usage as elapsed since the first completed turn', () => {
+    const usage: ModelTokenUsageSnapshot = {
+      runtimeId: 'ollama-native',
+      modelId: 'gemma4:e2b',
+      inputTokens: 7000,
+      outputTokens: 2856,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 9856,
+      turns: 2,
+      lastUpdatedMs: Date.now(),
+    }
+
+    const markup = renderToStaticMarkup(
+      createElement(MemoryStatusPanel, {
+        systemStats,
+        models: [model],
+        modelTokenUsage: {
+          startedAtMs: Date.now() - 5000,
+          usage: [usage],
+        },
+      }),
+    )
+
+    expect(markup).toContain('Session tokens')
+    expect(markup).toContain('9,856')
+    expect(markup).toContain('2 turns')
+    expect(markup).toContain('since first turn')
+    expect(markup).not.toContain('since app start')
+  })
 })

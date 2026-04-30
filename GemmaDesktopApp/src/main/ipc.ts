@@ -1608,7 +1608,7 @@ interface ModelTokenUsageReport {
   usage: ModelTokenUsageSnapshot[]
 }
 
-const modelTokenUsageTrackingStartedAt = Date.now()
+let modelTokenUsageTrackingStartedAt: number | null = null
 const modelTokenUsageByKey = new Map<string, ModelTokenUsageSnapshot>()
 
 function modelTokenUsageKey(runtimeId: string, modelId: string): string {
@@ -1617,7 +1617,7 @@ function modelTokenUsageKey(runtimeId: string, modelId: string): string {
 
 function getModelTokenUsageReport(): ModelTokenUsageReport {
   return {
-    startedAtMs: modelTokenUsageTrackingStartedAt,
+    startedAtMs: modelTokenUsageTrackingStartedAt ?? Date.now(),
     usage: Array.from(modelTokenUsageByKey.values()).map((entry) => ({ ...entry })),
   }
 }
@@ -1666,6 +1666,9 @@ function recordSessionTokens(
     return
   }
 
+  const recordedAtMs = Date.now()
+  modelTokenUsageTrackingStartedAt ??= recordedAtMs
+
   const key = modelTokenUsageKey(runtimeId, modelId)
   const existing = modelTokenUsageByKey.get(key) ?? {
     runtimeId,
@@ -1676,7 +1679,7 @@ function recordSessionTokens(
     cacheReadTokens: 0,
     totalTokens: 0,
     turns: 0,
-    lastUpdatedMs: Date.now(),
+    lastUpdatedMs: recordedAtMs,
   }
 
   existing.inputTokens += inputTokens
@@ -1686,7 +1689,7 @@ function recordSessionTokens(
   existing.totalTokens =
     existing.inputTokens + existing.outputTokens + existing.reasoningTokens
   existing.turns += 1
-  existing.lastUpdatedMs = Date.now()
+  existing.lastUpdatedMs = recordedAtMs
 
   modelTokenUsageByKey.set(key, existing)
   broadcastModelTokenUsage()
