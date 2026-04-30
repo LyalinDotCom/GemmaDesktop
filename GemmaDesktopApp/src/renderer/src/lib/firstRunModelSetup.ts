@@ -21,6 +21,10 @@ function hasExistingWorkspaceState(
   )
 }
 
+function isExplicitBootstrapWork(status: Pick<BootstrapState, 'status'>['status']): boolean {
+  return status === 'starting_ollama' || status === 'pulling_models'
+}
+
 export function shouldShowFirstRunModelSetup({
   startupRiskAccepted,
   dismissed,
@@ -37,7 +41,7 @@ export function shouldShowFirstRunModelSetup({
   return (
     startupRiskAccepted
     && !dismissed
-    && bootstrapState.status === 'idle'
+    && !isExplicitBootstrapWork(bootstrapState.status)
     && !hasExistingWorkspaceState(sidebar, sessions)
   )
 }

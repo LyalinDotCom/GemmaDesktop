@@ -133,11 +133,31 @@ describe('shouldShowFirstRunModelSetup', () => {
     })).toBe(false)
   })
 
-  it('waits while bootstrap is active so it cannot sit on top of explicit retry/download work', () => {
+  it('still shows while startup inspection or helper warmup is reporting progress', () => {
+    for (const status of ['checking', 'loading_helper', 'ready', 'warning'] as const) {
+      expect(shouldShowFirstRunModelSetup({
+        startupRiskAccepted: true,
+        dismissed: false,
+        bootstrapState: { status },
+        sidebar: emptySidebar,
+        sessions: [],
+      })).toBe(true)
+    }
+  })
+
+  it('waits while explicit bootstrap work is active so it cannot sit on top of retry/download work', () => {
     expect(shouldShowFirstRunModelSetup({
       startupRiskAccepted: true,
       dismissed: false,
       bootstrapState: { status: 'pulling_models' },
+      sidebar: emptySidebar,
+      sessions: [],
+    })).toBe(false)
+
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: { status: 'starting_ollama' },
       sidebar: emptySidebar,
       sessions: [],
     })).toBe(false)
