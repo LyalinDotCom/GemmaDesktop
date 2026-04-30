@@ -1,4 +1,4 @@
-import { Brain, ChevronDown, ChevronUp, Pin } from 'lucide-react'
+import { Brain, Pin } from 'lucide-react'
 
 interface GlobalChatSwitchBarProps {
   assistantHomeVisible: boolean
@@ -44,11 +44,6 @@ export function GlobalChatSwitchBar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 py-2 text-zinc-200 transition-colors hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-200"
         >
           <Brain size={19} className="shrink-0 text-zinc-100" />
-          {assistantHomeVisible ? (
-            <ChevronUp size={14} className="shrink-0 text-zinc-400" />
-          ) : (
-            <ChevronDown size={14} className="shrink-0 text-zinc-400" />
-          )}
         </button>
 
         <div className="ml-2 flex shrink-0 items-center gap-1">
