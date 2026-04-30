@@ -363,6 +363,219 @@ describe("research runs", { timeout: 120000 }, () => {
     expect(focus).toBe("Iran");
   });
 
+  it("extracts a tight focus query from simple latest-news-from requests", () => {
+    const focus = __testOnly.inferResearchFocusQuery(
+      "Latest news from Kyiv, ukraine capital",
+    );
+
+    expect(focus).toBe("Kyiv");
+  });
+
+  it("builds an ambitious source plan for simple latest-news requests", () => {
+    const request = "Latest news from Kyiv, ukraine capital";
+    const plan = {
+      objective: request,
+      scopeSummary: "Gather the latest Kyiv updates.",
+      topics: [
+        {
+          id: "kyiv-news-1",
+          title: "Kyiv news",
+          goal: "Find the latest Kyiv updates.",
+          priority: 1,
+          searchQueries: ["Kyiv latest news"],
+        },
+      ],
+      risks: [],
+      stopConditions: [],
+    };
+
+    const brief = __testOnly.buildResearchBrief(request, plan);
+    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const sourceFamilies = coveragePlan.queryGroups.map((group) => group.sourceFamily);
+
+    expect(brief.taskType).toBe("news-sweep");
+    expect(brief.focusQuery).toBe("Kyiv");
+    expect(coveragePlan.maxPasses).toBe(3);
+    expect(coveragePlan.targetSources).toBeGreaterThanOrEqual(18);
+    expect(sourceFamilies).toEqual(expect.arrayContaining([
+      "mainstream_front_page",
+      "mainstream_article",
+      "wire",
+      "local_news",
+      "blogs_analysis",
+    ]));
+    expect(sourceFamilies).not.toContain("community");
+  });
+
+  it("uses small source-bundle analyst calls for news sweeps before synthesis", async () => {
+    const workingDirectory = await createWorkspace();
+    process.env.GEMMA_DESKTOP_DISABLE_RESEARCH_FALLBACK_URLS = "1";
+    const requests: Array<Record<string, unknown>> = [];
+
+    let chatRequestCount = 0;
+
+    const server = await createMockServer((request) => {
+      const url = new URL(request.path, "http://127.0.0.1");
+
+      if (url.pathname === "/health") {
+        return { status: 200, text: "ok" };
+      }
+
+      if (url.pathname === "/v1/models") {
+        return { json: { data: [{ id: "mock-model" }] } };
+      }
+
+      if (url.pathname === "/v1/chat/completions") {
+        requests.push(request.bodyJson as Record<string, unknown>);
+        chatRequestCount += 1;
+        const prompt = getLastUserPrompt(request.bodyJson as Record<string, unknown>);
+        if (chatRequestCount === 1) {
+          return {
+            sse: sseJsonResponse("plan-1", {
+              objective: "News from Kyiv, Ukraine",
+              scopeSummary: "Find current Kyiv coverage.",
+              topics: [
+                {
+                  title: "Kyiv updates",
+                  goal: "Summarize current Kyiv reporting.",
+                  priority: 1,
+                  searchQueries: ["Kyiv Ukraine news"],
+                },
+              ],
+              risks: [],
+              stopConditions: [],
+            }),
+          };
+        }
+        if (prompt.includes("Analyze the gathered evidence for this topic")) {
+          return {
+            sse: sseJsonResponse(`bundle-${chatRequestCount}`, {
+              summary: "This source bundle reports April 30, 2026 Kyiv updates.",
+              findings: ["April 30, 2026 Kyiv coverage described air-defense activity and city services."],
+              contradictions: [],
+              openQuestions: [],
+              sourceRefs: ["source-1"],
+              confidence: 0.7,
+            }),
+          };
+        }
+        return {
+          sse: sseJsonResponse("synthesis-1", {
+            summary: "Kyiv coverage was summarized from source-bundle analyst notes.",
+            reportMarkdown: [
+              "# Report",
+              "",
+              "## Front Page Emphasis",
+              "",
+              "Front page emphasis was thin in the local fixture set.",
+              "",
+              "## Latest Story Coverage",
+              "",
+              "The latest story coverage from April 30, 2026 described Kyiv air-defense activity and city-service updates [source-1].",
+              "",
+              "## Consensus and Divergence",
+              "",
+              "The available fixtures agree on Kyiv being the focus; the limited outlet set leaves divergence unresolved [source-1].",
+            ].join("\n"),
+            openQuestions: [],
+            sourceIds: ["source-1"],
+            confidence: 0.72,
+          }),
+        };
+      }
+
+      if (url.pathname === "/kyiv-a" || url.pathname === "/kyiv-b") {
+        return {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+          },
+          text: `
+            <html>
+              <head>
+                <title>${url.pathname === "/kyiv-a" ? "Kyiv latest update" : "Kyiv city report"}</title>
+              </head>
+              <body>
+                <article>
+                  <p>${url.pathname === "/kyiv-a"
+                    ? "April 30, 2026 coverage from Kyiv described air-defense activity and city services."
+                    : "April 30, 2026 reporting from Kyiv described municipal updates and resident impacts."}</p>
+                  ${url.pathname === "/kyiv-a"
+                    ? '<h2><a href="/2026/04/30/kyiv-linked-report">Kyiv air defense report expands chronology</a></h2>'
+                    : ""}
+                </article>
+              </body>
+            </html>
+          `,
+        };
+      }
+
+      if (url.pathname === "/2026/04/30/kyiv-linked-report") {
+        return {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+          },
+          text: `
+            <html>
+              <head>
+                <title>Kyiv air defense report expands chronology</title>
+              </head>
+              <body>
+                <article>
+                  <p>Linked April 30, 2026 reporting added a second-level Kyiv chronology from the first source page.</p>
+                </article>
+              </body>
+            </html>
+          `,
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+    setSearchProviderForTests(async () => ({
+      summary: "Mock search returned Kyiv fixtures.",
+      sources: [
+        {
+          title: "Kyiv latest update",
+          url: `${server.url}/kyiv-a`,
+          snippet: "April 30, 2026 coverage from Kyiv.",
+        },
+        {
+          title: "Kyiv city report",
+          url: `${server.url}/kyiv-b`,
+          snippet: "April 30, 2026 municipal report from Kyiv.",
+        },
+      ],
+      model: "mock-search-provider",
+      durationMs: 0,
+      webSearchQueries: ["Kyiv Ukraine news"],
+    }));
+
+    const gemmaDesktop = await createGemmaDesktop({
+      workingDirectory,
+      adapters: [createLlamaCppServerAdapter({ baseUrl: server.url })],
+    });
+    const session = await gemmaDesktop.sessions.create({
+      runtime: "llamacpp-server",
+      model: "mock-model",
+      mode: "cowork",
+      workingDirectory,
+    });
+
+    const result = await session.runResearch("News from Kyiv, Ukraine", {
+      profile: "deep",
+    });
+
+    expect(result.taskType).toBe("news-sweep");
+    expect(result.summary).toContain("Kyiv coverage");
+    expect(requests.length).toBeGreaterThan(2);
+    expect(result.sources.some((source) => source.resolvedUrl.endsWith("/2026/04/30/kyiv-linked-report"))).toBe(true);
+    expect(requests.some((request) =>
+      getLastUserPrompt(request).includes("Analyze the gathered evidence for this topic"),
+    )).toBe(true);
+    expect(getLastUserPrompt(requests[requests.length - 1]!)).toContain("Topic dossiers:");
+  });
+
   it("builds bounded deep news coverage plans without site-colon article queries", () => {
     const request = "Research Iran news across major outlets and compare the latest front-page coverage.";
     const plan = {

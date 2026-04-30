@@ -10233,10 +10233,48 @@ async function maybeGenerateAutoSessionTitle(input: {
     return
   }
 
+  const conversationKind = getSessionConfig(input.snapshot).conversationKind
   const titleTask = buildAutoSessionTitleTask({
-    conversationKind: getSessionConfig(input.snapshot).conversationKind,
+    conversationKind,
     promptSeed,
   })
+
+  if (conversationKind === 'research') {
+    const fallbackTitle = buildFallbackSessionTitle(
+      promptSeed,
+      titleTask.fallbackMaxWords,
+    )
+    if (!fallbackTitle) {
+      return
+    }
+    const latestMeta = store.getMeta(input.sessionId)
+    if (
+      !latestMeta
+      || latestMeta.titleSource === 'user'
+      || latestMeta.title !== PLACEHOLDER_SESSION_TITLE
+    ) {
+      return
+    }
+    const live = liveSessions.get(input.sessionId)
+    const persisted = live ? null : await getPersistedSession(input.sessionId)
+    const snapshot = live?.snapshot() ?? persisted?.snapshot
+    if (!snapshot) {
+      return
+    }
+
+    await store.save(
+      input.sessionId,
+      snapshot,
+      {
+        title: fallbackTitle,
+        titleSource: 'auto',
+      },
+      undefined,
+      { preserveUpdatedAt: true },
+    )
+    await broadcastSessionsChanged()
+    return
+  }
 
   try {
     const result = await runHelperStructuredTask({

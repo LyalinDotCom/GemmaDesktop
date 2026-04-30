@@ -15,7 +15,7 @@ function extractFirstText(input: ReturnType<typeof buildAutoSessionTitleTask>['s
 }
 
 describe('session title helpers', () => {
-  it('asks the helper model for a 3-5 word research title based on the request', () => {
+  it('builds bounded research title instructions from the request', () => {
     const task = buildAutoSessionTitleTask({
       conversationKind: 'research',
       promptSeed: 'Research Ollama vs LM Studio vs llama.cpp on macOS today.',

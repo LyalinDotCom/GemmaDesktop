@@ -35,6 +35,9 @@ const DEFAULT_QUICK_TARGET_DOMAINS = 3;
 const DEFAULT_DEEP_NEWS_FRONT_PAGE_TARGET = 4;
 const DEFAULT_DEEP_NEWS_ARTICLE_TARGET = 5;
 const DEFAULT_DEEP_NEWS_MIN_ARTICLE_OUTLETS = 3;
+const NEWS_DOSSIER_SOURCE_LIMIT = 8;
+const NEWS_COLLECTOR_SOURCE_CHUNK_SIZE = 5;
+const NEWS_DOSSIER_FINDING_PREVIEW_CHARS = 360;
 const MAX_TOPIC_WORKER_ATTEMPTS = 2;
 const DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_RESEARCH_TOPIC_TIMEOUT_MS = 8 * 60_000;
@@ -53,6 +56,8 @@ export type ResearchSourceFamily =
   | "mainstream_front_page"
   | "mainstream_article"
   | "wire"
+  | "local_news"
+  | "blogs_analysis"
   | "official"
   | "community"
   | "reference_github_docs";
@@ -478,6 +483,8 @@ const SOURCE_FAMILY_LABELS: Record<ResearchSourceFamily, string> = {
   mainstream_front_page: "Mainstream front pages",
   mainstream_article: "Mainstream articles",
   wire: "Wire services",
+  local_news: "Local / specialized sources",
+  blogs_analysis: "Blogs / analysis",
   official: "Official sources",
   community: "Community discussion",
   reference_github_docs: "Reference / GitHub / docs",
@@ -1288,6 +1295,7 @@ function toTitleCase(value: string): string {
 
 function inferResearchSubject(requestText: string): string | undefined {
   const patterns = [
+    /\b(?:news|coverage|stories?|headlines?)\s+from\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:across|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:news|coverage|stories?|headlines?)\s+(?:on|about|regarding)\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:across|from|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:about|regarding)\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:across|from|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:variations|versions|types|models|releases)\s+of\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:on|in|across|available|that|for)\b|[,.!?]|$)/i,
@@ -1300,6 +1308,7 @@ function inferResearchSubject(requestText: string): string | undefined {
       .replace(/\bmodels?\b$/i, "")
       .replace(/\bfamily\b$/i, "")
       .replace(/\b(?:news|coverage|headlines|stories?)\b$/i, "")
+      .replace(/\b(?:capital|city)\b$/i, "")
       .replace(/\b(?:taht|that)\b.*$/i, "")
       .replace(/\b(?:exists|exist|available)\b.*$/i, "")
       .replace(/\betc\b.*$/i, "")
@@ -1375,6 +1384,7 @@ function isModelCatalogResearchRequest(value: string): boolean {
 
 function inferResearchFocusQuery(requestText: string): string {
   const subjectPatterns = [
+    /\b(?:news|coverage|stories?|headlines?)\s+from\s+(.+?)(?=\s+(?:across|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:news|coverage|stories?|headlines?)\s+(?:on|about|regarding)\s+(.+?)(?=\s+(?:across|from|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:about|regarding)\s+(.+?)(?=\s+(?:across|from|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
   ];
@@ -1385,6 +1395,7 @@ function inferResearchFocusQuery(requestText: string): string {
         .replace(/^(?:what\s+)?(?:there\s+is\s+|there\s+are\s+)/i, "")
         .replace(/^(?:about|regarding)\s+/i, "")
         .replace(/\b(?:news|coverage|headlines|stories?)\b$/i, "")
+        .replace(/\b(?:capital|city)\b$/i, "")
         .replace(/\s+/g, " ")
         .trim();
       if (focused.length > 0) {
@@ -2372,6 +2383,54 @@ function extractFocusedArticleSeedUrlsFromPreview(
     .slice(0, 4);
 }
 
+function extractOneHopNewsUrlsFromSource(
+  source: ResearchSourceRecord,
+  brief: ResearchBrief,
+): string[] {
+  if (brief.taskType !== "news-sweep") {
+    return [];
+  }
+  if (
+    source.pageRole !== "front_page"
+    && source.sourceFamily !== "mainstream_article"
+    && source.sourceFamily !== "wire"
+    && source.sourceFamily !== "local_news"
+    && source.sourceFamily !== "blogs_analysis"
+  ) {
+    return [];
+  }
+
+  const focusTerms = buildResearchFocusTerms(brief);
+  const extractedUrls = extractExplicitUrlsFromText(source.contentPreview);
+  if (extractedUrls.length === 0) {
+    return [];
+  }
+
+  return dedupeStrings(extractedUrls)
+    .filter((url) => url !== source.resolvedUrl && url !== source.requestedUrl)
+    .filter((url) => isLikelyArticleUrl(url))
+    .filter((url) => {
+      const domain = parseUrlDomain(url);
+      if (!domain || isLikelyNewsMetaPage(url)) {
+        return false;
+      }
+      if (
+        source.domain
+        && domain !== source.domain
+        && !domain.endsWith(`.${source.domain}`)
+        && !source.domain.endsWith(`.${domain}`)
+      ) {
+        return false;
+      }
+      if (focusTerms.length === 0) {
+        return true;
+      }
+      const loweredUrl = url.toLowerCase();
+      return focusTerms.some((term) => loweredUrl.includes(term));
+    })
+    .slice(0, 5);
+}
+
 function inferTaskType(requestText: string, plan: ResearchPlan): ResearchTaskType {
   const haystack = `${requestText} ${plan.objective} ${plan.scopeSummary ?? ""} ${plan.topics.map((topic) => `${topic.title} ${topic.goal}`).join(" ")}`;
   if (/\b(?:news|headlines|front page|front-page|latest stories?|latest articles?|breaking news|mainstream outlets?|what['’]s on the front page)\b/i.test(haystack)) {
@@ -2424,14 +2483,14 @@ function buildResearchBrief(requestText: string, plan: ResearchPlan): ResearchBr
         requiredSourceFamilies: dedupeSourceFamilies([
           "mainstream_front_page",
           "mainstream_article",
-          /\b(?:latest|breaking|today|current|concrete dates?)\b/i.test(requestText) ? "wire" : undefined,
+          "wire",
+          "local_news",
+          "blogs_analysis",
           requestedCommunity ? "community" : undefined,
           requestedOfficial ? "official" : undefined,
         ].filter((value): value is ResearchSourceFamily => Boolean(value))),
         optionalSourceFamilies: dedupeSourceFamilies([
-          "wire",
           requestedOfficial ? "official" : undefined,
-          requestedCommunity ? undefined : "community",
         ].filter((value): value is ResearchSourceFamily => Boolean(value))),
         reportRequirements,
       };
@@ -2537,6 +2596,9 @@ function buildNewsSeedUrls(
       return [];
     case "wire":
       return WIRE_NEWS_OUTLETS.map((outlet) => outlet.homeUrl);
+    case "local_news":
+    case "blogs_analysis":
+      return [];
     case "official": {
       const haystack = `${brief.subject ?? ""} ${brief.focusQuery} ${brief.objective} ${brief.scopeSummary}`.toLowerCase();
       if (/\b(?:artemis|nasa)\b/.test(haystack)) {
@@ -2563,9 +2625,14 @@ function buildNewsQueries(
   sourceFamily: ResearchSourceFamily,
 ): string[] {
   const focus = brief.subject ?? brief.focusQuery;
-  const articleOutlets = MAINSTREAM_NEWS_OUTLETS
-    .filter((outlet) => !WIRE_NEWS_OUTLETS.some((wire) => wire.domain === outlet.domain))
-    .slice(0, 4);
+  const broadOutletSweep =
+    brief.requiredSourceFamilies.includes("mainstream_front_page")
+    || brief.optionalSourceFamilies.includes("mainstream_front_page");
+  const articleOutlets = broadOutletSweep
+    ? MAINSTREAM_NEWS_OUTLETS
+      .filter((outlet) => !WIRE_NEWS_OUTLETS.some((wire) => wire.domain === outlet.domain))
+      .slice(0, 4)
+    : [];
   switch (sourceFamily) {
     case "mainstream_front_page":
       return [
@@ -2576,6 +2643,20 @@ function buildNewsQueries(
       return [
         `${focus} Reuters latest`,
         `${focus} AP latest`,
+      ];
+    case "local_news":
+      return [
+        `${focus} local news`,
+        `${focus} regional media`,
+        `${focus} independent news`,
+        `${focus} city updates`,
+      ];
+    case "blogs_analysis":
+      return [
+        `${focus} live blog`,
+        `${focus} analysis blog`,
+        `${focus} situation report`,
+        `${focus} expert analysis`,
       ];
     case "community":
       return [
@@ -2629,24 +2710,31 @@ function buildCoverageGroupsForNews(
     });
   };
 
-  pushGroup(
-    "Mainstream front pages",
-    `Capture what major outlets are placing prominently on their front pages about ${brief.focusQuery}.`,
-    "mainstream_front_page",
-    true,
-    1,
-    deep ? DEFAULT_DEEP_NEWS_FRONT_PAGE_TARGET : 2,
-  );
+  let nextPriority = 1;
+  if (
+    brief.requiredSourceFamilies.includes("mainstream_front_page")
+    || brief.optionalSourceFamilies.includes("mainstream_front_page")
+  ) {
+    pushGroup(
+      "Mainstream front pages",
+      `Capture what major outlets are placing prominently on their front pages about ${brief.focusQuery}.`,
+      "mainstream_front_page",
+      brief.requiredSourceFamilies.includes("mainstream_front_page"),
+      nextPriority,
+      deep ? DEFAULT_DEEP_NEWS_FRONT_PAGE_TARGET : 2,
+    );
+    nextPriority += 1;
+  }
   pushGroup(
     "Mainstream article coverage",
     `Read recent mainstream reporting on ${brief.focusQuery} across multiple outlets.`,
     "mainstream_article",
     true,
-    2,
+    nextPriority,
     deep ? DEFAULT_DEEP_NEWS_ARTICLE_TARGET : 3,
   );
+  nextPriority += 1;
 
-  let nextPriority = 3;
   if (brief.requiredSourceFamilies.includes("wire") || brief.optionalSourceFamilies.includes("wire")) {
     pushGroup(
       "Wire coverage",
@@ -2655,6 +2743,28 @@ function buildCoverageGroupsForNews(
       brief.requiredSourceFamilies.includes("wire"),
       nextPriority,
       deep ? 2 : 1,
+    );
+    nextPriority += 1;
+  }
+  if (brief.requiredSourceFamilies.includes("local_news") || brief.optionalSourceFamilies.includes("local_news")) {
+    pushGroup(
+      "Local and specialized sources",
+      `Find local, regional, or subject-specialized sources that may have details major outlets miss for ${brief.focusQuery}.`,
+      "local_news",
+      brief.requiredSourceFamilies.includes("local_news"),
+      nextPriority,
+      deep ? 4 : 2,
+    );
+    nextPriority += 1;
+  }
+  if (brief.requiredSourceFamilies.includes("blogs_analysis") || brief.optionalSourceFamilies.includes("blogs_analysis")) {
+    pushGroup(
+      "Blogs and active analysis",
+      `Find active blogs, trackers, or analysis pages that add depth or chronology for ${brief.focusQuery}.`,
+      "blogs_analysis",
+      brief.requiredSourceFamilies.includes("blogs_analysis"),
+      nextPriority,
+      deep ? 4 : 2,
     );
     nextPriority += 1;
   }
@@ -2680,7 +2790,7 @@ function buildCoverageGroupsForNews(
     );
   }
 
-  return groups.slice(0, profile === "quick" ? 4 : 5);
+  return groups.slice(0, profile === "quick" ? 5 : 8);
 }
 
 function buildCoveragePlan(
@@ -2733,12 +2843,19 @@ function buildCoveragePlan(
         ],
   };
 
+  const queryGroupTargetSources = queryGroups.reduce((sum, group) => sum + group.targetSources, 0);
+  const targetSources = Math.max(
+    queryGroupTargetSources,
+    deep ? DEFAULT_DEEP_TARGET_SOURCES : DEFAULT_QUICK_TARGET_SOURCES,
+  );
+  const targetDomains = deep ? DEFAULT_DEEP_TARGET_DOMAINS : DEFAULT_QUICK_TARGET_DOMAINS;
+
   return {
     effectivePlan,
     coveragePlan: {
       taskType: brief.taskType,
-      targetSources: deep ? DEFAULT_DEEP_TARGET_SOURCES : DEFAULT_QUICK_TARGET_SOURCES,
-      targetDomains: deep ? DEFAULT_DEEP_TARGET_DOMAINS : DEFAULT_QUICK_TARGET_DOMAINS,
+      targetSources,
+      targetDomains,
       maxPasses,
       requiredSourceFamilies: brief.requiredSourceFamilies,
       optionalSourceFamilies: brief.optionalSourceFamilies,
@@ -2781,6 +2898,9 @@ function classifySourceFamily(
   if (fallbackFamily === "mainstream_front_page" || fallbackFamily === "mainstream_article") {
     return isLikelyFrontPageUrl(url) ? "mainstream_front_page" : "mainstream_article";
   }
+  if (fallbackFamily === "local_news" || fallbackFamily === "blogs_analysis") {
+    return fallbackFamily;
+  }
   if (fallbackFamily === "official" || fallbackFamily === "community") {
     return fallbackFamily;
   }
@@ -2803,7 +2923,12 @@ function classifyPageRole(
   if (sourceFamily === "mainstream_front_page" || isLikelyFrontPageUrl(url)) {
     return "front_page";
   }
-  if (sourceFamily === "mainstream_article" || sourceFamily === "wire") {
+  if (
+    sourceFamily === "mainstream_article"
+    || sourceFamily === "wire"
+    || sourceFamily === "local_news"
+    || sourceFamily === "blogs_analysis"
+  ) {
     return "article";
   }
   if (isLikelyArticleUrl(url)) {
@@ -2992,12 +3117,13 @@ function buildCoverageAssessment(
     const frontPageCount = sources.filter((source) => source.sourceFamily === "mainstream_front_page").length;
     const articleCount = sources.filter((source) => source.sourceFamily === "mainstream_article").length;
     const articleGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "mainstream_article");
+    const frontPageGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "mainstream_front_page");
     const frontPageSources = sources.filter((source) => source.pageRole === "front_page");
-    if (frontPageCount < (coveragePlan.taskType === "news-sweep" && coveragePlan.maxPasses > 2 ? DEFAULT_DEEP_NEWS_FRONT_PAGE_TARGET : 2)) {
-      gaps.push(`Need more front-page sampling (${frontPageCount}/${coveragePlan.maxPasses > 2 ? DEFAULT_DEEP_NEWS_FRONT_PAGE_TARGET : 2}).`);
+    if (frontPageGroup && frontPageCount < frontPageGroup.targetSources) {
+      gaps.push(`Need more front-page sampling (${frontPageCount}/${frontPageGroup.targetSources}).`);
     }
-    if (articleCount < (coveragePlan.maxPasses > 2 ? DEFAULT_DEEP_NEWS_ARTICLE_TARGET : 3)) {
-      gaps.push(`Need more mainstream article coverage (${articleCount}/${coveragePlan.maxPasses > 2 ? DEFAULT_DEEP_NEWS_ARTICLE_TARGET : 3}).`);
+    if (articleGroup && articleCount < articleGroup.targetSources) {
+      gaps.push(`Need more mainstream article coverage (${articleCount}/${articleGroup.targetSources}).`);
       if (articleGroup) {
         const followUpArticleSeeds = dedupeStrings(
           frontPageSources.flatMap((source) => extractFocusedArticleSeedUrlsFromPreview(source, brief)),
@@ -3018,7 +3144,9 @@ function buildCoverageAssessment(
         .filter((source) =>
           source.sourceFamily === "mainstream_front_page"
           || source.sourceFamily === "mainstream_article"
-          || source.sourceFamily === "wire",
+          || source.sourceFamily === "wire"
+          || source.sourceFamily === "local_news"
+          || source.sourceFamily === "blogs_analysis"
         )
         .map((source) => source.domain)
         .filter((value): value is string => Boolean(value)),
@@ -3028,7 +3156,6 @@ function buildCoverageAssessment(
       const unusedOutlets = MAINSTREAM_NEWS_OUTLETS
         .filter((outlet) => !mainstreamDomains.has(outlet.domain))
         .slice(0, 3);
-      const frontPageGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "mainstream_front_page");
       if (articleGroup) {
         followUpQueriesByTopic.set(
           articleGroup.topicId,
@@ -3140,6 +3267,21 @@ function prioritizeSearchCandidate(
   if (sourceFamily === "wire" && candidateFamily !== "wire") {
     value -= 120;
   }
+  if (sourceFamily === "local_news") {
+    value += isLikelyArticleUrl(candidate.url) ? 80 : -30;
+    value += /\b(?:local|regional|city|independent|post|times|tribune|gazette|daily|dispatch|observer|journal|pravda|inform|press)\b/i
+      .test([candidate.url, candidate.siteName ?? "", candidate.title, candidate.snippet].join(" "))
+      ? 50
+      : 0;
+    value -= isKnownMainstreamNewsDomain(domain) ? 30 : 0;
+  }
+  if (sourceFamily === "blogs_analysis") {
+    value += isLikelyArticleUrl(candidate.url) ? 70 : -20;
+    value += /\b(?:blog|live\s+blog|analysis|analyst|tracker|updates?|situation\s+report|report\s+card|briefing|explainer|opinion|column|substack)\b/i
+      .test([candidate.url, candidate.siteName ?? "", candidate.title, candidate.snippet].join(" "))
+      ? 55
+      : 0;
+  }
   if (domain && !knownDomains.has(domain)) {
     value += 40;
   } else if (domain) {
@@ -3159,6 +3301,15 @@ function prioritizeSearchCandidate(
 
 function topicSortValue(topic: ResearchTopicPlan): number {
   return topic.priority;
+}
+
+function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  const size = Math.max(1, Math.floor(chunkSize));
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
@@ -3357,6 +3508,70 @@ function buildWorkerPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function formatResearchSourceTitle(source: ResearchSourceRecord): string {
+  return normalizeInlineText(source.title ?? source.domain ?? source.resolvedUrl);
+}
+
+function formatResearchSourceFinding(source: ResearchSourceRecord): string {
+  const preview = normalizeInlineText(
+    [
+      source.description,
+      source.contentPreview,
+    ]
+      .filter((value): value is string => Boolean(value && value.trim().length > 0))
+      .join(" ")
+      .replace(/\b(?:Title|Description|Content|Byline|Page text|Snippet|Query|URL|Site|Top headlines \/ links):\s*/gi, " "),
+  );
+  const title = formatResearchSourceTitle(source);
+  const domain = source.domain ? ` (${source.domain})` : "";
+  return `${title}${domain}: ${truncateText(preview, NEWS_DOSSIER_FINDING_PREVIEW_CHARS)}`;
+}
+
+function selectNewsDossierSources(
+  topic: ResearchTopicPlan,
+  sources: ResearchSourceRecord[],
+): ResearchSourceRecord[] {
+  const usableSources = sources.filter((source) => isUsableResearchSource(source));
+  const selectedIds = selectFallbackCitationSourceIds(topic, usableSources, NEWS_DOSSIER_SOURCE_LIMIT);
+  const byId = new Map(usableSources.map((source) => [source.id, source]));
+  return selectedIds
+    .map((sourceId) => byId.get(sourceId))
+    .filter((source): source is ResearchSourceRecord => Boolean(source));
+}
+
+function buildSourceBackedNewsDossier(
+  runId: string,
+  topic: ResearchTopicPlan,
+  sources: ResearchSourceRecord[],
+): ResearchDossier {
+  const selectedSources = selectNewsDossierSources(topic, sources);
+  const domains = dedupeStrings(
+    selectedSources
+      .map((source) => source.domain)
+      .filter((domain): domain is string => Boolean(domain)),
+  );
+  const sourceIds = selectedSources.map((source) => source.id);
+  return {
+    id: `${topic.id}-dossier`,
+    topicId: topic.id,
+    title: topic.title,
+    summary:
+      selectedSources.length > 0
+        ? `Collected ${selectedSources.length} usable source${selectedSources.length === 1 ? "" : "s"} for ${topic.title}${domains.length > 0 ? ` across ${domains.slice(0, 5).join(", ")}` : ""}.`
+        : `No usable sources survived filtering for ${topic.title}.`,
+    findings: selectedSources.map((source) => formatResearchSourceFinding(source)),
+    contradictions: [],
+    openQuestions:
+      selectedSources.length > 0
+        ? []
+        : [`No usable source evidence was available for ${topic.title}.`],
+    sourceIds,
+    unresolvedSourceRefs: [],
+    confidence: selectedSources.length > 0 ? 0.68 : 0.2,
+    workerSessionId: `source-backed:${runId}:${topic.id}`,
+  };
 }
 
 function buildSynthesisPrompt(
@@ -3748,8 +3963,21 @@ async function persistSubsessionArtifacts(
 }
 
 function createSourcePreview(result: FetchExecutionResult): string {
+  const headlineSection =
+    result.structuredOutput.headlines && result.structuredOutput.headlines.length > 0
+      && !/Top headlines \/ links:/i.test(result.structuredOutput.content)
+      ? [
+          "Top headlines / links:",
+          ...result.structuredOutput.headlines.map((headline, index) => `${index + 1}. ${headline.title}\n   ${headline.url}`),
+        ].join("\n")
+      : "";
   return truncateText(
-    result.structuredOutput.content
+    [
+      result.structuredOutput.content,
+      headlineSection,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
       .replace(/```+/g, "")
       .replace(/<channel\|>/g, "")
       .replace(/\b(?:jsonset|thought:|reasoning:)\b/gi, ""),
@@ -4448,7 +4676,14 @@ export class ResearchRunner {
         maxConcurrentWorkspaceReads: normalizedOptions.maxConcurrentWorkspaceReads,
       });
       const minimumDiscoveryPasses = (() => {
-        if (normalizedOptions.profile === "deep" && brief.taskType === "news-sweep") {
+        if (
+          normalizedOptions.profile === "deep"
+          && brief.taskType === "news-sweep"
+          && (
+            brief.requiredSourceFamilies.includes("mainstream_front_page")
+            || brief.optionalSourceFamilies.includes("mainstream_front_page")
+          )
+        ) {
           return 2;
         }
         if (normalizedOptions.profile !== "quick" && catalogStyleRequest) {
@@ -4796,40 +5031,108 @@ export class ResearchRunner {
           )
           : [];
 
-        fetchTaskEntries.forEach((task, index) => {
-          const fetchResult = successfulBatchResult(fetchResults[index]!);
-          const topicIds = [...task.topicIds];
-          if (!fetchResult) {
-            for (const topicId of topicIds) {
-              const discovery = discoveryByTopic.get(topicId);
-              if (!discovery) {
-                continue;
-              }
-              discovery.fetchErrors.push({
-                passNumber,
-                url: task.url,
-                error: fetchResults[index]?.error ?? "Fetch failed without an error message.",
-              });
-              const topic = topicById.get(topicId);
-              const searchSnippetCandidate = searchSnippetCandidatesByUrl.get(task.url);
-              if (topic && searchSnippetCandidate && shouldPreserveBlockedSearchSnippet(topic, searchSnippetCandidate)) {
-                const sourceId = registerSearchSnippetSource(topicId, searchSnippetCandidate, task.sourceFamily);
-                if (!discovery.fetchedSourceIds.includes(sourceId)) {
-                  discovery.fetchedSourceIds.push(sourceId);
+        const applyFetchResults = (
+          tasks: typeof fetchTaskEntries,
+          results: typeof fetchResults,
+        ): ResearchSourceRecord[] => {
+          const registeredSources: ResearchSourceRecord[] = [];
+          tasks.forEach((task, index) => {
+            const fetchResult = successfulBatchResult(results[index]!);
+            const topicIds = [...task.topicIds];
+            if (!fetchResult) {
+              for (const topicId of topicIds) {
+                const discovery = discoveryByTopic.get(topicId);
+                if (!discovery) {
+                  continue;
+                }
+                discovery.fetchErrors.push({
+                  passNumber,
+                  url: task.url,
+                  error: results[index]?.error ?? "Fetch failed without an error message.",
+                });
+                const topic = topicById.get(topicId);
+                const searchSnippetCandidate = searchSnippetCandidatesByUrl.get(task.url);
+                if (topic && searchSnippetCandidate && shouldPreserveBlockedSearchSnippet(topic, searchSnippetCandidate)) {
+                  const sourceId = registerSearchSnippetSource(topicId, searchSnippetCandidate, task.sourceFamily);
+                  const source = sourceRegistry.get(sourceId);
+                  if (source) {
+                    registeredSources.push(source);
+                  }
+                  if (!discovery.fetchedSourceIds.includes(sourceId)) {
+                    discovery.fetchedSourceIds.push(sourceId);
+                  }
                 }
               }
+              return;
             }
-            return;
-          }
-          const searchSnippetCandidate = searchSnippetCandidatesByUrl.get(task.url);
-          const sourceId = registerFetchResult(topicIds, fetchResult, task.sourceFamily, searchSnippetCandidate);
-          for (const topicId of topicIds) {
-            const discovery = discoveryByTopic.get(topicId);
-            if (discovery && !discovery.fetchedSourceIds.includes(sourceId)) {
-              discovery.fetchedSourceIds.push(sourceId);
+            const searchSnippetCandidate = searchSnippetCandidatesByUrl.get(task.url);
+            const sourceId = registerFetchResult(topicIds, fetchResult, task.sourceFamily, searchSnippetCandidate);
+            const source = sourceRegistry.get(sourceId);
+            if (source) {
+              registeredSources.push(source);
             }
+            for (const topicId of topicIds) {
+              const discovery = discoveryByTopic.get(topicId);
+              if (discovery && !discovery.fetchedSourceIds.includes(sourceId)) {
+                discovery.fetchedSourceIds.push(sourceId);
+              }
+            }
+          });
+          return registeredSources;
+        };
+
+        const firstWaveSources = applyFetchResults(fetchTaskEntries, fetchResults);
+        const oneHopFetchTasks = new Map<string, {
+          key: string;
+          url: string;
+          topicIds: Set<string>;
+          sourceFamily: ResearchSourceFamily;
+        }>();
+        for (const source of firstWaveSources) {
+          const sourceFamily = source.sourceFamily ?? "mainstream_article";
+          for (const url of extractOneHopNewsUrlsFromSource(source, brief)) {
+            if (getRegisteredSourceId(sourceIdByUrl, url) || queuedFetchTasks.has(url) || oneHopFetchTasks.has(url)) {
+              continue;
+            }
+            oneHopFetchTasks.set(url, {
+              key: `${passNumber}:one-hop:${source.id}:${url}`,
+              url,
+              topicIds: new Set(source.topicIds),
+              sourceFamily,
+            });
           }
-        });
+        }
+        const oneHopFetchTaskEntries = [...oneHopFetchTasks.values()]
+          .slice(0, normalizedOptions.profile === "quick" ? 12 : 40);
+        if (oneHopFetchTaskEntries.length > 0) {
+          if (runState.stages.discovery.worker) {
+            runState.stages.discovery.worker.currentAction =
+              `Pulling ${oneHopFetchTaskEntries.length} linked source page${oneHopFetchTaskEntries.length === 1 ? "" : "s"}`;
+            runState.stages.discovery.worker.timeline = upsertResearchWorkerTimelineEntry(
+              runState.stages.discovery.worker.timeline,
+              {
+                id: `discovery-one-hop-${passNumber}`,
+                label: "Pulling linked source pages",
+                detail: `${oneHopFetchTaskEntries.length} one-hop page${oneHopFetchTaskEntries.length === 1 ? "" : "s"} queued from first-wave sources.`,
+                timestamp: new Date().toISOString(),
+              },
+            );
+          }
+          await writeState();
+        }
+        const oneHopFetchResults = oneHopFetchTaskEntries.length > 0
+          ? await executor.fetchUrlBatch(
+            oneHopFetchTaskEntries.map((task) => ({
+              key: task.key,
+              topicId: [...task.topicIds][0] ?? "topic",
+              url: task.url,
+            })),
+            {
+              signal: normalizedOptions.signal,
+            },
+          )
+          : [];
+        applyFetchResults(oneHopFetchTaskEntries, oneHopFetchResults);
 
         latestAssessment = buildCoverageAssessment(brief, coveragePlan, [...sourceRegistry.values()], passNumber);
         mergeCoverageFollowUps(coveragePlan, latestAssessment);
@@ -4839,7 +5142,7 @@ export class ResearchRunner {
           startedAt: passStartedAt,
           completedAt: passCompletedAt,
           queryCount: searchTasks.length,
-          fetchCount: fetchTaskEntries.length,
+          fetchCount: fetchTaskEntries.length + oneHopFetchTaskEntries.length,
           fetchedSourceIds: [...new Set(activeGroups.flatMap((group) => discoveryByTopic.get(group.topicId)?.fetchedSourceIds ?? []))],
           searchErrors: activeGroups.reduce((sum, group) => sum + (discoveryByTopic.get(group.topicId)?.searchErrors.filter((entry) => entry.passNumber === passNumber).length ?? 0), 0),
           fetchErrors: activeGroups.reduce((sum, group) => sum + (discoveryByTopic.get(group.topicId)?.fetchErrors.filter((entry) => entry.passNumber === passNumber).length ?? 0), 0),
@@ -4870,7 +5173,7 @@ export class ResearchRunner {
         );
         if (runState.stages.discovery.worker) {
           runState.stages.discovery.worker.searchCount = searchTasks.length;
-          runState.stages.discovery.worker.fetchCount = fetchTaskEntries.length;
+          runState.stages.discovery.worker.fetchCount = fetchTaskEntries.length + oneHopFetchTaskEntries.length;
           runState.stages.discovery.worker.sourceCount = sourceRegistry.size;
           runState.stages.discovery.worker.currentAction = latestAssessment.sufficient
             ? "Coverage looks sufficient"
@@ -4935,6 +5238,33 @@ export class ResearchRunner {
       const sortedTopics = [...plan.topics].sort((left, right) => topicSortValue(left) - topicSortValue(right));
       const topicIndexById = new Map(plan.topics.map((topic, index) => [topic.id, index]));
       const sourcesById = sourceRegistry;
+      const writeDossierArtifacts = async (
+        topic: ResearchTopicPlan,
+        dossier: ResearchDossier,
+      ): Promise<void> => {
+        await writeJson(path.join(runDirectory, "dossiers", `${topic.id}.json`), dossier);
+        await writeText(
+          path.join(runDirectory, "dossiers", `${topic.id}.md`),
+          [
+            `# ${topic.title}`,
+            "",
+            dossier.summary,
+            dossier.findings.length > 0 ? ["", "## Findings", "", ...dossier.findings.map((finding) => `- ${finding}`)].join("\n") : "",
+            dossier.contradictions.length > 0
+              ? ["", "## Contradictions", "", ...dossier.contradictions.map((entry) => `- ${entry}`)].join("\n")
+              : "",
+            dossier.openQuestions.length > 0
+              ? ["", "## Open Questions", "", ...dossier.openQuestions.map((entry) => `- ${entry}`)].join("\n")
+              : "",
+            dossier.sourceIds.length > 0 ? ["", "## Source IDs", "", ...dossier.sourceIds.map((entry) => `- ${entry}`)].join("\n") : "",
+            dossier.unresolvedSourceRefs.length > 0
+              ? ["", "## Unresolved Source Refs", "", ...dossier.unresolvedSourceRefs.map((entry) => `- ${entry}`)].join("\n")
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
+      };
 
       await runWithConcurrency(
         sortedTopics,
@@ -4948,7 +5278,7 @@ export class ResearchRunner {
             delete stateEntry.lastError;
             stateEntry.worker = {
               kind: "topic",
-              label: "Topic worker",
+              label: brief.taskType === "news-sweep" ? "Source-bundle analyst" : "Topic worker",
               goal: topic.goal,
               assistantDeltaCount: 0,
               reasoningDeltaCount: 0,
@@ -4971,6 +5301,212 @@ export class ResearchRunner {
               searchErrors: [],
               fetchErrors: [],
             };
+            if (brief.taskType === "news-sweep") {
+              const prefetchedSources = discovery.fetchedSourceIds
+                .map((sourceId) => sourcesById.get(sourceId))
+                .filter((source): source is ResearchSourceRecord => Boolean(source));
+              const usablePrefetchedSources = selectNewsDossierSources(topic, prefetchedSources);
+              const sourceChunks = chunkArray(
+                usablePrefetchedSources.length > 0 ? usablePrefetchedSources : prefetchedSources.filter((source) => isUsableResearchSource(source)),
+                NEWS_COLLECTOR_SOURCE_CHUNK_SIZE,
+              );
+              const chunkDossiers: ResearchDossier[] = [];
+              for (const [chunkIndex, sourceChunk] of sourceChunks.entries()) {
+                const chunkNumber = chunkIndex + 1;
+                const tracker = createActivityTracker("topic", chunkNumber, {
+                  topic,
+                  label: "Source collector",
+                  goal: `Summarize source bundle ${chunkNumber} of ${sourceChunks.length} for ${topic.title}.`,
+                  target: stateEntry?.worker,
+                });
+                const budgetGuard = createResearchSubsessionBudgetGuard("topic", {
+                  parentSignal: normalizedOptions.signal,
+                  topicTitle: `${topic.title} bundle ${chunkNumber}`,
+                });
+                await tracker.begin();
+                await tracker.update({
+                  currentAction: `Summarizing source bundle ${chunkNumber}/${sourceChunks.length}`,
+                  searchCount: discovery.searches.length,
+                  fetchCount: discovery.fetchedSourceIds.length,
+                  sourceCount: sourceChunk.length,
+                });
+                try {
+                  const chunkDiscovery: DiscoveryRecord = {
+                    ...discovery,
+                    searches: discovery.searches.slice(0, 4),
+                    fetchedSourceIds: sourceChunk.map((source) => source.id),
+                  };
+                  const attemptResult = await this.runSubsession(
+                    {
+                      prompt: buildWorkerPrompt(
+                        brief,
+                        topic,
+                        chunkDiscovery,
+                        sourceChunk,
+                        1,
+                        {
+                          discardedSourceCount: Math.max(0, prefetchedSources.length - usablePrefetchedSources.length),
+                        },
+                      ),
+                      mode: "minimal",
+                      systemInstructions: [
+                        "This is a focused source-bundle analyst for a deep research run.",
+                        "Use only the evidence bundle in the user prompt.",
+                        "Do not call tools.",
+                        "Return a compact structured dossier only.",
+                      ].join("\n"),
+                      responseFormat: makeStructuredResponseFormat(
+                        "research_source_bundle",
+                        {
+                          summary: { type: "string" },
+                          findings: { type: "array", items: { type: "string" } },
+                          contradictions: { type: "array", items: { type: "string" } },
+                          openQuestions: { type: "array", items: { type: "string" } },
+                          sourceRefs: { type: "array", items: { type: "string" } },
+                          confidence: { type: "number" },
+                        },
+                        ["summary"],
+                      ),
+                      maxSteps: 2,
+                      metadata: buildResearchSubsessionMetadata({
+                        researchRunId: runId,
+                        researchStage: "topic",
+                        researchTopicId: topic.id,
+                        researchAttempt: chunkNumber,
+                      }),
+                      signal: budgetGuard.signal,
+                      onSessionStarted: async (info) => await tracker.onSessionStarted(info),
+                      onEvent: async (event) => {
+                        await tracker.onEvent(event);
+                        budgetGuard.onEvent(event);
+                      },
+                    },
+                    `research:${runId}:topic:${topic.id}:bundle:${chunkNumber}`,
+                  );
+                  const rawDossier = extractStructuredObjectCandidate(attemptResult) ?? {};
+                  const candidateDossier = normalizeDossierRecord(rawDossier);
+                  const candidateSourceIds = new Set<string>();
+                  const candidateUnresolvedSourceRefs = new Set<string>();
+                  if (candidateDossier) {
+                    for (const sourceRef of candidateDossier.sourceRefs) {
+                      const normalized = normalizeSourceRef(sourceRef, sourcesById, sourceIdByUrl);
+                      if (normalized.sourceId) {
+                        candidateSourceIds.add(normalized.sourceId);
+                      }
+                      if (normalized.unresolved) {
+                        candidateUnresolvedSourceRefs.add(normalized.unresolved);
+                      }
+                    }
+                  }
+                  const fallbackSourceIds = sourceChunk.map((source) => source.id);
+                  const chunkDossier: ResearchDossier = candidateDossier
+                    ? {
+                        id: `${topic.id}-bundle-${chunkNumber}-dossier`,
+                        topicId: topic.id,
+                        title: `${topic.title} bundle ${chunkNumber}`,
+                        summary: candidateDossier.summary,
+                        findings: candidateDossier.findings,
+                        contradictions: candidateDossier.contradictions,
+                        openQuestions: candidateDossier.openQuestions,
+                        sourceIds: candidateSourceIds.size > 0 ? [...candidateSourceIds] : fallbackSourceIds,
+                        unresolvedSourceRefs: [...candidateUnresolvedSourceRefs],
+                        confidence: candidateDossier.confidence,
+                        workerSessionId: attemptResult.sessionId,
+                      }
+                    : buildSourceBackedNewsDossier(runId, topic, sourceChunk);
+                  chunkDossiers.push(chunkDossier);
+                  await tracker.complete(attemptResult, {
+                    resultSummary: chunkDossier.summary,
+                    searchCount: discovery.searches.length,
+                    fetchCount: discovery.fetchedSourceIds.length,
+                    sourceCount: chunkDossier.sourceIds.length,
+                  });
+                  await persistSubsessionArtifacts(
+                    runDirectory,
+                    path.join("workers", `${topic.id}-bundle-${chunkNumber}`),
+                    attemptResult,
+                  );
+                } catch (error) {
+                  const wrapped = budgetGuard.wrapError(error);
+                  const fallbackDossier = buildSourceBackedNewsDossier(runId, topic, sourceChunk);
+                  chunkDossiers.push({
+                    ...fallbackDossier,
+                    id: `${topic.id}-bundle-${chunkNumber}-dossier`,
+                    title: `${topic.title} bundle ${chunkNumber}`,
+                    openQuestions: [
+                      ...fallbackDossier.openQuestions,
+                      `Source-bundle analyst failed: ${wrapped instanceof Error ? wrapped.message : String(wrapped)}`,
+                    ],
+                  });
+                  await tracker.update({
+                    currentAction: `Source bundle ${chunkNumber} fell back to source extraction`,
+                    resultSummary: wrapped instanceof Error ? wrapped.message : String(wrapped),
+                    sourceCount: sourceChunk.length,
+                  });
+                } finally {
+                  budgetGuard.cleanup();
+                  await tracker.end();
+                }
+              }
+              const fallbackDossier =
+                chunkDossiers.length > 0
+                  ? undefined
+                  : buildSourceBackedNewsDossier(runId, topic, prefetchedSources);
+              const sourceIds = [
+                ...new Set((fallbackDossier ? [fallbackDossier] : chunkDossiers).flatMap((dossier) => dossier.sourceIds)),
+              ];
+              const dossier: ResearchDossier = fallbackDossier ?? {
+                id: `${topic.id}-dossier`,
+                topicId: topic.id,
+                title: topic.title,
+                summary: chunkDossiers
+                  .map((entry) => entry.summary)
+                  .filter(Boolean)
+                  .slice(0, 4)
+                  .join(" "),
+                findings: chunkDossiers.flatMap((entry) => entry.findings).slice(0, 18),
+                contradictions: chunkDossiers.flatMap((entry) => entry.contradictions).slice(0, 8),
+                openQuestions: chunkDossiers.flatMap((entry) => entry.openQuestions).slice(0, 8),
+                sourceIds,
+                unresolvedSourceRefs: [
+                  ...new Set(chunkDossiers.flatMap((entry) => entry.unresolvedSourceRefs)),
+                ],
+                confidence:
+                  chunkDossiers.length > 0
+                    ? chunkDossiers.reduce((sum, entry) => sum + entry.confidence, 0) / chunkDossiers.length
+                    : 0.2,
+                workerSessionId: `source-bundles:${runId}:${topic.id}`,
+              };
+              const dossierIndex = topicIndexById.get(topic.id);
+              if (dossierIndex === undefined) {
+                throw new GemmaDesktopError("runtime_unavailable", `Missing dossier index for topic ${topic.id}.`);
+              }
+              dossiers[dossierIndex] = dossier;
+              await writeDossierArtifacts(topic, dossier);
+              if (stateEntry) {
+                stateEntry.status = "completed";
+                stateEntry.completedAt = new Date().toISOString();
+                stateEntry.summary = dossier.summary;
+                stateEntry.sourceCount = dossier.sourceIds.length;
+                if (stateEntry.worker) {
+                  stateEntry.worker.currentAction = "Source bundles summarized";
+                  stateEntry.worker.sourceCount = dossier.sourceIds.length;
+                  stateEntry.worker.resultSummary = dossier.summary;
+                  stateEntry.worker.timeline = upsertResearchWorkerTimelineEntry(
+                    stateEntry.worker.timeline,
+                    {
+                      id: `${topic.id}-source-bundles`,
+                      label: "Source bundles summarized",
+                      detail: dossier.summary,
+                      timestamp: new Date().toISOString(),
+                      tone: dossier.sourceIds.length > 0 ? "success" : "warning",
+                    },
+                  );
+                }
+              }
+              await writeState();
+              return;
+            }
             let workerResult: ToolSubsessionResult | undefined;
             let normalizedDossier: NormalizedDossierRecord | undefined;
             let sourceIds = new Set<string>();
@@ -5170,28 +5706,7 @@ export class ResearchRunner {
             }
             dossiers[dossierIndex] = dossier;
 
-            await writeJson(path.join(runDirectory, "dossiers", `${topic.id}.json`), dossier);
-            await writeText(
-              path.join(runDirectory, "dossiers", `${topic.id}.md`),
-              [
-                `# ${topic.title}`,
-                "",
-                dossier.summary,
-                dossier.findings.length > 0 ? ["", "## Findings", "", ...dossier.findings.map((finding) => `- ${finding}`)].join("\n") : "",
-                dossier.contradictions.length > 0
-                  ? ["", "## Contradictions", "", ...dossier.contradictions.map((entry) => `- ${entry}`)].join("\n")
-                  : "",
-                dossier.openQuestions.length > 0
-                  ? ["", "## Open Questions", "", ...dossier.openQuestions.map((entry) => `- ${entry}`)].join("\n")
-                  : "",
-                dossier.sourceIds.length > 0 ? ["", "## Source IDs", "", ...dossier.sourceIds.map((entry) => `- ${entry}`)].join("\n") : "",
-                dossier.unresolvedSourceRefs.length > 0
-                  ? ["", "## Unresolved Source Refs", "", ...dossier.unresolvedSourceRefs.map((entry) => `- ${entry}`)].join("\n")
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            );
+            await writeDossierArtifacts(topic, dossier);
 
             if (stateEntry) {
               stateEntry.status = "completed";
