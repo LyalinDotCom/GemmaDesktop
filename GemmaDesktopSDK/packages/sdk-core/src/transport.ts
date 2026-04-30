@@ -49,6 +49,35 @@ const REQUEST_IMAGE_MAX_LONG_EDGE = 2048;
 const requestImageCache = new Map<string, Promise<ResolvedRequestImage>>();
 const requestBinaryAssetCache = new Map<string, Promise<ResolvedRequestBinaryAsset>>();
 
+function errorFromAbortSignal(signal: AbortSignal | undefined, fallbackMessage: string): Error {
+  const reason: unknown = signal?.reason;
+  if (reason instanceof Error && !isAbortError(reason)) {
+    return reason;
+  }
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return new GemmaDesktopError("cancellation", reason);
+  }
+  return new GemmaDesktopError("cancellation", fallbackMessage);
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "name" in error
+    && (error as { name?: unknown }).name === "AbortError",
+  );
+}
+
+function suppressReaderClosedRejection(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void reader.closed.catch(() => {});
+}
+
+function cancelReaderSafely(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  suppressReaderClosedRejection(reader);
+  void reader.cancel().catch(() => {});
+}
+
 function headersToObject(headers: Headers): Record<string, string> {
   const entries: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -478,8 +507,8 @@ async function readStreamChunk(
   }
 
   if (signal?.aborted) {
-    await reader.cancel().catch(() => {});
-    throw new GemmaDesktopError("cancellation", "Stream cancelled.");
+    cancelReaderSafely(reader);
+    throw errorFromAbortSignal(signal, "Stream cancelled.");
   }
 
   return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
@@ -508,6 +537,10 @@ async function readStreamChunk(
       }
       settled = true;
       cleanup();
+      if (signal?.aborted && isAbortError(error)) {
+        reject(errorFromAbortSignal(signal, "Stream cancelled."));
+        return;
+      }
       reject(
         error instanceof Error
           ? error
@@ -516,8 +549,8 @@ async function readStreamChunk(
     };
 
     const onAbort = () => {
-      settleReject(new GemmaDesktopError("cancellation", "Stream cancelled."));
-      void reader.cancel().catch(() => {});
+      settleReject(errorFromAbortSignal(signal, "Stream cancelled."));
+      cancelReaderSafely(reader);
     };
 
     const onTimeout = () => {
@@ -530,7 +563,7 @@ async function readStreamChunk(
           },
         ),
       );
-      void reader.cancel().catch(() => {});
+      cancelReaderSafely(reader);
     };
 
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -547,6 +580,7 @@ export async function* parseSse(
   options: StreamReadTimeoutOptions = {},
 ): AsyncGenerator<SseMessage> {
   const reader = body.getReader();
+  suppressReaderClosedRejection(reader);
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -608,6 +642,7 @@ export async function* parseJsonLines(
   options: StreamReadTimeoutOptions = {},
 ): AsyncGenerator<Record<string, unknown>> {
   const reader = body.getReader();
+  suppressReaderClosedRejection(reader);
   const decoder = new TextDecoder();
   let buffer = "";
 

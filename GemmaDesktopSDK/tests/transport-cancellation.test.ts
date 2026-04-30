@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseJsonLines, parseSse } from "@gemma-desktop/sdk-core";
+import { GemmaDesktopError, parseJsonLines, parseSse } from "@gemma-desktop/sdk-core";
 
 function createHangingStream(onCancel: () => void): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -26,6 +26,26 @@ describe("transport stream cancellation", () => {
 
     await expect(next).rejects.toMatchObject({
       kind: "cancellation",
+    });
+    expect(cancelled).toBe(true);
+  });
+
+  it("preserves explicit abort reasons for pending SSE reads", async () => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const iterator = parseSse(
+      createHangingStream(() => {
+        cancelled = true;
+      }),
+      controller.signal,
+    )[Symbol.asyncIterator]();
+
+    const next = iterator.next();
+    controller.abort(new GemmaDesktopError("timeout", "Research synthesis made no structured-output progress."));
+
+    await expect(next).rejects.toMatchObject({
+      kind: "timeout",
+      message: "Research synthesis made no structured-output progress.",
     });
     expect(cancelled).toBe(true);
   });

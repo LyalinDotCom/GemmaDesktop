@@ -4637,6 +4637,11 @@ export function createResearchSubsessionBudgetGuard(
   let assistantChars = 0;
   let budgetFailureMessage: string | undefined;
 
+  const abortForBudgetFailure = (message: string): void => {
+    budgetFailureMessage = message;
+    budgetController.abort(new GemmaDesktopError("timeout", message));
+  };
+
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const armTimeout = (): void => {
     if (timeoutHandle) {
@@ -4647,9 +4652,7 @@ export function createResearchSubsessionBudgetGuard(
       const action = budget.timeoutMode === "idle"
         ? `made no structured-output progress for ${Math.ceil(budget.timeoutMs / 60_000)} minute${budget.timeoutMs === 60_000 ? "" : "s"}`
         : `exceeded the ${Math.ceil(budget.timeoutMs / 60_000)} minute time budget`;
-      budgetFailureMessage =
-        `${label} ${action} while generating structured output (${timeoutKind} budget).`;
-      budgetController.abort();
+      abortForBudgetFailure(`${label} ${action} while generating structured output (${timeoutKind} budget).`);
     }, budget.timeoutMs);
   };
 
@@ -4685,9 +4688,9 @@ export function createResearchSubsessionBudgetGuard(
         return;
       }
 
-      budgetFailureMessage =
-        `${label} exceeded the ${budget.maxAssistantChars.toLocaleString()} character structured-output budget and looks runaway.`;
-      budgetController.abort();
+      abortForBudgetFailure(
+        `${label} exceeded the ${budget.maxAssistantChars.toLocaleString()} character structured-output budget and looks runaway.`,
+      );
     },
     cleanup(): void {
       if (timeoutHandle) {
