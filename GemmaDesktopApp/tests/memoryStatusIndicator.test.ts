@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRuntimeParameterChips,
   describeMemoryModelBadges,
+  describeMemoryModelStack,
   describeMemoryModelStatus,
   findTokenUsageForModel,
   formatTokenCount,
+  isMemoryModelMlxOptimized,
   isMemoryModelVisible,
   MemoryStatusIndicator,
   MemoryStatusPanel,
@@ -52,6 +54,37 @@ describe('isMemoryModelVisible', () => {
     expect(describeMemoryModelStatus({ status: 'loading' })).toBe('Loading')
     expect(describeMemoryModelStatus({ status: 'loaded' })).toBe('Loaded')
     expect(describeMemoryModelStatus({ status: 'available' })).toBeNull()
+  })
+})
+
+describe('memory model compact labels', () => {
+  it('describes the runtime stack without the long adapter suffix', () => {
+    expect(describeMemoryModelStack({
+      runtimeId: 'ollama-native',
+      runtimeName: 'Ollama Native',
+    })).toBe('Ollama native')
+    expect(describeMemoryModelStack({
+      runtimeId: 'omlx-openai',
+      runtimeName: 'oMLX OpenAI-Compatible',
+    })).toBe('oMLX OpenAI')
+    expect(describeMemoryModelStack({
+      runtimeId: 'custom-runtime',
+      runtimeName: 'Custom Runtime',
+    })).toBe('Custom Runtime')
+  })
+
+  it('marks oMLX and MLX-tagged models as MLX optimized', () => {
+    expect(isMemoryModelMlxOptimized({
+      runtimeId: 'omlx-openai',
+    })).toBe(true)
+    expect(isMemoryModelMlxOptimized({
+      runtimeId: 'lmstudio-openai',
+      optimizationTags: ['MLX'],
+    })).toBe(true)
+    expect(isMemoryModelMlxOptimized({
+      runtimeId: 'ollama-native',
+      runtimeConfig: { provider: 'ollama' },
+    })).toBe(false)
   })
 })
 
@@ -224,7 +257,7 @@ describe('MemoryStatusIndicator layout', () => {
     expect(markup).not.toContain('role="tooltip"')
   })
 
-  it('renders loaded model details inside the pinned memory panel', () => {
+  it('renders a compact expandable row for loaded model details inside the pinned memory panel', () => {
     const markup = renderToStaticMarkup(
       createElement(MemoryStatusPanel, {
         systemStats,
@@ -237,7 +270,12 @@ describe('MemoryStatusIndicator layout', () => {
     )
 
     expect(markup).toContain('Model Memory (1)')
+    expect(markup).toContain('<details')
+    expect(markup).toContain('<summary')
+    expect(markup).not.toContain('<details open')
     expect(markup).toContain('Gemma 4 E2B')
+    expect(markup).toContain('Ollama native')
+    expect(markup).toContain('Not MLX')
     expect(markup).toContain('Main')
     expect(markup).toContain('Assistant helper')
     expect(markup).toContain('Q4_K_M')

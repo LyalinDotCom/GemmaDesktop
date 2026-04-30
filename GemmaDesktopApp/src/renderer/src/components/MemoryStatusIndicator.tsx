@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Layers } from 'lucide-react'
+import { ChevronDown, Layers } from 'lucide-react'
 import type {
   ModelSummary,
   ModelTokenUsageReport,
@@ -10,7 +10,7 @@ import type {
 /**
  * Compact RAM usage button plus the pinned model-memory panel used by the
  * sidebar. The button is intentionally tiny; the persistent panel carries the
- * dense runtime/model details without hiding them in hover-only UI.
+ * dense runtime/model details behind native expandable rows.
  */
 
 interface MemoryStatusDetailProps {
@@ -70,6 +70,35 @@ export function describeMemoryModelStatus(
     return 'Loaded'
   }
   return null
+}
+
+export function describeMemoryModelStack(
+  model: Pick<ModelSummary, 'runtimeId' | 'runtimeName'>,
+): string {
+  switch (model.runtimeId) {
+    case 'ollama-native':
+      return 'Ollama native'
+    case 'ollama-openai':
+      return 'Ollama OpenAI'
+    case 'lmstudio-native':
+      return 'LM Studio native'
+    case 'lmstudio-openai':
+      return 'LM Studio OpenAI'
+    case 'omlx-openai':
+      return 'oMLX OpenAI'
+    default:
+      return model.runtimeName
+  }
+}
+
+export function isMemoryModelMlxOptimized(
+  model: Pick<ModelSummary, 'runtimeId' | 'optimizationTags' | 'runtimeConfig'>,
+): boolean {
+  if (model.runtimeId.startsWith('omlx') || model.runtimeConfig?.provider === 'omlx') {
+    return true
+  }
+
+  return model.optimizationTags?.some((tag) => tag.toLowerCase().includes('mlx')) ?? false
 }
 
 const OLLAMA_PARAMETER_ORDER = [
@@ -333,7 +362,6 @@ export function MemoryStatusPanel({
         <div className="scrollbar-thin mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
           {visibleModels.map((model) => {
             const details = [
-              model.runtimeName,
               model.parameterCount,
               model.quantization,
             ].filter(Boolean)
@@ -347,93 +375,122 @@ export function MemoryStatusPanel({
             })
             const statusLabel = describeMemoryModelStatus(model)
             const usageForModel = findTokenUsageForModel(usageEntries, model)
+            const stackLabel = describeMemoryModelStack(model)
+            const mlxOptimized = isMemoryModelMlxOptimized(model)
 
             return (
-              <div
+              <details
                 key={`${model.runtimeId}:${model.id}`}
-                className="rounded-lg border border-zinc-200/80 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/80"
+                className="group rounded-lg border border-zinc-200/80 bg-white/90 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/80"
               >
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-800 dark:text-zinc-100">
-                    {model.name}
-                  </div>
-                  {badges.map((badge) => (
-                    <span
-                      key={`${model.runtimeId}:${model.id}:${badge}`}
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        badge === 'Assistant helper'
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-                          : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
-                      }`}
-                    >
-                      {badge}
-                    </span>
-                  ))}
-                  {statusLabel && (
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        model.status === 'loading'
-                          ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
-                          : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-                      }`}
-                    >
-                      {statusLabel}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {details.join(' · ')}
-                </div>
-                {runtimeChips.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {runtimeChips.map((chip) => (
-                      <span
-                        key={`${model.runtimeId}:${model.id}:${chip}`}
-                        className="rounded-full bg-zinc-200/80 px-2 py-0.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                      >
-                        {chip}
+                <summary className="flex cursor-pointer list-none items-start gap-2 px-2.5 py-1.5 outline-none transition-colors hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:hover:bg-zinc-900/80 dark:focus-visible:ring-zinc-700 [&::-webkit-details-marker]:hidden">
+                  <ChevronDown
+                    size={13}
+                    aria-hidden="true"
+                    className="mt-0.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180 dark:text-zinc-500"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                      <span className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-100">
+                        {model.name}
                       </span>
-                    ))}
-                  </div>
-                )}
-                <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-dashed border-zinc-200/70 pt-1.5 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-                  <span className="font-medium uppercase tracking-wide">
-                    Tokens
-                  </span>
-                  <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-200">
-                    {usageForModel
-                      ? formatTokenCount(usageForModel.totalTokens)
-                      : '0'}
-                  </span>
-                </div>
-                <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                  <span>
-                    in{' '}
-                    <span className="font-mono tabular-nums">
-                      {usageForModel ? formatTokenCount(usageForModel.inputTokens) : '0'}
-                    </span>
-                    {' · out '}
-                    <span className="font-mono tabular-nums">
-                      {usageForModel ? formatTokenCount(usageForModel.outputTokens) : '0'}
-                    </span>
-                    {usageForModel && usageForModel.reasoningTokens > 0 ? (
-                      <>
-                        {' · reason '}
-                        <span className="font-mono tabular-nums">
-                          {formatTokenCount(usageForModel.reasoningTokens)}
+                      {statusLabel && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            model.status === 'loading'
+                              ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
+                              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                          }`}
+                        >
+                          {statusLabel}
                         </span>
-                      </>
-                    ) : null}
-                  </span>
-                  <span>
-                    {usageForModel ? usageForModel.turns : 0} turn
-                    {usageForModel?.turns === 1 ? '' : 's'}
-                  </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] text-zinc-500 dark:text-zinc-400">
+                      <span className="truncate">{stackLabel}</span>
+                      <span
+                        className={`shrink-0 rounded-full px-1.5 py-px font-medium ${
+                          mlxOptimized
+                            ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300'
+                            : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400'
+                        }`}
+                      >
+                        {mlxOptimized ? 'MLX' : 'Not MLX'}
+                      </span>
+                    </div>
+                  </div>
+                </summary>
+                <div className="border-t border-zinc-200/70 px-3 pb-2 pt-1.5 dark:border-zinc-800">
+                  {badges.length > 0 && (
+                    <div className="mb-1.5 flex flex-wrap gap-1">
+                      {badges.map((badge) => (
+                        <span
+                          key={`${model.runtimeId}:${model.id}:${badge}`}
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            badge === 'Assistant helper'
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                              : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
+                          }`}
+                        >
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {details.length > 0 ? details.join(' · ') : stackLabel}
+                  </div>
+                  {runtimeChips.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {runtimeChips.map((chip) => (
+                        <span
+                          key={`${model.runtimeId}:${model.id}:${chip}`}
+                          className="rounded-full bg-zinc-200/80 px-2 py-0.5 text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                        >
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-dashed border-zinc-200/70 pt-1.5 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                    <span className="font-medium uppercase tracking-wide">
+                      Tokens
+                    </span>
+                    <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-200">
+                      {usageForModel
+                        ? formatTokenCount(usageForModel.totalTokens)
+                        : '0'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                    <span>
+                      in{' '}
+                      <span className="font-mono tabular-nums">
+                        {usageForModel ? formatTokenCount(usageForModel.inputTokens) : '0'}
+                      </span>
+                      {' · out '}
+                      <span className="font-mono tabular-nums">
+                        {usageForModel ? formatTokenCount(usageForModel.outputTokens) : '0'}
+                      </span>
+                      {usageForModel && usageForModel.reasoningTokens > 0 ? (
+                        <>
+                          {' · reason '}
+                          <span className="font-mono tabular-nums">
+                            {formatTokenCount(usageForModel.reasoningTokens)}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                    <span>
+                      {usageForModel ? usageForModel.turns : 0} turn
+                      {usageForModel?.turns === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {model.id}
+                  </div>
                 </div>
-                <div className="mt-1 truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                  {model.id}
-                </div>
-              </div>
+              </details>
             )
           })}
         </div>

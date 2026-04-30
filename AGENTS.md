@@ -193,7 +193,9 @@ When the user asks to commit, push, publish, or push to GitHub, interpret that a
 
 Do not create feature branches, draft PRs, or review branches as a default safety workflow in this repo. Do not import a generic GitHub publishing flow from tools, skills, or other repositories if it conflicts with this rule.
 
-If the user explicitly asks for a branch or PR, use the requested branch/PR flow. If the worktree contains unrelated changes, stop and clarify scope before staging. Otherwise, keep the direct-to-`main` path simple: inspect status, stage the intended files, commit, run the appropriate validation, and push `main`.
+If the user explicitly asks for a branch or PR, use the requested branch/PR flow. Otherwise, keep the direct-to-`main` path simple: inspect status, stage the intended files, commit, run the appropriate validation, and push `main`.
+
+Working directly on `main` with multiple agents is the user's preferred flow in this repository. When the user asks to commit, push, publish, or push to GitHub and the worktree contains unrelated changes, do not stop just to ask which files to include. Stage only the changes you made to the best of your ability, including partial hunks when another agent has edited the same file, leave unrelated work unstaged, and report what remains outside the commit. Ask for clarification only when you cannot separate your changes safely or the requested operation would require destructive cleanup.
 
 ## Live Model Safety
 
