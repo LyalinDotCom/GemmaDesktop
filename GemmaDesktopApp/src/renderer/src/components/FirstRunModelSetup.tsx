@@ -214,7 +214,7 @@ export function FirstRunModelSetup({
   const [runtimeId, setRuntimeId] = useState(runtimeChoices[0]?.id ?? 'ollama-native')
   const [selectedModel, setSelectedModel] = useState<ModelTarget | null>(null)
   const [manualModelId, setManualModelId] = useState('')
-  const [helperMatchesMain, setHelperMatchesMain] = useState(true)
+  const [helperMatchesMain, setHelperMatchesMain] = useState(false)
   const [selectedHelperModel, setSelectedHelperModel] = useState<ModelTarget | null>(null)
   const [manualHelperModelId, setManualHelperModelId] = useState('')
   const [omlxEndpoint, setOmlxEndpoint] = useState(runtimeSettings.omlx.endpoint)
@@ -427,7 +427,7 @@ export function FirstRunModelSetup({
                   <button
                     key={`${model.runtimeId}:${model.id}`}
                     type="button"
-                  onClick={() => {
+                    onClick={() => {
                       setSelectedModel({
                         runtimeId: model.runtimeId,
                         modelId: model.id,
@@ -470,84 +470,110 @@ export function FirstRunModelSetup({
               placeholder={runtimeId.startsWith('ollama') ? 'gemma4:26b' : 'model id'}
               className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
             />
-            <label className="mt-4 flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              <input
-                type="checkbox"
-                checked={helperMatchesMain}
-                onChange={(event) => {
-                  setHelperMatchesMain(event.target.checked)
-                  setSelectedHelperModel(null)
-                  setManualHelperModelId('')
-                  setError(null)
-                }}
-                className="h-3.5 w-3.5 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-700"
-              />
-              Use the main model for helper tasks
-            </label>
-
-            {!helperMatchesMain && (
-              <div className="mt-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h4 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                      Helper model
-                    </h4>
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                      Used for titles, summaries, narration, and small background tasks.
-                    </p>
-                  </div>
-                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    Same provider
-                  </span>
+            <div className="mt-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                    Helper model
+                  </h4>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Pick a smaller helper for titles, summaries, narration, and background tasks.
+                  </p>
                 </div>
-
-                {runtimeModels.length > 0 ? (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {runtimeModels.map((model) => (
-                      <button
-                        key={`helper:${model.runtimeId}:${model.id}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedHelperModel({
-                            runtimeId: model.runtimeId,
-                            modelId: model.id,
-                          })
-                          setManualHelperModelId('')
-                          setError(null)
-                        }}
-                        className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                          selectedHelperModel?.runtimeId === model.runtimeId
-                            && selectedHelperModel.modelId === model.id
-                            ? 'border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-950/40'
-                            : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
-                        }`}
-                      >
-                        <span className="block truncate font-medium text-zinc-800 dark:text-zinc-100">
-                          {model.name}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                          {model.id}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-
-                <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Or enter a helper model id
-                </label>
-                <input
-                  value={manualHelperModelId}
-                  onChange={(event) => {
-                    setManualHelperModelId(event.target.value)
-                    setSelectedHelperModel(null)
-                    setError(null)
-                  }}
-                  placeholder={runtimeId.startsWith('ollama') ? 'gemma4:e2b' : 'helper model id'}
-                  className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
-                />
+                <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHelperMatchesMain(false)
+                      setSelectedHelperModel(null)
+                      setManualHelperModelId('')
+                      setError(null)
+                    }}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      !helperMatchesMain
+                        ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-800 dark:text-indigo-300'
+                        : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    Choose helper
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHelperMatchesMain(true)
+                      setSelectedHelperModel(null)
+                      setManualHelperModelId('')
+                      setError(null)
+                    }}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      helperMatchesMain
+                        ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-800 dark:text-indigo-300'
+                        : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    Same as main
+                  </button>
+                </div>
               </div>
-            )}
+
+              {helperMatchesMain ? (
+                <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                  Helper tasks will use the selected main model.
+                </p>
+              ) : (
+                <>
+                  {runtimeModels.length > 0 ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {runtimeModels.map((model) => (
+                        <button
+                          key={`helper:${model.runtimeId}:${model.id}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedHelperModel({
+                              runtimeId: model.runtimeId,
+                              modelId: model.id,
+                            })
+                            setManualHelperModelId('')
+                            setError(null)
+                          }}
+                          className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                            selectedHelperModel?.runtimeId === model.runtimeId
+                              && selectedHelperModel.modelId === model.id
+                              ? 'border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-950/40'
+                              : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
+                          }`}
+                        >
+                          <span className="block truncate font-medium text-zinc-800 dark:text-zinc-100">
+                            {model.name}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {model.id}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                      No helper models are visible for this runtime yet.
+                    </p>
+                  )}
+
+                  <label className="mt-3 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                    Or enter a helper model id
+                  </label>
+                  <input
+                    value={manualHelperModelId}
+                    onChange={(event) => {
+                      setManualHelperModelId(event.target.value)
+                      setSelectedHelperModel(null)
+                      setError(null)
+                    }}
+                    placeholder={runtimeId.startsWith('ollama') ? 'gemma4:e2b' : 'helper model id'}
+                    className="mt-1.5 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-indigo-700"
+                  />
+                </>
+              )}
+            </div>
             {runtimeId === 'omlx-openai' && (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
