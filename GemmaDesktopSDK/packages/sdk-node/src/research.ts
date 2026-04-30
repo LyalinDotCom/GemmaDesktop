@@ -53,6 +53,58 @@ const SYNTHESIS_EVIDENCE_CARD_LIMIT = 18;
 const TOPIC_EVIDENCE_EXCERPT_CHARS = 700;
 const SYNTHESIS_EVIDENCE_EXCERPT_CHARS = 420;
 const EVIDENCE_SENTENCE_LIMIT = 3;
+const RESEARCH_REPORT_FORMATTING_RULES = [
+  "# Research Report Formatting Rules",
+  "",
+  "You are producing a research report. Follow this structure and these rules exactly.",
+  "",
+  "## Required structure (in order)",
+  "",
+  "1. **Title + dateline** — `# Topic` then a single italic line: *Location · Date · Scope of report*",
+  "",
+  "2. **TL;DR box** — A blockquote (`>`) with 2–4 sentences. Bold the 3–5 most important facts. This must answer the user's question on its own.",
+  "",
+  "3. **Key facts table** — A markdown table of the most important quantitative or categorical data points (numbers, dates, names, status). Skip only if the topic is purely qualitative.",
+  "",
+  "4. **What's happening** — Themed sections with `## H2` headers. Each section opens with a one-sentence takeaway in bold, then supporting bullets. No wall-of-text paragraphs longer than 3 sentences.",
+  "",
+  "5. **Timeline** — Required if the topic has 3+ dated events. Use a table: `Date | Event | Significance`.",
+  "",
+  "6. **Players & positions** — Required if 3+ named actors have stated views. Table: `Actor | Position | Source #`.",
+  "",
+  "7. **Consensus vs. disputed** — Two subsections under one `## H2`. List what sources agree on, then where they diverge. Be specific about who claims what.",
+  "",
+  "8. **Sources** — Numbered list at the bottom. Format: `[1] Publication — \"Article title\" — URL`",
+  "",
+  "## Citation rules (strict)",
+  "",
+  "- **Never** embed link titles inline. Use bracketed numbers: `[1]`, `[2,3]`.",
+  "- Each source gets ONE number, reused throughout.",
+  "- Maximum 2 citations per claim. If you have more, the claim is a consensus point — say \"multiple wire services [1,2,3]\" or move it to the consensus section.",
+  "- Sources list at end is the only place full titles + URLs appear.",
+  "",
+  "## Visual hierarchy rules",
+  "",
+  "- **Bold** proper nouns, organizations, and key facts on first mention only.",
+  "- Use tables for any comparison, 3+ data points, or actor/position mapping. Never use prose for this.",
+  "- Use status markers at the start of bullets when relevant: `🔴 Breaking` / `✅ Confirmed` / `⚠️ Disputed` / `🟡 Developing` / `📊 Data`",
+  "- Use blockquotes (`>`) for: the TL;DR, direct quotes under 15 words, and breaking developments worth highlighting.",
+  "- Bullets should be scannable: lead with the noun/event, not \"The fact that…\"",
+  "",
+  "## Prose rules",
+  "",
+  "- No paragraph longer than 3 sentences anywhere in the report.",
+  "- Lead every section and bullet with the conclusion, then evidence.",
+  "- Cut hedging language (\"it appears that\", \"reports suggest\") unless the source itself is uncertain — then say \"unconfirmed:\" explicitly.",
+  "- Numbers are written as digits and bolded when they're the point of the sentence (**660 drones**, not \"six hundred and sixty drones\").",
+  "",
+  "## What to cut",
+  "",
+  "- Don't repeat the same fact across sections.",
+  "- Don't include sources that only confirm what 3+ others already said — pick the most authoritative.",
+  "- Don't write transition sentences between sections. Headers do that work.",
+  "- Don't editorialize (\"notably\", \"significantly\", \"interestingly\").",
+].join("\n");
 
 function isStructuredOutputBudgetFailure(message: string | undefined): boolean {
   return typeof message === "string" && STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN.test(message);
@@ -1132,6 +1184,23 @@ function formatEvidenceCard(card: ResearchEvidenceCard): string {
     .join("\n");
 }
 
+function formatNumberedSynthesisEvidenceCard(card: ResearchEvidenceCard, index: number): string {
+  return [
+    `[${index + 1}] ${card.title}`,
+    `Source ID: ${card.sourceId}`,
+    `URL: ${card.url}`,
+    card.domain ? `Domain: ${card.domain}` : "",
+    card.signals.length > 0 ? `Signals: ${card.signals.join(", ")}` : "",
+    card.sourceDepth > 0 && card.parentSourceId
+      ? `Depth: ${card.sourceDepth} from ${card.parentSourceId}`
+      : `Depth: ${card.sourceDepth}`,
+    `Relevance score: ${card.relevanceScore}`,
+    `Evidence: ${card.excerpt}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function isCatalogStyleRequest(text: string): boolean {
   const normalized = text.toLowerCase();
   const enumerables =
@@ -1167,47 +1236,122 @@ function isCatalogStyleRequest(text: string): boolean {
   return false;
 }
 
+function formatResearchSourcePublication(source: ResearchSourceRecord): string {
+  const domain = source.domain ?? parseUrlDomain(source.resolvedUrl);
+  const outlet = [...MAINSTREAM_NEWS_OUTLETS, ...WIRE_NEWS_OUTLETS]
+    .find((candidate) => domain === candidate.domain || domain?.endsWith(`.${candidate.domain}`));
+  return outlet?.label ?? domain ?? "Source";
+}
+
+function formatResearchSourceListTitle(source: ResearchSourceRecord): string {
+  return normalizeInlineText((source.title ?? "").trim() || source.resolvedUrl).replace(/"/g, "'");
+}
+
+function selectReportCitationSources(
+  sources: ResearchSourceRecord[],
+  citedSourceIds: string[],
+): ResearchSourceRecord[] {
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  return dedupeStrings(citedSourceIds)
+    .map((sourceId) => sourceById.get(sourceId))
+    .filter((source): source is ResearchSourceRecord => Boolean(source));
+}
+
+function formatResearchSourcesSection(citationSources: ResearchSourceRecord[]): string {
+  return [
+    "## Sources",
+    "",
+    ...citationSources.map((source, index) =>
+      `[${index + 1}] ${formatResearchSourcePublication(source)} — "${formatResearchSourceListTitle(source)}" — ${source.resolvedUrl}`
+    ),
+  ].join("\n");
+}
+
+function stripExistingResearchSourcesSection(reportMarkdown: string): string {
+  return reportMarkdown
+    .replace(/\n{0,2}##\s+(?:Sources|References)\b[\s\S]*$/i, "")
+    .trimEnd();
+}
+
+function normalizeResearchSourceUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.toString().replace(/\/$/u, "");
+  } catch {
+    return undefined;
+  }
+}
+
 function enhanceReportWithSourceLinks(
   reportMarkdown: string,
   sources: ResearchSourceRecord[],
-  _citedSourceIds: string[],
+  citedSourceIds: string[],
 ): string {
-  const sourceById = new Map(sources.map((source) => [source.id, source]));
-  const linkFor = (sourceId: string): string | undefined => {
-    const source = sourceById.get(sourceId);
-    if (!source) {
+  const citationSources = selectReportCitationSources(sources, citedSourceIds);
+  const sourceNumberById = new Map(citationSources.map((source, index) => [source.id, index + 1]));
+  const sourceNumberByUrl = new Map<string, number>();
+  for (const source of citationSources) {
+    const sourceNumber = sourceNumberById.get(source.id);
+    if (!sourceNumber) {
+      continue;
+    }
+    for (const url of [source.resolvedUrl, source.requestedUrl]) {
+      const normalizedUrl = normalizeResearchSourceUrl(url);
+      if (normalizedUrl) {
+        sourceNumberByUrl.set(normalizedUrl, sourceNumber);
+      }
+    }
+  }
+  const citationFor = (sourceId: string): string | undefined => {
+    const sourceNumber = sourceNumberById.get(sourceId);
+    return sourceNumber ? `[${sourceNumber}]` : undefined;
+  };
+  const citationForGroup = (inner: string): string | undefined => {
+    const ids = inner
+      .split(",")
+      .map((segment) => segment.trim())
+      .filter((segment) => /^source-\d+$/u.test(segment));
+    const sourceNumbers = ids.map((id) => sourceNumberById.get(id));
+    if (sourceNumbers.length === 0 || sourceNumbers.some((sourceNumber) => sourceNumber === undefined)) {
       return undefined;
     }
-    const label = (source.title ?? "").trim() || source.resolvedUrl;
-    return `[${label}](${source.resolvedUrl})`;
+    return `[${sourceNumbers.join(",")}]`;
+  };
+  const citationForUrl = (url: string): string | undefined => {
+    const normalizedUrl = normalizeResearchSourceUrl(url);
+    if (!normalizedUrl) {
+      return undefined;
+    }
+    const sourceNumber = sourceNumberByUrl.get(normalizedUrl);
+    return sourceNumber ? `[${sourceNumber}]` : undefined;
   };
 
-  let result = reportMarkdown.replace(
+  let result = stripExistingResearchSourcesSection(reportMarkdown).replace(
     /\[((?:\s*source-\d+\s*,\s*)+\s*source-\d+\s*)\](?!\()/g,
     (match, inner: string) => {
-      const ids = inner
-        .split(",")
-        .map((segment) => segment.trim())
-        .filter((segment) => /^source-\d+$/.test(segment));
-      const links = ids.map((id) => linkFor(id));
-      if (links.some((link) => link === undefined)) {
-        return match;
-      }
-      return links.join(", ");
+      return citationForGroup(inner) ?? match;
     },
   );
 
   result = result.replace(
     /\[(source-\d+)\](?!\()/g,
-    (match, sourceId: string) => linkFor(sourceId) ?? match,
+    (match, sourceId: string) => citationFor(sourceId) ?? match,
   );
 
   result = result.replace(
     /\[(source-\d+)\]\([^)]*\)/g,
-    (match, sourceId: string) => linkFor(sourceId) ?? match,
+    (match, sourceId: string) => citationFor(sourceId) ?? match,
   );
 
-  return result;
+  result = result.replace(
+    /\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/g,
+    (match, url: string) => citationForUrl(url) ?? match,
+  );
+
+  return citationSources.length > 0
+    ? `${result.trimEnd()}\n\n${formatResearchSourcesSection(citationSources)}`
+    : result;
 }
 
 function extractCatalogDomainHints(text: string): string[] {
@@ -4356,10 +4500,20 @@ function buildSourceBackedFinalSynthesis(
   const formattedFallbackIssues = fallbackIssues.map((issue) => issue.replace(/[.]+$/g, ""));
   const criticalWarnings = formattedFallbackIssues.map((issue) => formatCriticalResearchWarning(issue));
   const gapsRemaining = options.gapsRemaining?.filter(Boolean) ?? [];
+  const dossierConfidence =
+    dossiers.length > 0
+      ? dossiers.reduce((sum, dossier) => sum + dossier.confidence, 0) / dossiers.length
+      : 0.2;
+  const confidence = clampConfidence(Math.min(0.72, dossierConfidence * 0.85));
   const openQuestions = cleanFallbackOpenQuestions([
     ...dossiers.flatMap((dossier) => dossier.openQuestions),
     ...gapsRemaining,
   ]);
+  const fallbackContradictions = dossiers
+    .flatMap((dossier) => dossier.contradictions)
+    .map((entry) => cleanFallbackReportEntry(entry))
+    .filter((entry): entry is string => Boolean(entry))
+    .slice(0, 6);
   const sections = dossiers.map((dossier) => {
     const sectionSourceIds = dossier.sourceIds.filter((sourceId) => selectedSourceSet.has(sourceId));
     const sectionCitation = compactSourceMarker(sectionSourceIds, 3);
@@ -4375,13 +4529,13 @@ function buildSourceBackedFinalSynthesis(
       const sourceId = sectionSourceIds[index] ?? sectionSourceIds[0];
       return `- ${finding}${sourceId ? compactSourceMarker([sourceId], 1) : sectionCitation}`;
     });
-    const contradictionLines = contradictions.map((entry) => `- ${entry}${sectionCitation}`);
+    const contradictionLines = contradictions.map((entry) => `- ⚠️ Disputed ${entry}${sectionCitation}`);
     return [
       `## ${dossier.title}`,
       "",
-      `${dossier.summary}${sectionCitation}`,
-      findingLines.length > 0 ? ["", "### Findings", "", ...findingLines].join("\n") : "",
-      contradictionLines.length > 0 ? ["", "### Contradictions", "", ...contradictionLines].join("\n") : "",
+      `**${dossier.summary}**${sectionCitation}`,
+      findingLines.length > 0 ? ["", ...findingLines].join("\n") : "",
+      contradictionLines.length > 0 ? ["", ...contradictionLines].join("\n") : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -4400,25 +4554,54 @@ function buildSourceBackedFinalSynthesis(
       .map((entry) => normalizeInlineText(entry ?? ""))
       .find((entry) => entry.length >= 48)
     ?? normalizeInlineText(plan.objective || brief.objective || "Research findings.");
+  const reportTitle = normalizeInlineText(brief.subject || "Research Report");
+  const reportScope = normalizeInlineText(plan.scopeSummary || brief.scopeSummary || brief.objective || "Requested research scope");
+  const tldrSentences = [
+    `**${reportTitle}** is grounded in **${selectedSourceIds.length} fetched source${selectedSourceIds.length === 1 ? "" : "s"}** across **${dossiers.length} topic dossier${dossiers.length === 1 ? "" : "s"}**.`,
+    `**${reportSummary}**`,
+    criticalWarnings.length > 0 ? `**Fallback synthesis** was used because ${criticalWarnings[0]}.` : "",
+  ].filter(Boolean);
+  const keyFacts = [
+    "| Fact | Value |",
+    "| --- | --- |",
+    `| Subject | ${reportTitle} |`,
+    `| Scope | ${reportScope} |`,
+    `| Sources used | ${selectedSourceIds.length} |`,
+    `| Topics covered | ${dossiers.length} |`,
+    `| Confidence | ${Math.round(confidence * 100)}% |`,
+  ];
+  const consensusSectionCitation = compactSourceMarker(selectedSourceIds, 2);
   const reportMarkdown = [
-    "# Research Report",
+    `# ${reportTitle}`,
     "",
-    `## Summary`,
+    `*Online · ${formatResearchCurrentDate()} · ${reportScope}*`,
     "",
-    reportSummary,
+    `> ${tldrSentences.join(" ")}`,
+    "",
+    ...keyFacts,
     criticalWarnings.length > 0
       ? ["", "## Critical Research Warnings", "", ...criticalWarnings.map((entry) => `- ${entry}`)].join("\n")
       : "",
     "",
     ...sections,
+    [
+      "",
+      "## Consensus vs. disputed",
+      "",
+      "### Consensus",
+      "",
+      `- The filtered evidence supports the topic summaries above${consensusSectionCitation}.`,
+      "",
+      "### Disputed",
+      "",
+      fallbackContradictions.length > 0
+        ? fallbackContradictions.map((entry) => `- ⚠️ Disputed ${entry}${consensusSectionCitation}`).join("\n")
+        : "- No material source disagreement surfaced in the filtered evidence.",
+    ].join("\n"),
     coverageNotes.length > 0 ? ["", "## Coverage Notes", "", ...coverageNotes.map((entry) => `- ${entry}`)].join("\n") : "",
   ]
     .filter(Boolean)
     .join("\n");
-  const dossierConfidence =
-    dossiers.length > 0
-      ? dossiers.reduce((sum, dossier) => sum + dossier.confidence, 0) / dossiers.length
-      : 0.2;
   return {
     summary:
       selectedSourceIds.length > 0
@@ -4427,7 +4610,7 @@ function buildSourceBackedFinalSynthesis(
     reportMarkdown,
     openQuestions,
     sourceIds: selectedSourceIds,
-    confidence: clampConfidence(Math.min(0.72, dossierConfidence * 0.85)),
+    confidence,
   };
 }
 
@@ -4466,30 +4649,25 @@ function buildSynthesisPrompt(
     ].join("\n\n"),
     [
       `Cited evidence cards (${evidenceCards.length}/${sources.length} fetched sources shown):`,
-      ...evidenceCards.map((card) => formatEvidenceCard(card)),
+      ...evidenceCards.map((card, index) => formatNumberedSynthesisEvidenceCard(card, index)),
     ].join("\n\n"),
-    "Write a clear final research report in markdown.",
+    "Write a clear final research report in markdown using the Research Report Formatting Rules from your system instructions exactly.",
     "Prefer a compact, evidence-dense report over a long narrative. Cover the requested dimensions, but do not restate every source card.",
-    "Keep reportMarkdown under 1,400 words and do not include a bibliography; inline citations are enough.",
+    "Keep reportMarkdown under 1,400 words while preserving every required section that applies.",
     "Preserve disagreements in the report when they affect the answer; keep unresolved questions as metadata in openQuestions, not as a report section.",
     "Do not include `Open Questions`, `Source Context`, `Evidence Context`, or internal-notes sections in reportMarkdown.",
     "Use only the topic dossiers and cited evidence cards as authoritative evidence for this synthesis.",
     "Do not inject outside knowledge to correct or overwrite the gathered evidence set.",
-    [
-      "Citation style:",
-      "- Cite sources inline with short `[source-N]` markers right after the claim, e.g. `Gemma 4 was released [source-2]`.",
-      "- Group related sources in one bracket when they back the same claim, e.g. `[source-2, source-14, source-23]`.",
-      "- Do NOT write a `## Sources`, `## References`, or any bibliography/index section — citations belong inline only.",
-      "- Do NOT repeat or list source URLs in the prose; the markers are enough.",
-    ].join("\n"),
+    "Use the bracketed numbers assigned to the cited evidence cards for reportMarkdown citations and the bottom Sources list.",
+    "Return sourceIds as the underlying source IDs from the evidence cards, such as `source-1`, not numeric citation labels.",
     brief.taskType === "news-sweep"
-      ? "For news sweeps, use markdown sections titled exactly: Front Page Emphasis, Latest Story Coverage, and Consensus and Divergence."
+      ? "For news sweeps, the themed `##` sections should cover front-page emphasis and latest story coverage when the gathered evidence supports them."
       : "",
     brief.taskType === "news-sweep"
       ? "If the gathered coverage is thin, stale, or overly concentrated in a few outlets, say so plainly instead of pretending the run was exhaustive."
       : "",
     "Use this exact shape:",
-    "{\"summary\":\"...\",\"reportMarkdown\":\"# Report\\n...\",\"openQuestions\":[\"...\"],\"sourceIds\":[\"source-1\"],\"confidence\":0.0}",
+    "{\"summary\":\"...\",\"reportMarkdown\":\"# Topic\\n*Location · Date · Scope of report*\\n\\n> ...\",\"openQuestions\":[\"...\"],\"sourceIds\":[\"source-1\"],\"confidence\":0.0}",
     "Allowed keys are only: summary, reportMarkdown, openQuestions, sourceIds, confidence.",
     "Return only a JSON object that matches the requested schema.",
   ];
@@ -7103,6 +7281,7 @@ export class ResearchRunner {
                 synthesisRetryIssues,
               ),
               mode: "minimal",
+              systemInstructions: RESEARCH_REPORT_FORMATTING_RULES,
               responseFormat: synthesisResponseFormat,
               maxSteps: normalizedOptions.profile === "quick" ? 3 : 4,
               metadata: buildResearchSubsessionMetadata({

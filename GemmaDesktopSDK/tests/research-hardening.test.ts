@@ -392,10 +392,15 @@ describe("research content-quality hardening", () => {
       );
 
       expect(synthesis.reportMarkdown).not.toContain("runtime_catalog:");
+      expect(synthesis.reportMarkdown).toContain("# Gemma 4");
+      expect(synthesis.reportMarkdown).toContain("*Online ·");
+      expect(synthesis.reportMarkdown).toContain("> **Gemma 4**");
+      expect(synthesis.reportMarkdown).toContain("| Sources used | 2 |");
       expect(synthesis.reportMarkdown).toContain("- Ollama lists Gemma 4 26B and 31B runtime variants. [source-1]");
       expect(synthesis.reportMarkdown).not.toContain("## Source Context");
       expect(synthesis.reportMarkdown).not.toContain("## Open Questions\n\n- The model synthesis coordinator");
       expect(synthesis.reportMarkdown).toContain("## Critical Research Warnings");
+      expect(synthesis.reportMarkdown).toContain("## Consensus vs. disputed");
       expect(synthesis.reportMarkdown).toContain("Model synthesis fallback was used");
       expect(synthesis.reportMarkdown).not.toContain("exceeded..");
       expect(synthesis.openQuestions).toEqual(["Which quantization is best for each machine?"]);
@@ -598,7 +603,7 @@ describe("research content-quality hardening", () => {
       expect(assessment.missingSourceFamilies).toContain("reference_github_docs");
     });
 
-    it("rewrites [source-N] markers as titled inline markdown links and does not append a Sources section", () => {
+    it("rewrites [source-N] markers as numbered citations and appends a Sources section", () => {
       const sources = [
         {
           id: "source-1",
@@ -638,15 +643,17 @@ describe("research content-quality hardening", () => {
         sources,
         ["source-1", "source-2"],
       );
+      expect(enhanced).toContain("Genie 3 announced [1]. Reuters covered the merger [2].");
+      expect(enhanced).toContain("## Sources");
       expect(enhanced).toContain(
-        "[Genie 3: A new frontier for world models](https://deepmind.google/blog/genie-3/)",
+        `[1] deepmind.google — "Genie 3: A new frontier for world models" — https://deepmind.google/blog/genie-3/`,
       );
-      expect(enhanced).toContain("[https://reuters.com/article](https://reuters.com/article)");
+      expect(enhanced).toContain(`[2] Reuters — "https://reuters.com/article" — https://reuters.com/article`);
       expect(enhanced).not.toMatch(/\[source-\d+\]/);
-      expect(enhanced).not.toMatch(/^##\s+Sources/im);
+      expect(enhanced).not.toContain("](https://deepmind.google/blog/genie-3/)");
     });
 
-    it("expands grouped [source-N, source-M, ...] brackets into multiple titled inline links", () => {
+    it("expands grouped [source-N, source-M, ...] brackets into one numbered citation group", () => {
       const sources = [
         {
           id: "source-2",
@@ -702,13 +709,14 @@ describe("research content-quality hardening", () => {
         sources,
         ["source-2", "source-14", "source-23"],
       );
-      expect(enhanced).toContain("[Fox News](https://foxnews.com/)");
-      expect(enhanced).toContain("[DeepMind News](https://deepmind.google/blog/)");
-      expect(enhanced).toContain("[Google Cloud blog](https://cloud.google.com/blog)");
+      expect(enhanced).toContain("The Gemma 4 release was covered [1,2,3].");
+      expect(enhanced).toContain(`[1] Fox News — "Fox News" — https://foxnews.com/`);
+      expect(enhanced).toContain(`[2] deepmind.google — "DeepMind News" — https://deepmind.google/blog/`);
+      expect(enhanced).toContain(`[3] cloud.google.com — "Google Cloud blog" — https://cloud.google.com/blog`);
       expect(enhanced).not.toMatch(/\[source-\d+/);
     });
 
-    it("replaces [source-N](url) with [Title](registry-url) so link text is never just 'source-N'", () => {
+    it("replaces [source-N](url) with a numbered citation", () => {
       const sources = [
         {
           id: "source-25",
@@ -732,13 +740,14 @@ describe("research content-quality hardening", () => {
         sources,
         ["source-25"],
       );
+      expect(enhanced).toContain("Agile Robots partnership [1].");
       expect(enhanced).toContain(
-        "[Agile Robots partners with Google DeepMind](https://techcrunch.com/2026/03/24/agile-robots/)",
+        `[1] techcrunch.com — "Agile Robots partners with Google DeepMind" — https://techcrunch.com/2026/03/24/agile-robots/`,
       );
       expect(enhanced).not.toContain("[source-25]");
     });
 
-    it("preserves natural inline markdown links without appending a Sources section", () => {
+    it("normalizes natural inline source links to numbered citations", () => {
       const sources = [
         {
           id: "source-1",
@@ -759,8 +768,9 @@ describe("research content-quality hardening", () => {
       ];
       const report = "# Report\n\nThe [Example announcement](https://example.com/) explained the update.";
       const enhanced = __testOnly.enhanceReportWithSourceLinks(report, sources, ["source-1"]);
-      expect(enhanced).toBe(report);
-      expect(enhanced).not.toMatch(/^##\s+Sources/im);
+      expect(enhanced).toContain("The [1] explained the update.");
+      expect(enhanced).toContain(`[1] example.com — "Example" — https://example.com/`);
+      expect(enhanced).not.toContain("[Example announcement](https://example.com/)");
     });
 
     it("schedules hub-page follow-up queries when an official reference is fetched without subpages", () => {

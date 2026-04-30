@@ -74,6 +74,16 @@ function getLastUserPrompt(request: Record<string, unknown>): string {
     : "";
 }
 
+function getSystemPrompt(request: Record<string, unknown>): string {
+  const messages = Array.isArray(request.messages)
+    ? request.messages as Array<Record<string, unknown>>
+    : [];
+  const systemMessage = messages.find((message) => message.role === "system");
+  return typeof systemMessage?.content === "string"
+    ? systemMessage.content
+    : "";
+}
+
 function configureMockSearchEndpoints(serverUrl: string, path = "/html"): void {
   const endpoint = `${serverUrl}${path}`;
   process.env.GEMMA_DESKTOP_GOOGLE_SEARCH_ENDPOINT = endpoint;
@@ -293,8 +303,10 @@ describe("research runs", { timeout: 120000 }, () => {
       "Do not return topic, status, mission_overview, timeline, milestones, or sources objects.",
     );
     expect(getLastUserPrompt(requests[3]!)).toContain(
-      "{\"summary\":\"...\",\"reportMarkdown\":\"# Report\\n...\",\"openQuestions\":[\"...\"],\"sourceIds\":[\"source-1\"],\"confidence\":0.0}",
+      "{\"summary\":\"...\",\"reportMarkdown\":\"# Topic\\n*Location · Date · Scope of report*\\n\\n> ...\",\"openQuestions\":[\"...\"],\"sourceIds\":[\"source-1\"],\"confidence\":0.0}",
     );
+    expect(getSystemPrompt(requests[3]!)).toContain("# Research Report Formatting Rules");
+    expect(getSystemPrompt(requests[3]!)).toContain("Sources list at end is the only place full titles + URLs appear.");
     expect(hits.get("/html") ?? 0).toBeGreaterThanOrEqual(2);
     expect(hits.get("/article-a") ?? 0).toBeGreaterThanOrEqual(1);
     expect(hits.get("/article-b") ?? 0).toBeGreaterThanOrEqual(1);
