@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '../src/shared/globalChat'
 import { FirstRunModelSetup } from '../src/renderer/src/components/FirstRunModelSetup'
 import { shouldShowFirstRunModelSetup } from '../src/renderer/src/lib/firstRunModelSetup'
 import type { BootstrapState, ModelSummary, RuntimeSummary, SessionSummary } from '../src/renderer/src/types'
@@ -38,8 +39,11 @@ const emptySidebar: Pick<SidebarState, 'lastActiveSessionId' | 'projectPaths'> =
   projectPaths: [],
 }
 
-function session(id: string): Pick<SessionSummary, 'id'> {
-  return { id }
+function session(
+  id: string,
+  overrides: Partial<Pick<SessionSummary, 'lastMessage'>> = {},
+): Pick<SessionSummary, 'id' | 'lastMessage'> {
+  return { id, lastMessage: '', ...overrides }
 }
 
 describe('FirstRunModelSetup', () => {
@@ -106,6 +110,26 @@ describe('shouldShowFirstRunModelSetup', () => {
       bootstrapState: idleBootstrap,
       sidebar: emptySidebar,
       sessions: [session('session-1')],
+    })).toBe(false)
+  })
+
+  it('does not treat the empty built-in Assistant Chat as existing workspace state', () => {
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: emptySidebar,
+      sessions: [session(GLOBAL_CHAT_FALLBACK_SESSION_ID)],
+    })).toBe(true)
+  })
+
+  it('treats a used built-in Assistant Chat as existing user state', () => {
+    expect(shouldShowFirstRunModelSetup({
+      startupRiskAccepted: true,
+      dismissed: false,
+      bootstrapState: idleBootstrap,
+      sidebar: emptySidebar,
+      sessions: [session(GLOBAL_CHAT_FALLBACK_SESSION_ID, { lastMessage: 'hi' })],
     })).toBe(false)
   })
 

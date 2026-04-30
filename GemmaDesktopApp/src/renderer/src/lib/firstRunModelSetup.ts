@@ -1,4 +1,5 @@
 import type { SidebarState } from '@shared/sidebar'
+import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '@shared/globalChat'
 import type { BootstrapState, SessionSummary } from '@/types'
 
 export const FIRST_RUN_MODEL_SETUP_DISMISSED_KEY =
@@ -6,10 +7,15 @@ export const FIRST_RUN_MODEL_SETUP_DISMISSED_KEY =
 
 function hasExistingWorkspaceState(
   sidebar: Pick<SidebarState, 'lastActiveSessionId' | 'projectPaths'>,
-  sessions: Pick<SessionSummary, 'id'>[],
+  sessions: Pick<SessionSummary, 'id' | 'lastMessage'>[],
 ): boolean {
+  const userCreatedSessions = sessions.filter((session) => (
+    session.id !== GLOBAL_CHAT_FALLBACK_SESSION_ID
+    || session.lastMessage.trim().length > 0
+  ))
+
   return (
-    sessions.length > 0
+    userCreatedSessions.length > 0
     || sidebar.projectPaths.length > 0
     || Boolean(sidebar.lastActiveSessionId)
   )
@@ -26,7 +32,7 @@ export function shouldShowFirstRunModelSetup({
   dismissed: boolean
   bootstrapState: Pick<BootstrapState, 'status'>
   sidebar: Pick<SidebarState, 'lastActiveSessionId' | 'projectPaths'>
-  sessions: Pick<SessionSummary, 'id'>[]
+  sessions: Pick<SessionSummary, 'id' | 'lastMessage'>[]
 }): boolean {
   return (
     startupRiskAccepted
