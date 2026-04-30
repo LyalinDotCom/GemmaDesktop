@@ -438,6 +438,7 @@ export interface MediaPermissionRequestResult {
   status: DoctorPermissionStatus | string
   previousStatus?: DoctorPermissionStatus | string
   prompted?: boolean
+  timedOut?: boolean
   requiresSettings?: boolean
 }
 

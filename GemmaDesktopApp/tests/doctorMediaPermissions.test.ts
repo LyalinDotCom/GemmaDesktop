@@ -34,6 +34,19 @@ describe('Doctor media permission requests', () => {
     )
   })
 
+  it('explains when the native camera request timed out before browser media could prompt', () => {
+    expect(describeMediaPermissionRequest('camera', {
+      granted: false,
+      status: 'not-determined',
+      previousStatus: 'not-determined',
+      prompted: true,
+      timedOut: true,
+      requiresSettings: false,
+    }, 'Permission dismissed')).toBe(
+      'Camera access did not finish through macOS (Permission dismissed). Open System Settings > Privacy & Security > Camera and check whether Gemma Desktop is listed.',
+    )
+  })
+
   it('requests microphone access through getUserMedia and stops the temporary stream', async () => {
     const stop = vi.fn()
     const getUserMedia = vi.fn(async () => ({
@@ -73,5 +86,27 @@ describe('Doctor media permission requests', () => {
       error: 'Permission dismissed',
     })
     expect(getUserMedia).toHaveBeenCalledWith({ video: true, audio: false })
+  })
+
+  it('times out a hanging browser camera prompt', async () => {
+    vi.useFakeTimers()
+    const getUserMedia = vi.fn(() => new Promise<MediaStream>(() => {}))
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        mediaDevices: {
+          getUserMedia,
+        },
+      },
+    })
+
+    const pending = requestBrowserMediaPermission('camera')
+    await vi.advanceTimersByTimeAsync(4000)
+
+    await expect(pending).resolves.toEqual({
+      granted: false,
+      error: 'camera prompt timed out',
+    })
+    vi.useRealTimers()
   })
 })

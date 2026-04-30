@@ -17017,14 +17017,20 @@ export function registerIpcHandlers(): void {
       }
     }
 
-    const granted = await systemPreferences.askForMediaAccess(kind)
+    const granted = await Promise.race([
+      systemPreferences.askForMediaAccess(kind),
+      new Promise<'timed-out'>((resolve) => {
+        setTimeout(() => resolve('timed-out'), 2500)
+      }),
+    ])
     const nextStatus = systemPreferences.getMediaAccessStatus(kind)
 
     return {
-      granted,
+      granted: granted === true,
       status: nextStatus,
       previousStatus: currentStatus,
       prompted: currentStatus === 'not-determined',
+      timedOut: granted === 'timed-out',
       requiresSettings: nextStatus === 'denied' || nextStatus === 'restricted',
     }
   }
