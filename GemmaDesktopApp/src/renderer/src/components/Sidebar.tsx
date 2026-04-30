@@ -52,7 +52,7 @@ import {
 
 type SidebarSearchStatus = 'idle' | 'searching' | 'ready' | 'error'
 
-const PINNED_AREA_EMOJIS = [
+const PINNED_AREA_EMOJI_SUGGESTIONS = [
   { emoji: '⭐', words: 'star favorite important pinned' },
   { emoji: '🔥', words: 'fire hot urgent active' },
   { emoji: '🧪', words: 'test experiment lab regression' },
@@ -299,6 +299,7 @@ export function Sidebar({
   )
   const renameRef = useRef<HTMLInputElement>(null)
   const pinnedAreaIconInputRef = useRef<HTMLInputElement>(null)
+  const emojiPanelOpenTimeoutRef = useRef<number | null>(null)
   const searchTimeoutRef = useRef<number | null>(null)
   const searchRequestRef = useRef(0)
 
@@ -371,6 +372,9 @@ export function Sidebar({
 
   useEffect(
     () => () => {
+      if (emojiPanelOpenTimeoutRef.current !== null) {
+        window.clearTimeout(emojiPanelOpenTimeoutRef.current)
+      }
       if (searchTimeoutRef.current !== null) {
         window.clearTimeout(searchTimeoutRef.current)
       }
@@ -476,9 +480,9 @@ export function Sidebar({
   const filteredPinnedAreaEmojis = useMemo(() => {
     const query = pinnedAreaIconSearch.trim().toLowerCase()
     if (!query) {
-      return PINNED_AREA_EMOJIS
+      return PINNED_AREA_EMOJI_SUGGESTIONS
     }
-    return PINNED_AREA_EMOJIS.filter((entry) =>
+    return PINNED_AREA_EMOJI_SUGGESTIONS.filter((entry) =>
       entry.emoji.includes(query) || entry.words.includes(query),
     )
   }, [pinnedAreaIconSearch])
@@ -493,6 +497,18 @@ export function Sidebar({
     void window.gemmaDesktopBridge.system.openEmojiPanel().catch((error) => {
       console.error('Failed to open emoji picker:', error)
     })
+  }
+
+  const scheduleSystemEmojiPanelOpen = () => {
+    if (emojiPanelOpenTimeoutRef.current !== null) {
+      window.clearTimeout(emojiPanelOpenTimeoutRef.current)
+    }
+    emojiPanelOpenTimeoutRef.current = window.setTimeout(() => {
+      emojiPanelOpenTimeoutRef.current = null
+      if (pinnedAreaIconInputRef.current) {
+        openSystemEmojiPanel()
+      }
+    }, 0)
   }
 
   const handleReloadModels = async () => {
@@ -516,6 +532,7 @@ export function Sidebar({
     setPinnedAreaIconSearch('')
     setPinAreaMenu(null)
     setContextMenu(null)
+    scheduleSystemEmojiPanelOpen()
   }
 
   const openEditPinnedAreaDialog = (areaId: string, icon: string) => {
@@ -524,6 +541,7 @@ export function Sidebar({
     setPinnedAreaIconSearch('')
     setPinAreaMenu(null)
     setContextMenu(null)
+    scheduleSystemEmojiPanelOpen()
   }
 
   const pinSessionToArea = (sessionId: string, areaId: string) => {
@@ -2008,14 +2026,17 @@ export function Sidebar({
                 <button
                   type="button"
                   onClick={openSystemEmojiPanel}
-                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:border-sky-500/35 dark:hover:bg-sky-500/15 dark:hover:text-sky-300"
+                  className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-600 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:border-sky-500/35 dark:hover:bg-sky-500/15 dark:hover:text-sky-300"
                   title="Open macOS emoji picker"
                   aria-label="Open macOS emoji picker"
                 >
                   <SmilePlus size={16} />
+                  <span>All macOS emoji</span>
                 </button>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
                 <label htmlFor="pinned-area-icon-search" className="sr-only">
-                  Search quick picks
+                  Filter suggestions
                 </label>
                 <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
                   <Search size={14} className="flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
@@ -2023,7 +2044,7 @@ export function Sidebar({
                     id="pinned-area-icon-search"
                     value={pinnedAreaIconSearch}
                     onChange={(event) => setPinnedAreaIconSearch(event.target.value)}
-                    placeholder="Search quick picks"
+                    placeholder="Filter suggestions"
                     className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                   />
                 </div>
@@ -2048,7 +2069,7 @@ export function Sidebar({
               </div>
               {pinnedAreaIconSearch.trim() && filteredPinnedAreaEmojis.length === 0 && (
                 <div className="mt-3 text-xs text-zinc-500">
-                  No matching icons.
+                  No matching suggestions.
                 </div>
               )}
             </div>
