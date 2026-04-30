@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Download, Loader2 } from 'lucide-react'
+import { Check, Download, Loader2, RefreshCw } from 'lucide-react'
 import { GEMMA_CATALOG } from '@shared/gemmaCatalog'
 import type { AppSettings, GemmaInstallState, ModelSummary, RuntimeSummary } from '@/types'
 
@@ -191,6 +191,7 @@ export function FirstRunModelSetup({
   onChoose,
   onDismiss,
   onEnsureGemmaModel,
+  onRefreshModels,
 }: {
   runtimes: RuntimeSummary[]
   models: ModelSummary[]
@@ -199,6 +200,7 @@ export function FirstRunModelSetup({
   onChoose: (target: ModelTarget) => void | Promise<void>
   onDismiss: () => void
   onEnsureGemmaModel: (tag: string) => Promise<unknown>
+  onRefreshModels: (runtimeSettings?: Partial<AppSettings['runtimes']>) => Promise<void>
 }) {
   const runtimeChoices = useMemo(
     () => buildRuntimeChoices(runtimes, models),
@@ -237,6 +239,16 @@ export function FirstRunModelSetup({
   const target = selectedModel ?? (manualTarget.modelId ? manualTarget : null)
   const needsOmlxEndpoint = runtimeId === 'omlx-openai'
   const canContinue = Boolean(target) && !busy && (!needsOmlxEndpoint || Boolean(omlxEndpoint.trim()))
+  const refreshRuntimeSettings = (): Partial<AppSettings['runtimes']> | undefined =>
+    runtimeId === 'omlx-openai'
+      ? {
+          omlx: {
+            ...runtimeSettings.omlx,
+            endpoint: omlxEndpoint.trim(),
+            apiKey: omlxApiKey.trim(),
+          },
+        }
+      : undefined
 
   const chooseTarget = async (targetInput: ModelTarget | null) => {
     if (!targetInput?.modelId.trim()) {
@@ -246,15 +258,7 @@ export function FirstRunModelSetup({
     const normalized = {
       runtimeId: targetInput.runtimeId,
       modelId: targetInput.modelId.trim(),
-      runtimeSettings: runtimeId === 'omlx-openai'
-        ? {
-            omlx: {
-              ...runtimeSettings.omlx,
-              endpoint: omlxEndpoint.trim(),
-              apiKey: omlxApiKey.trim(),
-            },
-          }
-        : undefined,
+      runtimeSettings: refreshRuntimeSettings(),
     }
 
     setBusy(`choose:${normalized.runtimeId}:${normalized.modelId}`)
@@ -282,6 +286,18 @@ export function FirstRunModelSetup({
       await onChoose({ runtimeId: 'ollama-native', modelId: tag })
     } catch (err) {
       setError(err instanceof Error ? err.message : `Could not download ${tag}.`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const refreshModels = async () => {
+    setBusy('refresh-models')
+    setError(null)
+    try {
+      await onRefreshModels(refreshRuntimeSettings())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not refresh models.')
     } finally {
       setBusy(null)
     }
@@ -357,6 +373,19 @@ export function FirstRunModelSetup({
                 {runtimeModels.length} found
               </span>
             </div>
+            <button
+              type="button"
+              onClick={() => { void refreshModels() }}
+              disabled={Boolean(busy) || (runtimeId === 'omlx-openai' && !omlxEndpoint.trim())}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              {busy === 'refresh-models' ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RefreshCw size={13} />
+              )}
+              Refresh Models
+            </button>
 
             {runtimeModels.length > 0 ? (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">

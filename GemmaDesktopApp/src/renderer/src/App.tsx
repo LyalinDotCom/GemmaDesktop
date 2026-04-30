@@ -1331,7 +1331,21 @@ export function App() {
     }).catch((error) => {
       console.warn('Failed to refresh environment after first-run model setup:', error)
     })
-  }, [dismissFirstRunModelSetup, dispatch])
+  }, [dismissFirstRunModelSetup, dispatch, state.settings.runtimes])
+  const handleFirstRunModelRefresh = useCallback(async (
+    runtimeSettings?: Partial<AppSettings['runtimes']>,
+  ) => {
+    if (runtimeSettings) {
+      const updated = await window.gemmaDesktopBridge.settings.update({
+        runtimes: { ...state.settings.runtimes, ...runtimeSettings },
+      })
+      dispatch({ type: 'SET_SETTINGS', settings: updated })
+    }
+    const { runtimes, models, bootstrap } = await window.gemmaDesktopBridge.environment.inspect()
+    dispatch({ type: 'SET_RUNTIMES', runtimes })
+    dispatch({ type: 'SET_MODELS', models })
+    dispatch({ type: 'SET_BOOTSTRAP_STATE', bootstrapState: bootstrap })
+  }, [dispatch, state.settings.runtimes])
   const showFirstRunModelSetup = shouldShowFirstRunModelSetup({
     startupRiskAccepted,
     dismissed: firstRunModelSetupDismissed,
@@ -2856,6 +2870,7 @@ export function App() {
           onChoose={handleFirstRunModelChoice}
           onDismiss={dismissFirstRunModelSetup}
           onEnsureGemmaModel={ensureGemmaModel}
+          onRefreshModels={handleFirstRunModelRefresh}
         />
       )}
 

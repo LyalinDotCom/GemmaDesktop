@@ -75,6 +75,7 @@ describe('FirstRunModelSetup', () => {
         onChoose: () => {},
         onDismiss: () => {},
         onEnsureGemmaModel: async () => {},
+        onRefreshModels: async () => {},
       }),
     )
 
@@ -85,6 +86,7 @@ describe('FirstRunModelSetup', () => {
     expect(markup).toContain('LM Studio')
     expect(markup).toContain('Gemma 4 26B')
     expect(markup).toContain('Optional guided Gemma downloads')
+    expect(markup).toContain('Refresh Models')
     expect(markup).toContain('Decide Later')
   })
 
