@@ -179,12 +179,15 @@ import {
   TALK_SESSION_RUNTIME_ID,
   TALK_SESSION_TITLE,
   getGlobalSessionStateDirectory,
-  getTalkSessionFilePath,
+  getTalkSessionConversationStorageDirectory,
+  getTalkSessionConversationWorkspaceDirectory,
+  getTalkSessionIndexFilePath,
   getTalkSessionStorageDirectory,
   getTalkSessionWorkspaceDirectory,
   isHiddenSessionVisibility,
   isTalkSessionId,
   isTalkSessionSurface,
+  listTalkSessionConversationFilePaths,
   normalizeAppSessionStorageScope,
   normalizeAppSessionSurface,
   normalizeAppSessionVisibility,
@@ -201,6 +204,7 @@ import {
 } from '../shared/notifications'
 import {
   GLOBAL_CHAT_CHANGED_CHANNEL,
+  type GlobalChatConversationSummary,
   type GlobalChatState,
 } from '../shared/globalChat'
 import type { FileEditContentBlock } from '../shared/fileEdits'
@@ -681,7 +685,7 @@ class SessionStore {
       await this.loadProject(projectPath)
     }
 
-    await this.loadGlobalTalkSession()
+    await this.loadGlobalTalkSessions()
   }
 
   private cachePersistedSession(
@@ -812,26 +816,36 @@ class SessionStore {
     }
   }
 
-  private async loadGlobalTalkSession(): Promise<void> {
-    const sessionFilePath = getTalkSessionFilePath(app.getPath('userData'))
+  private async loadGlobalTalkSessions(): Promise<void> {
+    currentTalkSessionId = await readCurrentTalkSessionIdFromDisk()
+    const sessionFilePaths = await listTalkSessionConversationFilePaths(
+      app.getPath('userData'),
+    )
 
-    try {
-      const raw = await fs.readFile(sessionFilePath, 'utf-8')
-      const data = JSON.parse(raw) as PersistedSession
-      this.cachePersistedSession(data, {
-        workingDirectory:
-          data.snapshot.workingDirectory
-          || getTalkSessionWorkspaceDirectory(app.getPath('userData')),
-        storageScope: 'global',
-        storageDirectory: path.dirname(sessionFilePath),
-      })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+    for (const sessionFilePath of sessionFilePaths) {
+      try {
+        const raw = await fs.readFile(sessionFilePath, 'utf-8')
+        const data = JSON.parse(raw) as PersistedSession
+        this.cachePersistedSession(data, {
+          workingDirectory:
+            data.snapshot.workingDirectory
+            || getTalkSessionConversationWorkspaceDirectory(
+              app.getPath('userData'),
+              data.meta?.id ?? data.snapshot.sessionId,
+            ),
+          storageScope: 'global',
+          storageDirectory: path.dirname(sessionFilePath),
+        })
+      } catch (error) {
         console.warn(
           `[gemma-desktop] Failed to load persisted talk session from ${sessionFilePath}:`,
           error,
         )
       }
+    }
+
+    if (currentTalkSessionId && !this.snapshots.has(currentTalkSessionId)) {
+      currentTalkSessionId = null
     }
   }
 
@@ -1219,6 +1233,7 @@ let gemmaDesktop: GemmaDesktop
 const store = new SessionStore()
 const automationStore = new AutomationStore()
 let sidebarStore: SidebarStateStore | null = null
+let currentTalkSessionId: string | null = null
 const liveSessions = new Map<string, GemmaDesktopSession>()
 const activeAbortControllers = new Map<string, AbortController>()
 const pendingSessionTasks = new Map<string, SessionConversationExecutionTask>()
@@ -3712,6 +3727,45 @@ async function directoryExists(targetPath: string): Promise<boolean> {
   }
 }
 
+async function readCurrentTalkSessionIdFromDisk(): Promise<string | null> {
+  const indexFilePath = getTalkSessionIndexFilePath(app.getPath('userData'))
+
+  try {
+    const raw = await fs.readFile(indexFilePath, 'utf-8')
+    const record = JSON.parse(raw) as { currentSessionId?: unknown }
+    const sessionId = record.currentSessionId
+    return typeof sessionId === 'string' && isTalkSessionId(sessionId)
+      ? sessionId.trim()
+      : null
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(
+        `[gemma-desktop] Failed to read Assistant Chat index from ${indexFilePath}:`,
+        error,
+      )
+    }
+    return null
+  }
+}
+
+async function writeCurrentTalkSessionIdToDisk(sessionId: string | null): Promise<void> {
+  const indexFilePath = getTalkSessionIndexFilePath(app.getPath('userData'))
+  await fs.mkdir(path.dirname(indexFilePath), { recursive: true })
+  await fs.writeFile(
+    indexFilePath,
+    JSON.stringify({
+      currentSessionId: sessionId,
+      updatedAt: Date.now(),
+    }),
+    'utf-8',
+  )
+}
+
+async function setCurrentTalkSessionId(sessionId: string | null): Promise<void> {
+  currentTalkSessionId = sessionId
+  await writeCurrentTalkSessionIdToDisk(sessionId)
+}
+
 function getLastPickedDirectoryStatePath(): string {
   return path.join(app.getPath('userData'), 'lastPickedDirectory.txt')
 }
@@ -4628,8 +4682,14 @@ function resolveSessionStorageDirectory(
   storageScope = getSessionConfig(snapshot).storageScope,
 ): string {
   if (storageScope === 'global') {
-    if (sessionId === TALK_SESSION_ID || isTalkSessionSnapshot(snapshot)) {
+    if (sessionId === TALK_SESSION_ID) {
       return getTalkSessionStorageDirectory(app.getPath('userData'))
+    }
+    if (isTalkSessionSnapshot(snapshot)) {
+      return getTalkSessionConversationStorageDirectory(
+        app.getPath('userData'),
+        sessionId,
+      )
     }
   }
 
@@ -5846,11 +5906,19 @@ async function rehydrateSessionSnapshot(
 ): Promise<SessionSnapshot> {
   const rawConfig = getSessionConfig(snapshot)
   const isTalkSnapshot = isTalkSessionSnapshot(snapshot)
+  const talkSessionId = isTalkSnapshot ? snapshot.sessionId : null
   const currentConfig = isTalkSnapshot
     ? buildTalkSessionConfig(rawConfig.approvalMode)
     : rawConfig
   const talkWorkingDirectory = isTalkSnapshot
-    ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
+    ? await ensureDirectoryExists(
+        talkSessionId === TALK_SESSION_ID
+          ? getTalkSessionWorkspaceDirectory(app.getPath('userData'))
+          : getTalkSessionConversationWorkspaceDirectory(
+              app.getPath('userData'),
+              snapshot.sessionId,
+            ),
+      )
     : null
   const sessionMode = resolveAppSessionMode(currentConfig)
   const target = resolveSessionPrimaryTarget(snapshot.sessionId, currentConfig, snapshot)
@@ -5877,7 +5945,6 @@ async function rehydrateSessionSnapshot(
   if (
     snapshot.runtimeId === runtimeSelection.runtimeId
     && snapshot.modelId === target.modelId
-    && (!isTalkSnapshot || snapshot.sessionId === TALK_SESSION_ID)
     && (!talkWorkingDirectory || snapshot.workingDirectory === talkWorkingDirectory)
     && areSerializedValuesEqual(snapshot.mode, composition.mode)
     && snapshot.systemInstructions === composition.systemInstructions
@@ -5888,7 +5955,7 @@ async function rehydrateSessionSnapshot(
 
   return {
     ...snapshot,
-    sessionId: isTalkSnapshot ? TALK_SESSION_ID : snapshot.sessionId,
+    sessionId: snapshot.sessionId,
     runtimeId: runtimeSelection.runtimeId,
     modelId: target.modelId,
     mode: composition.mode,
@@ -6196,7 +6263,9 @@ function getGlobalChatStateRecord(state: GlobalChatState): GlobalChatState {
 }
 
 function getGlobalChatStateInternal(): GlobalChatState {
-  return getGlobalChatStateRecord(globalChatController.getState())
+  return getGlobalChatStateRecord(
+    globalChatController.getState(currentTalkSessionId ?? undefined),
+  )
 }
 
 async function getGlobalChatSessionDetailInternal(): Promise<Record<string, unknown>> {
@@ -6206,7 +6275,11 @@ async function getGlobalChatSessionDetailInternal(): Promise<Record<string, unkn
     return await getSessionDetailInternal(state.target.sessionId)
   }
 
-  return await ensureTalkSessionInternal()
+  return await ensureTalkSessionInternal(
+    state.target.sessionId === TALK_SESSION_ID
+      ? undefined
+      : state.target.sessionId,
+  )
 }
 
 async function broadcastGlobalChatChanged(): Promise<void> {
@@ -10097,13 +10170,67 @@ async function getOrResumeLiveSession(sessionId: string): Promise<{
   }
 }
 
-async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
-  let persisted = await getPersistedSession(TALK_SESSION_ID)
+function createTalkConversationSessionId(): string {
+  return `talk-${randomUUID()}`
+}
+
+async function listTalkSessionSummariesInternal(): Promise<GlobalChatConversationSummary[]> {
+  const summaries: GlobalChatConversationSummary[] = []
+
+  for (const meta of store.listMeta()) {
+    const persisted = await store.load(meta.id)
+    const snapshot = liveSessions.get(meta.id)?.snapshot() ?? persisted?.snapshot
+    if (!snapshot || !isTalkSessionSnapshot(snapshot) || meta.id === TALK_SESSION_ID) {
+      continue
+    }
+
+    summaries.push({
+      id: meta.id,
+      title: meta.title,
+      lastMessage: meta.lastMessage,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      messageCount: store.getAppMessages(meta.id).length,
+    })
+  }
+
+  return summaries.sort((left, right) => right.updatedAt - left.updatedAt)
+}
+
+async function resolveCurrentTalkSessionIdInternal(): Promise<string> {
+  if (currentTalkSessionId) {
+    const persisted = await store.load(currentTalkSessionId)
+    if (persisted?.snapshot && isTalkSessionSnapshot(persisted.snapshot)) {
+      return currentTalkSessionId
+    }
+  }
+
+  const mostRecentTalkSession = (await listTalkSessionSummariesInternal())[0]
+  if (mostRecentTalkSession) {
+    await setCurrentTalkSessionId(mostRecentTalkSession.id)
+    return mostRecentTalkSession.id
+  }
+
+  return createTalkConversationSessionId()
+}
+
+async function ensureTalkSessionInternal(
+  sessionId?: string,
+): Promise<Record<string, unknown>> {
+  const talkSessionId = sessionId ?? await resolveCurrentTalkSessionIdInternal()
+  if (!isTalkSessionId(talkSessionId) || talkSessionId === TALK_SESSION_ID) {
+    throw new Error('Assistant Chat requires a valid global conversation id.')
+  }
+
+  let persisted = await getPersistedSession(talkSessionId)
   const talkConfig = buildTalkSessionConfig(
     persisted?.snapshot ? getSessionConfig(persisted.snapshot).approvalMode : undefined,
   )
   const talkWorkingDirectory = await ensureDirectoryExists(
-    getTalkSessionWorkspaceDirectory(app.getPath('userData')),
+    getTalkSessionConversationWorkspaceDirectory(
+      app.getPath('userData'),
+      talkSessionId,
+    ),
   )
 
   if (!persisted) {
@@ -10138,39 +10265,44 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
     })
     const initialSnapshot: SessionSnapshot = {
       ...createdSession.snapshot(),
-      sessionId: TALK_SESSION_ID,
+      sessionId: talkSessionId,
+      workingDirectory: talkWorkingDirectory,
       savedAt: new Date().toISOString(),
     }
     const talkSession = await gemmaDesktop.sessions.resume({
       snapshot: initialSnapshot,
     })
+    const now = Date.now()
     const talkMeta: SessionMeta = {
-      id: TALK_SESSION_ID,
+      id: talkSessionId,
       title: TALK_SESSION_TITLE,
       titleSource: 'user',
       lastMessage: '',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       sessionTags: [],
     }
 
-    liveSessions.set(TALK_SESSION_ID, talkSession)
-    await store.save(TALK_SESSION_ID, initialSnapshot, talkMeta, [])
-    persisted = await getPersistedSession(TALK_SESSION_ID)
+    liveSessions.set(talkSessionId, talkSession)
+    await store.save(talkSessionId, initialSnapshot, talkMeta, [])
+    persisted = await getPersistedSession(talkSessionId)
   }
 
   if (!persisted) {
     throw new Error('Assistant Chat could not be created.')
   }
 
+  if (currentTalkSessionId !== talkSessionId) {
+    await setCurrentTalkSessionId(talkSessionId)
+  }
+
   const { session, persisted: currentPersisted } = await getOrResumeLiveSession(
-    TALK_SESSION_ID,
+    talkSessionId,
   )
   const effectivePersisted = currentPersisted ?? persisted
-  const talkMeta = normalizeSessionMeta(TALK_SESSION_ID, {
+  const talkMeta = normalizeSessionMeta(talkSessionId, {
     ...effectivePersisted.meta,
-    title: TALK_SESSION_TITLE,
-    titleSource: 'user',
+    title: effectivePersisted.meta.title || TALK_SESSION_TITLE,
   })
   let snapshot = session.snapshot()
   const currentConfig = getSessionConfig(snapshot)
@@ -10192,14 +10324,14 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
 
   if (
     snapshot.workingDirectory !== talkWorkingDirectory
-    || snapshot.sessionId !== TALK_SESSION_ID
+    || snapshot.sessionId !== talkSessionId
     || JSON.stringify(reconciledComposition.mode) !== JSON.stringify(snapshot.mode)
     || reconciledComposition.systemInstructions !== snapshot.systemInstructions
     || JSON.stringify(reconciledComposition.metadata ?? {}) !== JSON.stringify(snapshot.metadata ?? {})
   ) {
     const nextSnapshot: SessionSnapshot = {
       ...snapshot,
-      sessionId: TALK_SESSION_ID,
+      sessionId: talkSessionId,
       workingDirectory: talkWorkingDirectory,
       mode: reconciledComposition.mode,
       systemInstructions: reconciledComposition.systemInstructions,
@@ -10209,12 +10341,12 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
     const nextSession = await gemmaDesktop.sessions.resume({
       snapshot: nextSnapshot,
     })
-    liveSessions.set(TALK_SESSION_ID, nextSession)
+    liveSessions.set(talkSessionId, nextSession)
     await store.save(
-      TALK_SESSION_ID,
+      talkSessionId,
       nextSnapshot,
       talkMeta,
-      store.getAppMessages(TALK_SESSION_ID),
+      store.getAppMessages(talkSessionId),
       { preserveUpdatedAt: true },
     )
     snapshot = nextSnapshot
@@ -10225,7 +10357,7 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
     || talkMeta.titleSource !== effectivePersisted.meta.titleSource
   ) {
     await store.save(
-      TALK_SESSION_ID,
+      talkSessionId,
       snapshot,
       talkMeta,
       effectivePersisted.appMessages,
@@ -10236,23 +10368,23 @@ async function ensureTalkSessionInternal(): Promise<Record<string, unknown>> {
   return snapshotToDetail(
     snapshot,
     talkMeta,
-    store.getDraftText(TALK_SESSION_ID),
-    store.getAppMessages(TALK_SESSION_ID),
-    store.getPendingTurn(TALK_SESSION_ID) ?? effectivePersisted.pendingTurn ?? null,
-    store.getPendingCompaction(TALK_SESSION_ID)
+    store.getDraftText(talkSessionId),
+    store.getAppMessages(talkSessionId),
+    store.getPendingTurn(talkSessionId) ?? effectivePersisted.pendingTurn ?? null,
+    store.getPendingCompaction(talkSessionId)
       ?? effectivePersisted.pendingCompaction
       ?? null,
-    store.getPendingPlanQuestion(TALK_SESSION_ID)
+    store.getPendingPlanQuestion(talkSessionId)
       ?? effectivePersisted.pendingPlanQuestion
       ?? null,
-    store.getPendingPlanExit(TALK_SESSION_ID)
+    store.getPendingPlanExit(talkSessionId)
       ?? effectivePersisted.pendingPlanExit
       ?? null,
-    store.getPendingToolApproval(TALK_SESSION_ID)
+    store.getPendingToolApproval(talkSessionId)
       ?? effectivePersisted.pendingToolApproval
       ?? null,
-    getSessionExecutionTask(TALK_SESSION_ID) === 'generation',
-    getSessionExecutionTask(TALK_SESSION_ID) === 'compaction',
+    getSessionExecutionTask(talkSessionId) === 'generation',
+    getSessionExecutionTask(talkSessionId) === 'compaction',
   )
 }
 
@@ -10333,19 +10465,25 @@ function scheduleSelectedSessionPrimaryWarmup(sessionId: string): void {
 }
 
 async function clearTalkSessionInternal(): Promise<Record<string, unknown>> {
-  if (isSessionExecutionBusy(TALK_SESSION_ID)) {
+  const talkSessionId = await resolveCurrentTalkSessionIdInternal()
+  if (isSessionExecutionBusy(talkSessionId)) {
     throw new Error('Cannot clear Assistant Chat while it is running.')
   }
 
-  liveSessions.delete(TALK_SESSION_ID)
-  await store.remove(TALK_SESSION_ID)
-  await ensureTalkSessionInternal()
-  const detail = await getSessionDetailInternal(TALK_SESSION_ID)
-  sendToSession(TALK_SESSION_ID, {
+  liveSessions.delete(talkSessionId)
+  await store.remove(talkSessionId)
+  await setCurrentTalkSessionId(null)
+
+  const nextSessionId = createTalkConversationSessionId()
+  const detail = await ensureTalkSessionInternal(nextSessionId)
+  const nextDetailSessionId =
+    typeof detail.id === 'string' ? detail.id : nextSessionId
+  sendToSession(nextDetailSessionId, {
     type: 'session_reset',
     session: detail,
   })
   await broadcastSessionsChanged()
+  await broadcastGlobalChatChanged()
   return detail
 }
 
@@ -16013,22 +16151,59 @@ export function registerIpcHandlers(): void {
     return await ensureTalkSessionInternal()
   })
 
+  ipcMain.handle('talk:list-sessions', async () => {
+    return await listTalkSessionSummariesInternal()
+  })
+
+  ipcMain.handle('talk:start-session', async () => {
+    assertNoConversationExecutionRunning()
+    const detail = await ensureTalkSessionInternal(createTalkConversationSessionId())
+    globalChatController.clearAssignment()
+    await broadcastGlobalChatChanged()
+    await broadcastSessionsChanged()
+    return detail
+  })
+
+  ipcMain.handle('talk:switch-session', async (_, sessionId: string) => {
+    const normalizedSessionId =
+      typeof sessionId === 'string' ? sessionId.trim() : ''
+    if (!isTalkSessionId(normalizedSessionId) || normalizedSessionId === TALK_SESSION_ID) {
+      throw new Error('Assistant Chat requires a valid global conversation id.')
+    }
+
+    const persisted = await getPersistedSession(normalizedSessionId)
+    if (!persisted?.snapshot || !isTalkSessionSnapshot(persisted.snapshot)) {
+      throw new Error(`Assistant Chat conversation not found: ${normalizedSessionId}`)
+    }
+
+    await setCurrentTalkSessionId(normalizedSessionId)
+    globalChatController.clearAssignment()
+    const detail = await ensureTalkSessionInternal(normalizedSessionId)
+    await broadcastGlobalChatChanged()
+    return detail
+  })
+
   ipcMain.handle('talk:clear-session', async () => {
-    appendDebugLog(TALK_SESSION_ID, {
+    const talkSessionId = await resolveCurrentTalkSessionIdInternal()
+    appendDebugLog(talkSessionId, {
       layer: 'ipc',
       direction: 'renderer->main',
       event: 'talk.clear.request',
       summary: 'Clear Talk session history and draft',
-      data: { sessionId: TALK_SESSION_ID },
+      data: { sessionId: talkSessionId },
     })
     const detail = await clearTalkSessionInternal()
-    appendDebugLog(TALK_SESSION_ID, {
-      layer: 'ipc',
-      direction: 'main->renderer',
-      event: 'talk.clear.response',
-      summary: 'Cleared Talk session history and draft',
-      data: { sessionId: TALK_SESSION_ID },
-    })
+    const nextSessionId =
+      typeof detail.id === 'string' ? detail.id : currentTalkSessionId
+    if (nextSessionId) {
+      appendDebugLog(nextSessionId, {
+        layer: 'ipc',
+        direction: 'main->renderer',
+        event: 'talk.clear.response',
+        summary: 'Cleared Talk session history and draft',
+        data: { sessionId: nextSessionId },
+      })
+    }
     return detail
   })
 
@@ -16236,7 +16411,14 @@ export function registerIpcHandlers(): void {
         ? buildTalkSessionConfig(getSessionConfig(currentSnapshot).approvalMode)
         : getSessionConfig(currentSnapshot)
       const nextWorkingDirectory = currentSnapshotIsTalk
-        ? await ensureDirectoryExists(getTalkSessionWorkspaceDirectory(app.getPath('userData')))
+        ? await ensureDirectoryExists(
+            currentSnapshot.sessionId === TALK_SESSION_ID
+              ? getTalkSessionWorkspaceDirectory(app.getPath('userData'))
+              : getTalkSessionConversationWorkspaceDirectory(
+                  app.getPath('userData'),
+                  currentSnapshot.sessionId,
+                ),
+          )
         : opts.workingDirectory
           ? await ensureDirectoryExists(opts.workingDirectory)
           : currentSnapshot.workingDirectory

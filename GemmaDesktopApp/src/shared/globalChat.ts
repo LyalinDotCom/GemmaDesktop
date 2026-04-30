@@ -5,7 +5,7 @@ export const GLOBAL_CHAT_OPEN_IN_APP_REQUESTED_CHANNEL = 'global-chat:open-in-ap
 
 export interface GlobalChatFallbackTarget {
   kind: 'fallback'
-  sessionId: typeof GLOBAL_CHAT_FALLBACK_SESSION_ID
+  sessionId: string
 }
 
 export interface GlobalChatAssignedTarget {
@@ -26,12 +26,23 @@ export interface GlobalChatOpenInAppRequest {
   target: GlobalChatTarget
 }
 
-export function buildFallbackGlobalChatState(): GlobalChatState {
+export interface GlobalChatConversationSummary {
+  id: string
+  title: string
+  lastMessage: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+export function buildFallbackGlobalChatState(
+  sessionId: string = GLOBAL_CHAT_FALLBACK_SESSION_ID,
+): GlobalChatState {
   return {
     assignedSessionId: null,
     target: {
       kind: 'fallback',
-      sessionId: GLOBAL_CHAT_FALLBACK_SESSION_ID,
+      sessionId,
     },
   }
 }

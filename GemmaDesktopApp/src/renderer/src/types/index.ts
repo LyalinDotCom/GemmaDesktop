@@ -46,6 +46,7 @@ import type { AppOmlxSettings } from '@shared/omlxRuntimeConfig'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
 import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import type {
+  GlobalChatConversationSummary,
   GlobalChatOpenInAppRequest,
   GlobalChatState,
 } from '@shared/globalChat'
@@ -1074,6 +1075,9 @@ export interface GemmaDesktopBridge {
   }
   talk: {
     ensureSession(): Promise<SessionDetail>
+    listSessions(): Promise<GlobalChatConversationSummary[]>
+    startSession(): Promise<SessionDetail>
+    switchSession(sessionId: string): Promise<SessionDetail>
     clearSession(): Promise<SessionDetail>
   }
   globalChat: {

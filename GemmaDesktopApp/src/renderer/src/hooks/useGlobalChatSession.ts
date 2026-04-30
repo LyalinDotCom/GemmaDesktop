@@ -3,6 +3,7 @@ import {
   buildFallbackGlobalChatState,
   GLOBAL_CHAT_LABEL,
   type GlobalChatState,
+  type GlobalChatConversationSummary,
 } from '@shared/globalChat'
 import {
   isConversationExecutionBlockedError,
@@ -30,6 +31,7 @@ interface GlobalChatSessionState {
   pendingCompaction: PendingCompaction | null
   pendingToolApproval: PendingToolApproval | null
   liveActivity: LiveActivitySnapshot | null
+  talkSessions: GlobalChatConversationSummary[]
 }
 
 const INITIAL_STATE: GlobalChatSessionState = {
@@ -44,6 +46,7 @@ const INITIAL_STATE: GlobalChatSessionState = {
   pendingCompaction: null,
   pendingToolApproval: null,
   liveActivity: null,
+  talkSessions: [],
 }
 
 function stateFromDetail(detail: SessionDetail): Pick<
@@ -82,8 +85,9 @@ export function useGlobalChatSession() {
   }, [])
 
   const loadGlobalChat = useCallback(async (nextState?: GlobalChatState) => {
-    const globalChat = nextState ?? await window.gemmaDesktopBridge.globalChat.getState()
     const detail = await window.gemmaDesktopBridge.globalChat.getSession()
+    const globalChat = nextState ?? await window.gemmaDesktopBridge.globalChat.getState()
+    const talkSessions = await window.gemmaDesktopBridge.talk.listSessions()
 
     setState((current) => ({
       ...current,
@@ -92,9 +96,19 @@ export function useGlobalChatSession() {
       loading: false,
       error: null,
       liveActivity: null,
+      talkSessions,
     }))
 
     return detail
+  }, [])
+
+  const refreshTalkSessions = useCallback(async () => {
+    const talkSessions = await window.gemmaDesktopBridge.talk.listSessions()
+    setState((current) => ({
+      ...current,
+      talkSessions,
+    }))
+    return talkSessions
   }, [])
 
   useEffect(() => {
@@ -221,6 +235,7 @@ export function useGlobalChatSession() {
                 liveActivity: next.activity,
               }
             case 'turn_complete':
+              void refreshTalkSessions().catch(() => {})
               return current.session
                 ? {
                     ...current,
@@ -272,7 +287,7 @@ export function useGlobalChatSession() {
     )
 
     return unsubscribe
-  }, [state.sessionId])
+  }, [refreshTalkSessions, state.sessionId])
 
   const sendMessage = useCallback(async (text: string) => {
     if (!state.sessionId) {
@@ -384,6 +399,51 @@ export function useGlobalChatSession() {
     }
   }, [loadGlobalChat, refreshSession, state.globalChat.target.kind, state.sessionId])
 
+  const startNewSession = useCallback(async () => {
+    setState((current) => ({
+      ...current,
+      loading: true,
+      error: null,
+    }))
+
+    try {
+      await window.gemmaDesktopBridge.talk.startSession()
+      await loadGlobalChat()
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      }))
+      throw error
+    }
+  }, [loadGlobalChat])
+
+  const selectTalkSession = useCallback(async (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim()
+    if (!normalizedSessionId || normalizedSessionId === state.sessionId) {
+      return
+    }
+
+    setState((current) => ({
+      ...current,
+      loading: true,
+      error: null,
+    }))
+
+    try {
+      await window.gemmaDesktopBridge.talk.switchSession(normalizedSessionId)
+      await loadGlobalChat()
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      }))
+      throw error
+    }
+  }, [loadGlobalChat, state.sessionId])
+
   const retry = useCallback(async () => {
     if (!state.sessionId) {
       await loadGlobalChat()
@@ -424,6 +484,8 @@ export function useGlobalChatSession() {
     retry,
     resolveToolApproval,
     setOptimisticGenerating,
+    startNewSession,
+    selectTalkSession,
   }), [
     cancelGeneration,
     clearSession,
@@ -433,6 +495,8 @@ export function useGlobalChatSession() {
     saveDraft,
     sendMessage,
     setOptimisticGenerating,
+    startNewSession,
+    selectTalkSession,
     state,
   ])
 }

@@ -219,6 +219,10 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
 
   talk: {
     ensureSession: () => ipcRenderer.invoke('talk:ensure-session'),
+    listSessions: () => ipcRenderer.invoke('talk:list-sessions'),
+    startSession: () => ipcRenderer.invoke('talk:start-session'),
+    switchSession: (sessionId: string) =>
+      ipcRenderer.invoke('talk:switch-session', sessionId),
     clearSession: () => ipcRenderer.invoke('talk:clear-session'),
   },
 

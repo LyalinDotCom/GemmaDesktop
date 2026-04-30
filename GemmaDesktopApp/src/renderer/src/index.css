@@ -344,14 +344,10 @@
     flex-direction: column;
   }
 
-  .assistant-home-transcript-toolbar {
-    flex: 0 0 auto;
-  }
-
   .assistant-home-transcript {
     display: flex;
     flex-direction: column;
-    height: clamp(20rem, min(56vh, calc(100vh - 19rem)), 40rem);
+    height: clamp(18rem, min(52vh, calc(100vh - 22rem)), 38rem);
     min-height: 0;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -370,7 +366,7 @@
 
   @media (max-height: 760px) {
     .assistant-home-transcript {
-      height: clamp(17rem, min(52vh, calc(100vh - 17rem)), 32rem);
+      height: clamp(15rem, min(48vh, calc(100vh - 20rem)), 30rem);
     }
   }
 

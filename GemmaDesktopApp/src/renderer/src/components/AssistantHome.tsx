@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { AudioLines, BookOpenText, Brain, Briefcase, Globe2, Maximize2, Minimize2, Pin, VolumeX } from 'lucide-react'
+import { type ReactNode } from 'react'
+import { AudioLines, BookOpenText, Briefcase, Globe2, VolumeX } from 'lucide-react'
 import {
   describeAssistantNarrationMode,
   type AssistantNarrationMode,
@@ -8,6 +8,7 @@ import { NebulaField } from '@/components/NebulaField'
 
 interface AssistantHomeProps {
   conversationSlot: ReactNode
+  sessionControlsSlot?: ReactNode
   conversationStatusSlot?: ReactNode
   supportSlot?: ReactNode
   composerSlot: ReactNode
@@ -15,14 +16,14 @@ interface AssistantHomeProps {
   readAloudSlot?: ReactNode
   hasConversation: boolean
   busy: boolean
-  pinnedToDock: boolean
+  pinnedToDock?: boolean
   assistantNarrationMode?: AssistantNarrationMode
   assistantNarrationAvailable?: boolean
   assistantNarrationDisabledReason?: string | null
   onWorkMode: () => void
   onCoBrowse: () => void
   onExitCoBrowse?: () => void
-  onTogglePin: () => void
+  onTogglePin?: () => void
   onToggleAssistantNarration?: () => void
 }
 
@@ -55,21 +56,9 @@ function AssistantHomeNebula({ busy }: { busy: boolean }) {
   )
 }
 
-function AssistantHomeBrainMark() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-4"
-    >
-      <div className="assistant-home-brain-mark flex h-12 w-full max-w-3xl items-center justify-center rounded-b-[28px] border border-t-0 border-white/10 bg-[#050817]/70 px-3 text-zinc-200 shadow-[0_24px_70px_-36px_rgba(0,0,0,0.85)] backdrop-blur-xl">
-        <Brain size={19} className="shrink-0 text-zinc-100" />
-      </div>
-    </div>
-  )
-}
-
 export function AssistantHome({
   conversationSlot,
+  sessionControlsSlot,
   conversationStatusSlot,
   supportSlot,
   composerSlot,
@@ -77,32 +66,20 @@ export function AssistantHome({
   readAloudSlot,
   hasConversation,
   busy,
-  pinnedToDock,
   assistantNarrationMode = 'off',
   assistantNarrationAvailable = true,
   assistantNarrationDisabledReason = null,
   onWorkMode,
   onCoBrowse,
   onExitCoBrowse,
-  onTogglePin,
   onToggleAssistantNarration,
 }: AssistantHomeProps) {
-  const [transcriptExpanded, setTranscriptExpanded] = useState(false)
-  const transcriptToggleLabel = transcriptExpanded
-    ? 'Shrink chat'
-    : 'Expand chat'
   const assistantNarrationTitle = assistantNarrationDisabledReason
     ?? describeAssistantNarrationMode(assistantNarrationMode)
   const coBrowseVisible = Boolean(coBrowseSlot)
   const coBrowseLockReason = 'Stop CoBrowse first'
   const exitCoBrowseBusyReason =
     'Wait for the assistant to finish before stopping CoBrowse'
-  const pinChatBaseLabel = pinnedToDock
-    ? 'Unpin Assistant Chat from the right dock'
-    : 'Pin Assistant Chat to the right dock'
-  const pinChatLabel = coBrowseVisible
-    ? `${pinChatBaseLabel} (${coBrowseLockReason})`
-    : pinChatBaseLabel
   const workModeTitle = coBrowseVisible ? coBrowseLockReason : undefined
   const exitCoBrowseDisabled = coBrowseVisible && busy
   const coBrowseLabel = coBrowseVisible
@@ -119,45 +96,26 @@ export function AssistantHome({
     <div className="absolute inset-0 z-[70] overflow-hidden bg-[#05030d] text-white">
       <AssistantHomeNebula busy={busy} />
       <div className="drag-region absolute inset-x-0 top-0 z-10 h-12" />
-      <AssistantHomeBrainMark />
 
       <div className="relative z-20 flex h-full min-h-0 flex-col px-5 pb-8 pt-12">
         <main
           className={
             coBrowseVisible
               ? 'assistant-home-cobrowse-shell mx-auto grid h-full min-h-0 w-full max-w-[1500px] grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4'
-              : 'mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col items-center justify-center'
+              : 'mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col items-center justify-center'
           }
         >
           <div className="assistant-home-chat-pane flex h-full min-h-0 min-w-0 flex-col items-center justify-center">
             <div
               className={`assistant-home-stage flex max-h-full w-full min-h-0 flex-col items-center ${
                 hasConversation ? 'assistant-home-stage-with-conversation' : 'assistant-home-stage-empty'
-              } ${transcriptExpanded ? 'assistant-home-stage-expanded' : ''}`}
+              } ${hasConversation ? 'assistant-home-stage-expanded' : ''}`}
             >
+              {sessionControlsSlot}
+
               {hasConversation && (
-                <div
-                  className={`assistant-home-transcript-shell w-full max-w-4xl ${
-                    transcriptExpanded ? 'assistant-home-transcript-shell-expanded' : ''
-                  }`}
-                >
-                  <div className="assistant-home-transcript-toolbar no-drag mb-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setTranscriptExpanded((current) => !current)}
-                      aria-pressed={transcriptExpanded}
-                      aria-label={transcriptToggleLabel}
-                      title={transcriptToggleLabel}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-black/30 text-zinc-300 shadow-[0_16px_40px_-28px_rgba(255,255,255,0.55)] backdrop-blur transition-colors hover:bg-white/10 hover:text-white"
-                    >
-                      {transcriptExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                    </button>
-                  </div>
-                  <section
-                    className={`assistant-home-transcript w-full dark ${
-                      transcriptExpanded ? 'assistant-home-transcript-expanded' : ''
-                    }`}
-                  >
+                <div className="assistant-home-transcript-shell assistant-home-transcript-shell-expanded w-full">
+                  <section className="assistant-home-transcript w-full dark assistant-home-transcript-expanded">
                     {conversationSlot}
                   </section>
                   {conversationStatusSlot && (
@@ -216,17 +174,6 @@ export function AssistantHome({
                         className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.85)]"
                       />
                     )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onTogglePin}
-                    disabled={coBrowseVisible}
-                    aria-pressed={pinnedToDock}
-                    aria-label={pinChatLabel}
-                    title={pinChatLabel}
-                    className={`${rowPillIconOnly(pinnedToDock)} disabled:cursor-not-allowed disabled:opacity-40`}
-                  >
-                    <Pin size={18} />
                   </button>
                 </div>
                 {readAloudSlot}

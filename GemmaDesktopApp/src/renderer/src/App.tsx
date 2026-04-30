@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { ChatCanvas } from '@/components/ChatCanvas'
 import { StreamingStatus } from '@/components/Message'
 import { AssistantHome } from '@/components/AssistantHome'
+import { AssistantHomeSessionControls } from '@/components/AssistantHomeSessionControls'
 import { GlobalChatSwitchBar } from '@/components/GlobalChatSwitchBar'
 import { InputBar } from '@/components/InputBar'
 import { ReadAloudPlaybackOverlay } from '@/components/ReadAloudPlaybackOverlay'
@@ -2455,13 +2456,7 @@ export function App() {
       presentation="floating"
     />
   ) : null
-  const globalChatHomeHasConversation = Boolean(
-    globalChatSession.loading
-    || globalChatSession.error
-    || globalChatSession.messages.length > 0
-    || globalChatSession.streamingContent
-    || globalQueuedMessages.length > 0,
-  )
+  const globalChatHomeHistoryVisible = true
   const globalChatHomeStatusStartedAt = useMemo(() => {
     for (let i = globalChatSession.messages.length - 1; i >= 0; i -= 1) {
       const message = globalChatSession.messages[i]
@@ -2497,7 +2492,7 @@ export function App() {
         </button>
       </div>
     </div>
-  ) : globalChatHomeHasConversation ? (
+  ) : (
     <ChatCanvas
       sessionId={globalChatSession.sessionId}
       messages={globalChatSession.messages}
@@ -2525,9 +2520,9 @@ export function App() {
       contentLayout="expanded"
       streamingStatusPlacement="external"
     />
-  ) : null
+  )
   const globalChatHomeConversationStatusSlot =
-    globalChatHomeHasConversation && globalChatBusy ? (
+    globalChatHomeHistoryVisible && globalChatBusy ? (
       <StreamingStatus
         elapsedClock={formatElapsedClock(
           Math.max(globalChatHomeStatusNow - globalChatHomeStatusStartedAt, 0),
@@ -2559,9 +2554,26 @@ export function App() {
       onTogglePin={toggleGlobalChatDockPin}
     />
   )
+  const globalChatSessionControlsSlot = globalChatSession.targetKind === 'fallback' ? (
+    <AssistantHomeSessionControls
+      sessions={globalChatSession.talkSessions}
+      currentSessionId={globalChatSession.sessionId}
+      busy={globalChatBusy || globalChatSession.loading}
+      onFocusCurrentSession={() => {
+        setGlobalComposerFocusKey((current) => current + 1)
+      }}
+      onSelectSession={(sessionId) => {
+        void globalChatSession.selectTalkSession(sessionId)
+      }}
+      onStartNewSession={() => {
+        void globalChatSession.startNewSession()
+      }}
+    />
+  ) : undefined
   const assistantHomeSurface = (
     <AssistantHome
       conversationSlot={globalChatHomeConversationSlot}
+      sessionControlsSlot={globalChatSessionControlsSlot}
       conversationStatusSlot={globalChatHomeConversationStatusSlot}
       supportSlot={globalChatHomeSupportSlot}
       composerSlot={globalChatInputBar}
@@ -2573,16 +2585,14 @@ export function App() {
           className="pointer-events-auto mt-3"
         />
       }
-      hasConversation={globalChatHomeHasConversation}
+      hasConversation={globalChatHomeHistoryVisible}
       busy={globalChatBusy}
-      pinnedToDock={globalChatPinnedToDock}
       assistantNarrationMode={assistantNarrationMode}
       assistantNarrationAvailable={assistantNarrationAvailable}
       assistantNarrationDisabledReason={assistantNarrationDisabledReason}
       onWorkMode={enterWorkMode}
       onCoBrowse={enterCoBrowseMode}
       onExitCoBrowse={handleProjectBrowserClose}
-      onTogglePin={toggleGlobalChatDockPin}
       onToggleAssistantNarration={cycleAssistantNarrationMode}
     />
   )
@@ -2740,6 +2750,8 @@ export function App() {
 
       {/* Main content area */}
       <div className="relative flex min-w-0 flex-1 flex-col">
+        {globalChatSwitchBar}
+
         <div className="pointer-events-none absolute right-0 top-1/2 z-[60] -translate-y-1/2">
           <div className="pointer-events-auto rounded-l-2xl border border-r-0 border-slate-200 bg-white/95 py-2 pl-2 pr-1 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
             <RightDockRail
@@ -2813,7 +2825,6 @@ export function App() {
           className={rightDockLayout.splitContainer}
         >
           <div className={rightDockLayout.mainPane}>
-            {!assistantHomeVisible && globalChatSwitchBar}
             {mainConversationColumn}
           </div>
           {rightDockVisible && (

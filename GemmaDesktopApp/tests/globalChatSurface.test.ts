@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AssistantHome } from '../src/renderer/src/components/AssistantHome'
+import { AssistantHomeSessionControls } from '../src/renderer/src/components/AssistantHomeSessionControls'
 import { ChatCanvas } from '../src/renderer/src/components/ChatCanvas'
 import { GlobalChatSwitchBar } from '../src/renderer/src/components/GlobalChatSwitchBar'
 import { TalkPanel } from '../src/renderer/src/components/TalkPanel'
@@ -33,6 +34,9 @@ describe('Assistant Chat surface copy', () => {
     expect(markup).not.toContain('lucide-chevron')
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
     expect(markup).toContain('aria-label="Pin Assistant Chat to the right dock"')
+    expect(markup).toContain('no-drag pointer-events-none absolute')
+    expect(markup).not.toContain('pointer-events-none fixed')
+    expect(markup).toContain('rounded-xl p-1.5')
     expect(markup).not.toContain('aria-label="Assistant Chat actions"')
     expect(markup).not.toContain('shared composer')
     expect(markup).not.toContain('Built-in assistant chat')
@@ -77,7 +81,7 @@ describe('Assistant Chat surface copy', () => {
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
   })
 
-  it('renders the Assistant Home chat expander outside the transcript without decorative header badges', () => {
+  it('renders Assistant Home history at full height without an expander', () => {
     const markup = renderToStaticMarkup(
       createElement(AssistantHome, {
         conversationSlot: createElement('div', null, 'conversation'),
@@ -92,23 +96,113 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    const toolbarIndex = markup.indexOf('assistant-home-transcript-toolbar')
     const transcriptIndex = markup.indexOf('assistant-home-transcript w-full')
-    const expandButtonIndex = markup.indexOf('aria-label="Expand chat"')
 
-    expect(markup).toContain('aria-label="Expand chat"')
-    expect(markup).toContain('lucide-maximize2')
+    expect(markup).not.toContain('aria-label="Expand chat"')
+    expect(markup).not.toContain('aria-label="Shrink chat"')
+    expect(markup).not.toContain('lucide-maximize2')
+    expect(markup).not.toContain('lucide-minimize2')
+    expect(markup).not.toContain('assistant-home-transcript-toolbar')
     expect(markup).toContain('assistant-home-transcript w-full dark')
+    expect(markup).toContain('assistant-home-stage-expanded')
+    expect(markup).toContain('assistant-home-transcript-expanded')
     expect(markup).not.toContain('assistant-home-title')
     expect(markup).not.toContain('Hi, I&#x27;m Gemma')
-    expect(markup).toContain('assistant-home-brain-mark')
-    expect(markup).toContain('lucide-brain')
-    expect(toolbarIndex).toBeGreaterThanOrEqual(0)
-    expect(expandButtonIndex).toBeGreaterThan(toolbarIndex)
-    expect(expandButtonIndex).toBeLessThan(transcriptIndex)
+    expect(markup).not.toContain('assistant-home-brain-mark')
+    expect(transcriptIndex).toBeGreaterThanOrEqual(0)
     expect(markup).not.toContain('absolute right-3 top-3')
     expect(markup).not.toContain('aria-label="Switch to Work mode"')
     expect(markup).not.toContain('>Assistant Home<')
+  })
+
+  it('renders the Assistant Home global chat session controls above the chat', () => {
+    const controls = createElement(AssistantHomeSessionControls, {
+      sessions: [
+        {
+          id: 'talk-00000000-0000-4000-8000-000000000000',
+          title: 'Assistant Chat',
+          lastMessage: 'Current thread',
+          createdAt: 1_700_000_000_000,
+          updatedAt: 1_700_000_000_000,
+          messageCount: 2,
+        },
+        {
+          id: 'talk-00000000-0000-4000-8000-000000000001',
+          title: 'Assistant Chat',
+          lastMessage: 'Previous thread',
+          createdAt: 1_690_000_000_000,
+          updatedAt: 1_690_000_000_000,
+          messageCount: 3,
+        },
+      ],
+      currentSessionId: 'talk-00000000-0000-4000-8000-000000000000',
+      busy: false,
+      onFocusCurrentSession: () => {},
+      onSelectSession: () => {},
+      onStartNewSession: () => {},
+    })
+    const markup = renderToStaticMarkup(
+      createElement(AssistantHome, {
+        conversationSlot: createElement('div', null, 'conversation'),
+        sessionControlsSlot: controls,
+        supportSlot: null,
+        composerSlot: createElement('div', null, 'composer'),
+        hasConversation: true,
+        busy: false,
+        pinnedToDock: false,
+        onWorkMode: () => {},
+        onCoBrowse: () => {},
+        onTogglePin: () => {},
+      }),
+    )
+
+    const controlsIndex = markup.indexOf('assistant-home-session-controls')
+    const transcriptIndex = markup.indexOf('assistant-home-transcript w-full')
+
+    expect(markup).toContain('>Current chat<')
+    expect(markup).toContain('>Last session<')
+    expect(markup).toContain('aria-label="Search Assistant Chat sessions"')
+    expect(markup).toContain('aria-label="Start new Assistant Chat session"')
+    expect(markup).toContain('lucide-plus')
+    expect(markup).toContain('assistant-home-session-controls no-drag relative z-[90]')
+    expect(controlsIndex).toBeGreaterThanOrEqual(0)
+    expect(controlsIndex).toBeLessThan(transcriptIndex)
+  })
+
+  it('disables Last session and session search when there is no previous chat content', () => {
+    const markup = renderToStaticMarkup(
+      createElement(AssistantHomeSessionControls, {
+        sessions: [
+          {
+            id: 'talk-00000000-0000-4000-8000-000000000000',
+            title: 'Assistant Chat',
+            lastMessage: '',
+            createdAt: 1_700_000_000_000,
+            updatedAt: 1_700_000_000_000,
+            messageCount: 0,
+          },
+          {
+            id: 'talk-00000000-0000-4000-8000-000000000001',
+            title: 'Assistant Chat',
+            lastMessage: '',
+            createdAt: 1_690_000_000_000,
+            updatedAt: 1_690_000_000_000,
+            messageCount: 0,
+          },
+        ],
+        currentSessionId: 'talk-00000000-0000-4000-8000-000000000000',
+        busy: false,
+        onFocusCurrentSession: () => {},
+        onSelectSession: () => {},
+        onStartNewSession: () => {},
+      }),
+    )
+
+    expect(markup).toContain('title="No previous Assistant Chat session"')
+    expect(markup).toContain('placeholder="No saved chats yet"')
+    expect(markup).toContain('title="No saved Assistant Chat sessions"')
+    expect(markup).toContain('title="Send a message before starting a new Assistant Chat session"')
+    expect(markup.match(/disabled=""/g)?.length ?? 0).toBe(4)
   })
 
   it('keeps expanded Assistant Home chat history in the reserved space above the composer', () => {
@@ -136,6 +230,30 @@ describe('Assistant Chat surface copy', () => {
     expect(rendererCss).toContain('height: auto;')
     expect(rendererCss).toContain('.assistant-home-transcript .assistant-action-button')
     expect(rendererCss).not.toContain('height: min(76vh, calc(100vh - 11rem));')
+  })
+
+  it('can render a stable empty Assistant Home history box for fresh chats', () => {
+    const markup = renderToStaticMarkup(
+      createElement(AssistantHome, {
+        conversationSlot: null,
+        supportSlot: null,
+        composerSlot: createElement('div', null, 'composer'),
+        hasConversation: true,
+        busy: false,
+        pinnedToDock: false,
+        onWorkMode: () => {},
+        onCoBrowse: () => {},
+        onTogglePin: () => {},
+      }),
+    )
+
+    const transcriptIndex = markup.indexOf('assistant-home-transcript w-full')
+    const composerIndex = markup.indexOf('>composer<')
+
+    expect(markup).toContain('assistant-home-stage-with-conversation')
+    expect(markup).toContain('assistant-home-transcript-shell')
+    expect(transcriptIndex).toBeGreaterThanOrEqual(0)
+    expect(composerIndex).toBeGreaterThan(transcriptIndex)
   })
 
   it('renders CoBrowse inside the Assistant Home surface instead of the work-mode dock', () => {
@@ -319,9 +437,9 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    // All four pills share the same height token and the ghost/idle palette.
+    // The three welcome-row controls share the same height token and ghost palette.
     const pillCount = markup.match(/border-white\/12 bg-white\/\[0\.04\]/g)?.length ?? 0
-    expect(pillCount).toBeGreaterThanOrEqual(4)
+    expect(pillCount).toBeGreaterThanOrEqual(3)
     expect(markup).toContain('h-12')
     expect(markup).not.toContain('h-11 w-11')
     expect(markup).not.toContain('border-emerald-300/45')
@@ -348,21 +466,19 @@ describe('Assistant Chat surface copy', () => {
     const composerIndex = markup.indexOf('>composer<')
     const workModeIndex = markup.indexOf('>Work mode<')
     const coBrowseIndex = markup.indexOf('>CoBrowse<')
-    const pinIndex = markup.indexOf('aria-label="Pin Assistant Chat to the right dock"')
     const readAloudIndex = markup.indexOf('data-testid="read-aloud-slot"')
 
     expect(composerIndex).toBeGreaterThanOrEqual(0)
     expect(workModeIndex).toBeGreaterThan(composerIndex)
     expect(coBrowseIndex).toBeGreaterThan(workModeIndex)
-    expect(pinIndex).toBeGreaterThan(coBrowseIndex)
-    expect(readAloudIndex).toBeGreaterThan(pinIndex)
-    expect(markup).toContain('title="Pin Assistant Chat to the right dock"')
-    expect(markup).toContain('lucide-pin')
+    expect(readAloudIndex).toBeGreaterThan(coBrowseIndex)
+    expect(markup).not.toContain('aria-label="Pin Assistant Chat to the right dock"')
+    expect(markup).not.toContain('lucide-pin')
     expect(markup).not.toContain('>Pin chat<')
     expect(markup).not.toContain('>Pinned to dock<')
   })
 
-  it('locks Work mode and Pin in the welcome row while CoBrowse is on', () => {
+  it('locks Work mode in the welcome row while CoBrowse is on', () => {
     const offMarkup = renderToStaticMarkup(
       createElement(AssistantHome, {
         conversationSlot: createElement('div', null, 'conversation'),
@@ -393,20 +509,16 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    // Off: no disabled attribute on Work mode, Pin, or Exit CoBrowse.
+    // Off: no disabled attribute on Work mode or Exit CoBrowse.
     expect(offMarkup).not.toContain('disabled=""')
 
-    // On: Work mode (visible-text label, locked via title) and Pin (icon-only,
-    // locked via aria-label) are disabled. Exit CoBrowse stays clickable when
-    // the session is idle.
+    // On: Work mode is disabled. Exit CoBrowse stays clickable when idle.
     expect(onMarkup).toContain('title="Stop CoBrowse first"')
-    expect(onMarkup).toContain(
-      'aria-label="Pin Assistant Chat to the right dock (Stop CoBrowse first)"',
-    )
+    expect(onMarkup).not.toContain('aria-label="Pin Assistant Chat to the right dock')
     expect(onMarkup).toContain('aria-label="Exit CoBrowse"')
-    // Two disabled buttons (Work mode + Pin); Exit CoBrowse is still enabled.
+    // One disabled button (Work mode); Exit CoBrowse is still enabled.
     const disabledCount = onMarkup.match(/disabled=""/g)?.length ?? 0
-    expect(disabledCount).toBe(2)
+    expect(disabledCount).toBe(1)
   })
 
   it('locks Exit CoBrowse while a session is busy', () => {
@@ -445,14 +557,14 @@ describe('Assistant Chat surface copy', () => {
     expect(busyMarkup).toContain(
       'aria-label="Exit CoBrowse (Wait for the assistant to finish before stopping CoBrowse)"',
     )
-    // Busy + CoBrowse on → Work mode, Pin, AND Exit CoBrowse all disabled (3).
+    // Busy + CoBrowse on -> Work mode and Exit CoBrowse are disabled.
     const idleDisabledCount = idleMarkup.match(/disabled=""/g)?.length ?? 0
     const busyDisabledCount = busyMarkup.match(/disabled=""/g)?.length ?? 0
-    expect(idleDisabledCount).toBe(2)
-    expect(busyDisabledCount).toBe(3)
+    expect(idleDisabledCount).toBe(1)
+    expect(busyDisabledCount).toBe(2)
   })
 
-  it('locks the top GlobalChatSwitchBar Brain toggle and Pin while CoBrowse is on', () => {
+  it('locks the top GlobalChatSwitchBar Brain toggle while CoBrowse is on', () => {
     const offMarkup = renderToStaticMarkup(
       createElement(GlobalChatSwitchBar, {
         assistantHomeVisible: true,
@@ -478,11 +590,9 @@ describe('Assistant Chat surface copy', () => {
     expect(onMarkup).toContain(
       'aria-label="Switch to Work mode (Stop CoBrowse first)"',
     )
-    expect(onMarkup).toContain(
-      'aria-label="Pin Assistant Chat to the right dock (Stop CoBrowse first)"',
-    )
+    expect(onMarkup).toContain('aria-label="Pin Assistant Chat to the right dock"')
     const disabledCount = onMarkup.match(/disabled=""/g)?.length ?? 0
-    expect(disabledCount).toBe(2)
+    expect(disabledCount).toBe(1)
   })
 
   it('mutes inline streaming progress when Assistant Home owns the external status', () => {

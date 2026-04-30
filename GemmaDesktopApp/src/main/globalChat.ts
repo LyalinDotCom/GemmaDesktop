@@ -6,9 +6,9 @@ import {
 export class GlobalChatController {
   private assignedSessionId: string | null = null
 
-  getState(): GlobalChatState {
+  getState(fallbackSessionId?: string): GlobalChatState {
     if (!this.assignedSessionId) {
-      return buildFallbackGlobalChatState()
+      return buildFallbackGlobalChatState(fallbackSessionId)
     }
 
     return {

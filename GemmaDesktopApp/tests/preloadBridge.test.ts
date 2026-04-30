@@ -215,16 +215,30 @@ describe('preload bridge', () => {
       onChanged: (callback: (state: unknown) => void) => () => void
       onOpenInAppRequested: (callback: (request: unknown) => void) => () => void
     }
+    const talk = bridge.talk as {
+      listSessions: () => Promise<unknown>
+      startSession: () => Promise<unknown>
+      switchSession: (sessionId: string) => Promise<unknown>
+    }
 
     await globalChat.getState()
     await globalChat.getSession()
     await globalChat.assignSession('session-1')
     await globalChat.clearAssignment()
+    await talk.listSessions()
+    await talk.startSession()
+    await talk.switchSession('talk-00000000-0000-4000-8000-000000000000')
 
     expect(invoke).toHaveBeenCalledWith('global-chat:get-state')
     expect(invoke).toHaveBeenCalledWith('global-chat:get-session')
     expect(invoke).toHaveBeenCalledWith('global-chat:assign-session', 'session-1')
     expect(invoke).toHaveBeenCalledWith('global-chat:clear-assignment')
+    expect(invoke).toHaveBeenCalledWith('talk:list-sessions')
+    expect(invoke).toHaveBeenCalledWith('talk:start-session')
+    expect(invoke).toHaveBeenCalledWith(
+      'talk:switch-session',
+      'talk-00000000-0000-4000-8000-000000000000',
+    )
 
     const unsubscribeChanged = globalChat.onChanged(() => {})
     const changedHandler = on.mock.calls.find(

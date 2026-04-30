@@ -7,6 +7,10 @@ describe('GlobalChatController', () => {
     const controller = new GlobalChatController()
 
     expect(controller.getState()).toEqual(buildFallbackGlobalChatState())
+    expect(controller.getState('talk-00000000-0000-4000-8000-000000000000'))
+      .toEqual(buildFallbackGlobalChatState(
+        'talk-00000000-0000-4000-8000-000000000000',
+      ))
   })
 
   it('assigns and clears a normal conversation target', () => {
