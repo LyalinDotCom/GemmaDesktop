@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Cpu,
   Loader2,
+  RefreshCw,
   TriangleAlert,
   Volume2,
   X,
@@ -146,13 +147,16 @@ export function StartupLoadingOverlay({
     return null
   }
 
-  const readyCount = tasks.filter((task) =>
-    task.status === 'ready' || task.status === 'warning',
-  ).length
+  const readyCount = tasks.filter((task) => task.status === 'ready').length
+  const checkedCount = tasks.filter((task) => task.status !== 'in-progress').length
   const totalCount = tasks.length
-  const progressPercent = totalCount === 0 ? 0 : (readyCount / totalCount) * 100
   const anyError = tasks.some((task) => task.status === 'error')
   const anyWarning = !anyError && tasks.some((task) => task.status === 'warning')
+  const progressCount = anyError || anyWarning ? checkedCount : readyCount
+  const progressPercent = totalCount === 0 ? 0 : (progressCount / totalCount) * 100
+  const counterLabel = anyError || anyWarning
+    ? `${checkedCount} of ${totalCount} checked`
+    : `${readyCount} of ${totalCount} ready`
 
   return (
     <div
@@ -202,7 +206,7 @@ export function StartupLoadingOverlay({
         >
           <div className="flex items-center gap-2 text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
             <span data-testid="startup-loading-counter">
-              {readyCount} of {totalCount} ready
+              {counterLabel}
             </span>
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800/80">
               <div
@@ -233,13 +237,13 @@ export function StartupLoadingOverlay({
                     </span>
                     {task.title}
                   </p>
-                  <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <p className="mt-0.5 whitespace-normal break-words text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                     {task.detail}
                   </p>
                   {task.status === 'error'
                     && task.error
                     && task.error !== task.detail && (
-                      <p className="mt-0.5 truncate text-[11px] text-red-600 dark:text-red-400">
+                      <p className="mt-0.5 whitespace-normal break-words text-[11px] leading-relaxed text-red-600 dark:text-red-400">
                         {task.error}
                       </p>
                     )}
@@ -248,14 +252,15 @@ export function StartupLoadingOverlay({
             ))}
           </ul>
 
-          {bootstrap.status === 'error' && (
+          {(bootstrap.status === 'error' || bootstrap.status === 'warning') && (
             <div className="flex justify-end pt-0.5">
               <button
                 type="button"
                 onClick={onRetryBootstrap}
-                className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
-                Retry
+                <RefreshCw size={12} />
+                Try again
               </button>
             </div>
           )}

@@ -1538,6 +1538,7 @@ function resolveBootstrapTargets(
 const primaryModelHoldCounts = new Map<string, number>()
 const helperModelHoldCounts = new Map<string, number>()
 const primaryModelAvailabilityIssues = new Map<string, PrimaryModelAvailabilityIssue>()
+const optionalPrimaryWarmupFailureReports = new Map<string, string>()
 let activePrimaryModelTarget: PrimaryModelTarget | null = null
 let primaryWarmupPromise: Promise<void> | null = null
 let lastOptionalPrimaryWarmupWarningKey: string | null = null
@@ -1570,6 +1571,37 @@ class PrimaryModelUnavailableError extends Error {
 function getPrimaryModelAvailabilityIssues(): PrimaryModelAvailabilityIssue[] {
   return [...primaryModelAvailabilityIssues.values()]
     .sort((left, right) => left.detectedAt - right.detectedAt)
+}
+
+function primaryModelAvailabilityIssueMatches(
+  left: PrimaryModelAvailabilityIssue,
+  right: PrimaryModelAvailabilityIssue,
+): boolean {
+  return left.modelId === right.modelId
+    && left.runtimeId === right.runtimeId
+    && left.message === right.message
+    && left.source === right.source
+    && left.fallbackModelId === right.fallbackModelId
+    && left.fallbackRuntimeId === right.fallbackRuntimeId
+}
+
+function hasPrimaryModelAvailabilityIssue(
+  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
+): boolean {
+  return primaryModelAvailabilityIssues.has(modelTargetKey(target))
+}
+
+function clearPrimaryModelAvailabilityIssue(
+  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
+): boolean {
+  const key = modelTargetKey(target)
+  optionalPrimaryWarmupFailureReports.delete(key)
+  return primaryModelAvailabilityIssues.delete(key)
+}
+
+function clearPrimaryModelAvailabilityIssues(): void {
+  primaryModelAvailabilityIssues.clear()
+  optionalPrimaryWarmupFailureReports.clear()
 }
 
 function isPrimaryModelUnavailableError(error: unknown): error is PrimaryModelUnavailableError {
@@ -2642,7 +2674,7 @@ async function loadDefaultModelSelection(
 
     try {
       const loadedTarget = await loadModelForRuntime(entry.target)
-      primaryModelAvailabilityIssues.delete(modelTargetKey(loadedTarget))
+      clearPrimaryModelAvailabilityIssue(loadedTarget)
       if (entry.roles.includes('main')) {
         activePrimaryModelTarget = loadedTarget
       }
@@ -2714,10 +2746,18 @@ function describePrimaryModelLoadFailure(
 
   const runtimeLabel = getLocalRuntimeDisplayName(target.runtimeId)
   const rawMessage = getErrorDisplayMessage(error)
-  const reason = rawMessage.length > 0
-    ? ` Reason: ${rawMessage}.`
-    : ''
+  const reason = formatFailureReasonSentence(rawMessage)
   return `${runtimeLabel} could not load ${target.modelId}.${reason} Chats using ${target.runtimeId} / ${target.modelId} are paused until you switch them to another model or restart after the model is available.`
+}
+
+function formatFailureReasonSentence(rawMessage: string): string {
+  const message = rawMessage.trim()
+  if (message.length === 0) {
+    return ''
+  }
+  return /[.!?]$/.test(message)
+    ? ` Reason: ${message}`
+    : ` Reason: ${message}.`
 }
 
 function getBuiltInDefaultPrimaryTarget(): PrimaryModelTarget {
@@ -2794,7 +2834,13 @@ async function recordPrimaryModelLoadFailure(
         }
       : {}),
   }
-  primaryModelAvailabilityIssues.set(modelTargetKey(target), issue)
+  const key = modelTargetKey(target)
+  const existingIssue = primaryModelAvailabilityIssues.get(key)
+  if (existingIssue && primaryModelAvailabilityIssueMatches(existingIssue, issue)) {
+    return existingIssue
+  }
+
+  primaryModelAvailabilityIssues.set(key, issue)
   activePrimaryModelTarget = primaryTargetsMatch(activePrimaryModelTarget, target)
     ? null
     : activePrimaryModelTarget
@@ -2815,6 +2861,13 @@ async function handleOptionalPrimaryWarmupFailure(
   error: unknown,
   context: string,
 ): Promise<void> {
+  const reportKey = modelTargetKey(target)
+  const reportFingerprint = describePrimaryModelLoadFailure(target, error)
+  if (optionalPrimaryWarmupFailureReports.get(reportKey) === reportFingerprint) {
+    return
+  }
+  optionalPrimaryWarmupFailureReports.set(reportKey, reportFingerprint)
+
   const unavailable = getLocalRuntimeUnavailableError(error)
   if (unavailable) {
     const warningKey = `${context}:${modelTargetKey(target)}:${unavailable.endpoint}`
@@ -3002,6 +3055,7 @@ function scheduleStartupPrimaryWarmup(): void {
     if (
       !shouldWarmModelTarget(latestSettings, target)
       || currentPrimaryHoldCount() > 0
+      || hasPrimaryModelAvailabilityIssue(target)
     ) {
       return
     }
@@ -3919,7 +3973,7 @@ async function acquirePrimaryModelLease(
 
   try {
     await ensurePrimaryModelTargetLoaded(target)
-    if (primaryModelAvailabilityIssues.delete(modelTargetKey(target))) {
+    if (clearPrimaryModelAvailabilityIssue(target)) {
       const currentSettings = await getSettingsState()
       const remainingIssues = getPrimaryModelAvailabilityIssues()
       setBootstrapState(
@@ -10852,6 +10906,9 @@ async function warmSelectedSessionPrimary(sessionId: string): Promise<void> {
   if (!shouldWarmModelTarget(currentSettings, target)) {
     return
   }
+  if (hasPrimaryModelAvailabilityIssue(target)) {
+    return
+  }
 
   await ensurePrimaryModelTargetLoaded(target).catch((error) =>
     handleOptionalPrimaryWarmupFailure(target, error, `selected-session:${sessionId}`),
@@ -14086,7 +14143,7 @@ async function getSystemStats() {
 export async function initializeGemmaDesktop(): Promise<void> {
   const currentSettings = await loadSettings()
   primaryModelHoldCounts.clear()
-  primaryModelAvailabilityIssues.clear()
+  clearPrimaryModelAvailabilityIssues()
   activePrimaryModelTarget = null
   primaryWarmupPromise = null
   primaryModelLoadPromise = null
@@ -17954,6 +18011,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('environment:retry-bootstrap', async () => {
+    clearPrimaryModelAvailabilityIssues()
     return await ensureBootstrapReady(true)
   })
 

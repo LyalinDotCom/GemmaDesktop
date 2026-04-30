@@ -142,7 +142,7 @@ describe('StartupLoadingOverlay', () => {
     expect(markup).toBe('')
   })
 
-  it('shows an error heading and Retry button when bootstrap errored', () => {
+  it('shows an error heading and retry button when bootstrap errored', () => {
     const markup = renderToStaticMarkup(
       createElement(StartupLoadingOverlay, {
         bootstrap: {
@@ -159,7 +159,7 @@ describe('StartupLoadingOverlay', () => {
     )
 
     expect(markup).toContain('Gemma Desktop ran into an issue')
-    expect(markup).toContain('Retry')
+    expect(markup).toContain('Try again')
     expect(markup).toContain('Ollama is unreachable')
     expect(markup).toContain('data-task-status="error"')
   })
@@ -182,7 +182,8 @@ describe('StartupLoadingOverlay', () => {
 
     expect(markup).toContain('Gemma Desktop needs attention')
     expect(markup).toContain('LM Studio is offline')
-    expect(markup).toContain('1 of 1 ready')
+    expect(markup).toContain('1 of 1 checked')
+    expect(markup).toContain('Try again')
     expect(markup).toContain('data-task-status="warning"')
   })
 
@@ -214,6 +215,7 @@ describe('StartupLoadingOverlay', () => {
     expect(markup).toContain('Gemma Desktop needs attention')
     expect(markup).toContain('oMLX could not load gemma-4-26b-a4b-it-nvfp4')
     expect(markup).toContain('Chats using omlx-openai / gemma-4-26b-a4b-it-nvfp4 are paused')
+    expect(markup).toContain('whitespace-normal break-words')
     expect(markup).toContain('data-task-status="warning"')
   })
 })
