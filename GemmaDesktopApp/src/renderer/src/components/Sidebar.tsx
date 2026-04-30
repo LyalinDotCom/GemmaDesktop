@@ -1158,11 +1158,8 @@ export function Sidebar({
               && index < sidebarModel.pinnedAreas.length - 1
 
             return (
-              <div
-                key={area.id}
-                className="rounded-xl border border-zinc-200/70 bg-white/45 p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/30"
-              >
-                <div className="group/area flex items-center gap-1.5 rounded-lg px-1.5 py-1">
+              <div key={area.id}>
+                <div className="group/area flex items-center gap-1.5 px-2 py-1.5">
                   <button
                     type="button"
                     onClick={() => onSetPinnedAreaCollapsed(area.id, !area.collapsed)}
@@ -1230,7 +1227,7 @@ export function Sidebar({
                   )}
                 </div>
                 {!area.collapsed && (
-                  <div className="mt-0.5 space-y-0.5">
+                  <div className="space-y-0.5">
                     {area.sessions.length > 0 ? (
                       area.sessions.map((session) =>
                         renderSessionRow(session, { inPinnedSection: true }),

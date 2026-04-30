@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Info, X } from 'lucide-react'
 import { AssistantActionRow } from '@/components/AssistantActionRow'
 import { MarkdownContent } from '@/components/MarkdownContent'
@@ -553,18 +553,18 @@ export function StreamingStatus({
           <p className="text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
             {presentation.note}
           </p>
-          <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <dl className="mt-2 grid grid-cols-[max-content_1fr] items-baseline gap-x-3 gap-y-1">
             {presentation.metrics.map((metric) => (
-              <div key={metric.label} className="rounded-md bg-sky-100/60 px-2 py-1.5 dark:bg-zinc-900/90">
-                <div className="text-[9px] uppercase tracking-[0.16em] text-sky-700/60 dark:text-sky-300/60">
+              <Fragment key={metric.label}>
+                <dt className="text-[10px] uppercase tracking-[0.14em] text-sky-700/55 dark:text-sky-300/55">
                   {metric.label}
-                </div>
-                <div className="mt-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-300">
+                </dt>
+                <dd className="text-[11px] font-medium text-sky-700 dark:text-sky-300">
                   {metric.value}
-                </div>
-              </div>
+                </dd>
+              </Fragment>
             ))}
-          </div>
+          </dl>
         </div>
       )}
     </div>
