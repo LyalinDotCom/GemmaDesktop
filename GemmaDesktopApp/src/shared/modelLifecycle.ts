@@ -38,3 +38,7 @@ export interface LoadDefaultModelsResult {
   skipped: DefaultModelLifecycleStepResult[]
   errors: DefaultModelLifecycleStepResult[]
 }
+
+export interface ReloadModelsRequest {
+  sessionId?: string | null
+}

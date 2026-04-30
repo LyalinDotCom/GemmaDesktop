@@ -117,6 +117,9 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
     expect(gemmaModel?.capabilities.some((capability) =>
       capability.id === "model.input.image" && capability.status === "supported"
     )).toBe(true);
+    expect(inspection.capabilities.some((capability) =>
+      capability.id === "runtime.load" && capability.status === "supported"
+    )).toBe(true);
 
     const embeddingModel = inspection.models.find((model) => model.id === "bge-m3");
     expect(embeddingModel?.kind).toBe("embedding");
@@ -173,8 +176,9 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
     ]);
   });
 
-  it("uses OpenAI-compatible chat and oMLX unload endpoints", async () => {
+  it("uses OpenAI-compatible chat and oMLX lifecycle endpoints", async () => {
     let chatBody: unknown;
+    let loadCalled = false;
     let unloadCalled = false;
     const server = await createMockServer((request) => {
       if (request.path === "/v1/chat/completions") {
@@ -194,6 +198,16 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
         };
       }
 
+      if (request.path === "/admin/api/models/gemma-4/load") {
+        loadCalled = true;
+        return {
+          json: {
+            status: "ok",
+            model_id: "gemma-4",
+          },
+        };
+      }
+
       if (request.path === "/v1/models/gemma-4/unload") {
         unloadCalled = true;
         return {
@@ -209,6 +223,7 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
     cleanup.push(server.close);
 
     const adapter = createOmlxOpenAICompatibleAdapter({ baseUrl: server.url });
+    await adapter.lifecycle?.loadModel?.("gemma-4");
     const response = await adapter.generate({
       model: "gemma-4",
       messages: [{
@@ -226,6 +241,7 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
       messages: [expect.objectContaining({ role: "user", content: "hello" })],
     }));
     expect(response.text).toBe("Ready from oMLX.");
+    expect(loadCalled).toBe(true);
     expect(unloadCalled).toBe(true);
   });
 

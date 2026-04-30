@@ -266,10 +266,12 @@ describe('MemoryStatusIndicator layout', () => {
         selectedRuntimeId: 'ollama-native',
         helperModelId: 'gemma4:e2b',
         helperRuntimeId: 'ollama-native',
+        onReloadModels: () => {},
       }),
     )
 
     expect(markup).toContain('Model Memory (1)')
+    expect(markup).toContain('aria-label="Reload expected models"')
     expect(markup).toContain('<details')
     expect(markup).toContain('<summary')
     expect(markup).not.toContain('<details open')
@@ -310,5 +312,20 @@ describe('MemoryStatusIndicator layout', () => {
     expect(markup).toContain('2 turns')
     expect(markup).toContain('since first turn')
     expect(markup).not.toContain('since app start')
+  })
+
+  it('shows reload progress in the pinned memory panel action', () => {
+    const markup = renderToStaticMarkup(
+      createElement(MemoryStatusPanel, {
+        systemStats,
+        models: [model],
+        reloadModelsBusy: true,
+        onReloadModels: () => {},
+      }),
+    )
+
+    expect(markup).toContain('aria-label="Reload expected models"')
+    expect(markup).toContain('disabled=""')
+    expect(markup).toContain('animate-spin')
   })
 })

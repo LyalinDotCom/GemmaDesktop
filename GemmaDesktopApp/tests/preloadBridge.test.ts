@@ -88,6 +88,7 @@ describe('preload bridge', () => {
     }
     const environment = bridge.environment as {
       loadDefaultModels: (modelSelection: unknown) => Promise<unknown>
+      reloadModels: (input: unknown) => Promise<unknown>
       onModelsChanged: (callback: () => void) => () => void
     }
     const system = bridge.system as {
@@ -113,6 +114,7 @@ describe('preload bridge', () => {
       mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
       helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
     })
+    await environment.reloadModels({ sessionId: 'session-1' })
     await system.openEmojiPanel()
     await clipboard.writeText('copied text')
 
@@ -142,6 +144,9 @@ describe('preload bridge', () => {
     expect(invoke).toHaveBeenCalledWith('environment:load-default-models', {
       mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
       helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
+    })
+    expect(invoke).toHaveBeenCalledWith('environment:reload-models', {
+      sessionId: 'session-1',
     })
     expect(invoke).toHaveBeenCalledWith('system:open-emoji-panel')
     expect(clipboardWriteText).toHaveBeenCalledWith('copied text')

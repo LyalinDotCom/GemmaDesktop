@@ -42,6 +42,7 @@ import type {
   SystemStats,
   TerminalAppInfo,
 } from '@/types'
+import type { LoadDefaultModelsResult } from '@shared/modelLifecycle'
 import { clampToFirstGrapheme } from '@shared/emoji'
 import {
   DEFAULT_PINNED_AREA_ID,
@@ -127,6 +128,7 @@ interface SidebarProps {
   activeRuntimeId?: string | null
   helperModelId?: string | null
   helperRuntimeId?: string | null
+  onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
   initialSearchState?: SidebarInitialSearchState
 }
 
@@ -231,6 +233,7 @@ export function Sidebar({
   activeRuntimeId = null,
   helperModelId = null,
   helperRuntimeId = null,
+  onReloadModels,
   initialSearchState,
 }: SidebarProps) {
   const [contextMenu, setContextMenu] = useState<{
@@ -246,6 +249,7 @@ export function Sidebar({
   } | null>(null)
   const [quickCreateMenuPinned, setQuickCreateMenuPinned] = useState(false)
   const [modelMemoryPanelOpen, setModelMemoryPanelOpen] = useState(false)
+  const [modelReloadPending, setModelReloadPending] = useState(false)
   const [pinnedAreaDialog, setPinnedAreaDialog] = useState<{
     mode: 'create' | 'edit'
     areaId?: string
@@ -489,6 +493,21 @@ export function Sidebar({
     void window.gemmaDesktopBridge.system.openEmojiPanel().catch((error) => {
       console.error('Failed to open emoji picker:', error)
     })
+  }
+
+  const handleReloadModels = async () => {
+    if (!onReloadModels || modelReloadPending) {
+      return
+    }
+
+    setModelReloadPending(true)
+    try {
+      await onReloadModels()
+    } catch (error) {
+      console.error('Failed to reload models:', error)
+    } finally {
+      setModelReloadPending(false)
+    }
   }
 
   const openCreatePinnedAreaDialog = (sessionId: string | null = null) => {
@@ -1618,6 +1637,8 @@ export function Sidebar({
             selectedRuntimeId={activeRuntimeId ?? undefined}
             helperModelId={helperModelId ?? undefined}
             helperRuntimeId={helperRuntimeId ?? undefined}
+            reloadModelsBusy={modelReloadPending}
+            onReloadModels={handleReloadModels}
           />
         </div>
       )}

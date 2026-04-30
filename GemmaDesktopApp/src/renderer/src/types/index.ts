@@ -44,7 +44,10 @@ import type { AppOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import type { AppLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
 import type { AppOmlxSettings } from '@shared/omlxRuntimeConfig'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
-import type { LoadDefaultModelsResult } from '@shared/modelLifecycle'
+import type {
+  LoadDefaultModelsResult,
+  ReloadModelsRequest,
+} from '@shared/modelLifecycle'
 import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 import type {
   GlobalChatConversationSummary,
@@ -1024,6 +1027,9 @@ export interface GemmaDesktopBridge {
     listRuntimes(): Promise<RuntimeSummary[]>
     loadDefaultModels?(
       modelSelection: AppModelSelectionSettings,
+    ): Promise<LoadDefaultModelsResult>
+    reloadModels?(
+      input?: ReloadModelsRequest,
     ): Promise<LoadDefaultModelsResult>
     getBootstrapState(): Promise<BootstrapState>
     retryBootstrap(): Promise<BootstrapState>

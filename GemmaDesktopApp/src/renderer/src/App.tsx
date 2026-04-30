@@ -2762,6 +2762,49 @@ export function App() {
           activeRuntimeId={state.activeSession?.runtimeId ?? null}
           helperModelId={state.bootstrapState.helperModelId}
           helperRuntimeId={state.bootstrapState.helperRuntimeId}
+          onReloadModels={async () => {
+            if (window.gemmaDesktopBridge.environment.reloadModels) {
+              return await window.gemmaDesktopBridge.environment.reloadModels({
+                sessionId: state.activeSessionId,
+              })
+            }
+
+            const activeMainModel = state.activeSession
+              ? {
+                  modelId: state.activeSession.modelId,
+                  runtimeId: state.activeSession.runtimeId,
+                }
+              : state.settings.modelSelection.mainModel
+            const usesSessionMainOverride = state.activeSession
+              ? activeMainModel.modelId !== state.settings.modelSelection.mainModel.modelId
+                || activeMainModel.runtimeId !== state.settings.modelSelection.mainModel.runtimeId
+              : false
+            const modelSelection = {
+              mainModel: usesSessionMainOverride
+                ? activeMainModel
+                : state.settings.modelSelection.mainModel,
+              helperModel: state.settings.modelSelection.helperModel,
+            }
+
+            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
+              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
+            }
+
+            return {
+              ok: false,
+              message: 'Gemma Desktop needs an app restart before the model reloader can run.',
+              selection: modelSelection,
+              targets: [],
+              unloaded: [],
+              loaded: [],
+              skipped: [],
+              errors: [{
+                action: 'prepare',
+                ok: false,
+                error: 'The running main process did not recognize the model-reload request. Restart Gemma Desktop and try again.',
+              }],
+            }
+          }}
         />
       </div>
 

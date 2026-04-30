@@ -188,7 +188,7 @@ function createCapabilities(): CapabilityRecord[] {
     { id: "inference.rerank", scope: "request", status: "conditional", source: "runtime-docs" },
     { id: "runtime.list-available-models", scope: "runtime", status: "supported", source: "runtime-probe" },
     { id: "runtime.list-loaded-models", scope: "runtime", status: "supported", source: "runtime-probe" },
-    { id: "runtime.load", scope: "runtime", status: "unsupported", source: "runtime-docs", notes: ["oMLX loads models on demand when a request targets them."] },
+    { id: "runtime.load", scope: "runtime", status: "supported", source: "runtime-docs", notes: ["Uses the oMLX admin model load endpoint."] },
     { id: "runtime.unload", scope: "runtime", status: "supported", source: "runtime-docs" },
     { id: "request.tool-calling", scope: "request", status: "conditional", source: "runtime-docs" },
     { id: "request.structured-output", scope: "request", status: "conditional", source: "runtime-docs" },
@@ -412,6 +412,13 @@ export function createOmlxOpenAICompatibleAdapter(options: OmlxAdapterOptions = 
       };
     },
     lifecycle: {
+      async loadModel(modelId: string): Promise<Record<string, unknown>> {
+        return await postJson<Record<string, unknown>>(
+          `${nativeBaseUrl}/admin/api/models/${encodeURIComponent(modelId)}/load`,
+          {},
+          { headers: authHeaders(options.apiKey) },
+        );
+      },
       async unloadModel(modelId: string): Promise<Record<string, unknown>> {
         return await postJson<Record<string, unknown>>(
           `${baseUrl}/models/${encodeURIComponent(modelId)}/unload`,

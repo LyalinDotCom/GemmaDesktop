@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Layers } from 'lucide-react'
+import { ChevronDown, Layers, Loader2, RefreshCw } from 'lucide-react'
 import type {
   ModelSummary,
   ModelTokenUsageReport,
@@ -21,6 +21,8 @@ interface MemoryStatusDetailProps {
   selectedRuntimeId?: string
   helperModelId?: string
   helperRuntimeId?: string
+  reloadModelsBusy?: boolean
+  onReloadModels?: () => Promise<unknown> | void
 }
 
 interface MemoryStatusIndicatorProps extends MemoryStatusDetailProps {
@@ -300,6 +302,8 @@ export function MemoryStatusPanel({
   selectedRuntimeId,
   helperModelId,
   helperRuntimeId,
+  reloadModelsBusy = false,
+  onReloadModels,
 }: MemoryStatusDetailProps) {
   const [now, setNow] = useState(() => Date.now())
   const visibleModels = buildVisibleMemoryModels({
@@ -347,8 +351,24 @@ export function MemoryStatusPanel({
             {visibleModels.length > 0 ? ` (${visibleModels.length})` : ''}
           </span>
         </div>
-        <div className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
-          RAM {systemStats.memoryUsedGB}/{systemStats.memoryTotalGB} GB
+        <div className="flex shrink-0 items-center gap-1.5">
+          <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
+            RAM {systemStats.memoryUsedGB}/{systemStats.memoryTotalGB} GB
+          </div>
+          {onReloadModels && (
+            <button
+              type="button"
+              onClick={() => { void onReloadModels() }}
+              disabled={reloadModelsBusy}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 outline-none transition-colors hover:bg-zinc-200 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 dark:focus-visible:ring-zinc-700"
+              title="Reload expected models"
+              aria-label="Reload expected models"
+            >
+              {reloadModelsBusy
+                ? <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                : <RefreshCw size={13} aria-hidden="true" />}
+            </button>
+          )}
         </div>
       </div>
       <div className="mt-2 rounded-lg bg-white/85 px-3 py-2 shadow-sm ring-1 ring-zinc-200/70 dark:bg-zinc-900/70 dark:ring-zinc-800">

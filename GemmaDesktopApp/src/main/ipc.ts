@@ -301,6 +301,7 @@ import type {
   DefaultModelLoadTarget,
   DefaultModelLoadTargetRole,
   LoadDefaultModelsResult,
+  ReloadModelsRequest,
 } from '../shared/modelLifecycle'
 import {
   LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY,
@@ -2335,6 +2336,7 @@ function supportsExplicitModelLoad(target: Pick<PrimaryModelTarget, 'runtimeId'>
   return (
     isOllamaModelRuntime(target.runtimeId)
     || isLmStudioModelRuntime(target.runtimeId)
+    || isOmlxModelRuntime(target.runtimeId)
     || target.runtimeId === 'llamacpp-server'
   )
 }
@@ -2536,6 +2538,10 @@ function buildLoadDefaultModelsMessage(input: {
   unloaded: DefaultModelLifecycleStepResult[]
   skipped: DefaultModelLifecycleStepResult[]
   errors: DefaultModelLifecycleStepResult[]
+  targetLabel?: string
+  unloadLabel?: string
+  failureLabel?: string
+  successVerb?: 'Loaded' | 'Reloaded'
 }): string {
   const failedLoadKeys = new Set(
     input.errors
@@ -2558,19 +2564,21 @@ function buildLoadDefaultModelsMessage(input: {
       runtimeId: step.runtimeId,
     }))
   }).length
-  const loadedPhrase = `${loadedCount} of ${input.targetCount} default model${input.targetCount === 1 ? '' : 's'}`
+  const targetLabel = input.targetLabel ?? 'default model'
+  const unloadLabel = input.unloadLabel ?? 'other model'
+  const loadedPhrase = `${loadedCount} of ${input.targetCount} ${targetLabel}${input.targetCount === 1 ? '' : 's'}`
   const unloadPhrase = input.unloaded.length > 0
-    ? ` Unloaded ${input.unloaded.length} other model${input.unloaded.length === 1 ? '' : 's'}.`
+    ? ` Unloaded ${input.unloaded.length} ${unloadLabel}${input.unloaded.length === 1 ? '' : 's'}.`
     : ''
   const skippedPhrase = input.skipped.length > 0
     ? ` Skipped ${input.skipped.length} unsupported unload${input.skipped.length === 1 ? '' : 's'}.`
     : ''
 
   if (input.errors.length === 0) {
-    return `Loaded ${loadedPhrase}.${unloadPhrase}${skippedPhrase}`.trim()
+    return `${input.successVerb ?? 'Loaded'} ${loadedPhrase}.${unloadPhrase}${skippedPhrase}`.trim()
   }
 
-  return `Could not finish loading defaults. Loaded ${loadedPhrase}; ${input.errors.length} operation${input.errors.length === 1 ? '' : 's'} need attention.${unloadPhrase}${skippedPhrase}`.trim()
+  return `Could not finish ${input.failureLabel ?? 'loading defaults'}. Loaded ${loadedPhrase}; ${input.errors.length} operation${input.errors.length === 1 ? '' : 's'} need attention.${unloadPhrase}${skippedPhrase}`.trim()
 }
 
 function buildLoadDefaultModelsResult(input: {
@@ -2580,6 +2588,10 @@ function buildLoadDefaultModelsResult(input: {
   loaded: DefaultModelLifecycleStepResult[]
   skipped: DefaultModelLifecycleStepResult[]
   errors: DefaultModelLifecycleStepResult[]
+  targetLabel?: string
+  unloadLabel?: string
+  failureLabel?: string
+  successVerb?: 'Loaded' | 'Reloaded'
 }): LoadDefaultModelsResult {
   return {
     ok: input.errors.length === 0,
@@ -2589,6 +2601,10 @@ function buildLoadDefaultModelsResult(input: {
       unloaded: input.unloaded,
       skipped: input.skipped,
       errors: input.errors,
+      targetLabel: input.targetLabel,
+      unloadLabel: input.unloadLabel,
+      failureLabel: input.failureLabel,
+      successVerb: input.successVerb,
     }),
     selection: input.selection,
     targets: toDefaultModelLoadTargets(input.targetEntries),
@@ -2599,8 +2615,70 @@ function buildLoadDefaultModelsResult(input: {
   }
 }
 
-async function loadDefaultModelSelection(
+async function appendModelLifecycleErrorToSession(input: {
+  sessionId: string | null | undefined
+  result: LoadDefaultModelsResult
+}): Promise<void> {
+  const sessionId = input.sessionId?.trim()
+  if (!sessionId || input.result.errors.length === 0) {
+    return
+  }
+
+  const snapshot = await resolveKnownSessionSnapshot(sessionId)
+  if (!snapshot || isHiddenSessionSnapshot(snapshot)) {
+    return
+  }
+
+  const details = [
+    input.result.message,
+    ...input.result.errors.map(formatDefaultModelLoadStepForChat),
+    ...input.result.skipped.map(formatDefaultModelLoadStepForChat),
+  ].filter((entry) => entry.trim().length > 0)
+
+  const message = buildSystemErrorEventMessage({
+    message: 'Model reload could not finish.',
+    details: details.join('\n'),
+    timestamp: Date.now(),
+  })
+  store.upsertAppMessage(sessionId, message)
+  sendToSession(sessionId, {
+    type: 'message_appended',
+    message,
+  })
+  await store.save(
+    sessionId,
+    snapshot,
+    undefined,
+    store.getAppMessages(sessionId),
+  )
+}
+
+function formatDefaultModelLoadStepForChat(
+  step: DefaultModelLifecycleStepResult,
+): string {
+  const target = step.runtimeId && step.modelId
+    ? `${step.runtimeId} / ${step.modelId}`
+    : ''
+  const roles = step.roles && step.roles.length > 0
+    ? `${step.roles.join(' + ')}`
+    : ''
+  const prefix = [roles, target].filter(Boolean).join(': ')
+  const body = step.error ?? step.message ?? 'Operation did not complete.'
+  return prefix ? `${prefix}: ${body}` : body
+}
+
+async function loadModelSelection(
   modelSelectionInput: unknown,
+  options: {
+    reason: string
+    busyLabel: string
+    targetLabel?: string
+    unloadLabel?: string
+    failureLabel?: string
+    successVerb?: 'Loaded' | 'Reloaded'
+    forceReloadTargets?: boolean
+    errorSessionId?: string | null
+  },
 ): Promise<LoadDefaultModelsResult> {
   const currentSettings = await getSettingsState()
   const selection = normalizeAppModelSelectionSettings(
@@ -2612,14 +2690,28 @@ async function loadDefaultModelSelection(
   const loaded: DefaultModelLifecycleStepResult[] = []
   const skipped: DefaultModelLifecycleStepResult[] = []
   const errors: DefaultModelLifecycleStepResult[] = []
-  const finish = () => buildLoadDefaultModelsResult({
+  const buildResult = () => buildLoadDefaultModelsResult({
     selection,
     targetEntries,
     unloaded,
     loaded,
     skipped,
     errors,
+    targetLabel: options.targetLabel,
+    unloadLabel: options.unloadLabel,
+    failureLabel: options.failureLabel,
+    successVerb: options.successVerb,
   })
+  const finish = async () => {
+    const result = buildResult()
+    await appendModelLifecycleErrorToSession({
+      sessionId: options.errorSessionId,
+      result,
+    }).catch((error) => {
+      console.warn('[gemma-desktop] Failed to append model lifecycle error to chat:', error)
+    })
+    return result
+  }
 
   try {
     assertNoConversationExecutionRunning()
@@ -2634,7 +2726,7 @@ async function loadDefaultModelSelection(
   if (currentPrimaryHoldCount() > 0 || currentHelperHoldCount() > 0) {
     errors.push(createLifecycleError({
       action: 'prepare',
-      error: 'Stop the active model turn before loading defaults.',
+      error: `Stop the active model turn before ${options.busyLabel}.`,
     }))
     return finish()
   }
@@ -2642,14 +2734,14 @@ async function loadDefaultModelSelection(
   if (primaryModelLoadPromise) {
     errors.push(createLifecycleError({
       action: 'prepare',
-      error: 'A model load is already in progress. Wait for it to finish before loading defaults.',
+      error: `A model load is already in progress. Wait for it to finish before ${options.busyLabel}.`,
     }))
     return finish()
   }
 
   const unloadResult = await unloadResidentModelTargetsBeforeLoad({
     protectedTargets: targetEntries.map((entry) => entry.target),
-    reason: 'loading default models',
+    reason: options.reason,
   })
   unloaded.push(...unloadResult.unloaded)
   skipped.push(...unloadResult.skipped)
@@ -2658,6 +2750,56 @@ async function loadDefaultModelSelection(
   if (unloadResult.errors.length > 0) {
     broadcastEnvironmentModelsChanged()
     return finish()
+  }
+
+  if (options.forceReloadTargets) {
+    const unloadTargetKeys = new Set<string>()
+    for (const entry of targetEntries) {
+      const key = modelTargetKey(entry.target)
+      if (unloadTargetKeys.has(key)) {
+        continue
+      }
+      unloadTargetKeys.add(key)
+
+      if (!supportsExplicitModelUnload(entry.target)) {
+        errors.push(createLifecycleError({
+          action: 'unload',
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          error: `${getLocalRuntimeDisplayName(entry.target.runtimeId)} does not expose an explicit unload operation for ${entry.target.modelId}.`,
+        }))
+        continue
+      }
+
+      try {
+        await unloadModelForRuntime(entry.target)
+        if (primaryTargetsMatch(activePrimaryModelTarget, entry.target)) {
+          activePrimaryModelTarget = null
+        }
+        unloaded.push(createLifecycleStepResult({
+          action: 'unload',
+          ok: true,
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          message: 'Unloaded before reload.',
+        }))
+      } catch (error) {
+        errors.push(createLifecycleError({
+          action: 'unload',
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          error: `Could not unload ${formatPrimaryModelTarget(entry.target)} before reload: ${getErrorDisplayMessage(error)}`,
+        }))
+      }
+    }
+
+    if (errors.length > 0) {
+      broadcastEnvironmentModelsChanged()
+      return finish()
+    }
   }
 
   for (const entry of targetEntries) {
@@ -2733,6 +2875,92 @@ async function loadDefaultModelSelection(
 
   broadcastEnvironmentModelsChanged()
   return finish()
+}
+
+async function loadDefaultModelSelection(
+  modelSelectionInput: unknown,
+): Promise<LoadDefaultModelsResult> {
+  return await loadModelSelection(modelSelectionInput, {
+    reason: 'loading default models',
+    busyLabel: 'loading defaults',
+    targetLabel: 'default model',
+    failureLabel: 'loading defaults',
+  })
+}
+
+async function resolveReloadModelSelection(
+  input: ReloadModelsRequest | null | undefined,
+): Promise<{
+  selection: AppModelSelectionSettings
+  sessionId: string | null
+  usesSessionMainOverride: boolean
+}> {
+  const currentSettings = await getSettingsState()
+  const defaultSelection = normalizeAppModelSelectionSettings(
+    currentSettings.modelSelection,
+  )
+  const rawSessionId = typeof input?.sessionId === 'string'
+    ? input.sessionId.trim()
+    : ''
+  const sessionId = rawSessionId.length > 0 ? rawSessionId : null
+
+  if (!sessionId) {
+    return {
+      selection: defaultSelection,
+      sessionId,
+      usesSessionMainOverride: false,
+    }
+  }
+
+  const snapshot = await resolveKnownSessionSnapshot(sessionId)
+  if (!snapshot || isHiddenSessionSnapshot(snapshot) || isTalkSessionSnapshot(snapshot)) {
+    return {
+      selection: defaultSelection,
+      sessionId,
+      usesSessionMainOverride: false,
+    }
+  }
+
+  const sessionMainTarget = normalizePrimaryModelTarget({
+    modelId: snapshot.modelId,
+    runtimeId: snapshot.runtimeId,
+  })
+  if (primaryTargetsMatch(sessionMainTarget, defaultSelection.mainModel)) {
+    return {
+      selection: defaultSelection,
+      sessionId,
+      usesSessionMainOverride: false,
+    }
+  }
+
+  return {
+    selection: {
+      mainModel: sessionMainTarget,
+      helperModel: { ...defaultSelection.helperModel },
+    },
+    sessionId,
+    usesSessionMainOverride: true,
+  }
+}
+
+async function reloadModelsForRequest(
+  input: ReloadModelsRequest | null | undefined,
+): Promise<LoadDefaultModelsResult> {
+  const resolved = await resolveReloadModelSelection(input)
+  return await loadModelSelection(resolved.selection, {
+    reason: resolved.usesSessionMainOverride
+      ? 'reloading the active session models'
+      : 'reloading default models',
+    busyLabel: 'reloading models',
+    targetLabel: resolved.usesSessionMainOverride
+      ? 'session model'
+      : 'default model',
+    unloadLabel: 'model',
+    failureLabel: 'reloading models',
+    successVerb: 'Reloaded',
+    forceReloadTargets: true,
+    errorSessionId: resolved.sessionId,
+  })
 }
 
 function describePrimaryModelLoadFailure(
@@ -3259,6 +3487,47 @@ async function updateOmlxModelSettings(
   }
 }
 
+async function postOmlxAdminModelAction(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+  action: 'load',
+): Promise<Record<string, unknown>> {
+  const url = `${endpoint.replace(/\/$/, '')}/admin/api/models/${encodeURIComponent(modelId)}/${action}`
+  const request = async (cookie?: string): Promise<Response> =>
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        ...(cookie ? { cookie } : {}),
+      },
+    })
+
+  let response = await request()
+  if ((response.status === 401 || response.status === 403) && apiKey) {
+    const cookie = await createOmlxAdminSessionCookie(endpoint, apiKey)
+    response = await request(cookie)
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(body.trim() || `${response.status} ${response.statusText}`.trim())
+  }
+
+  const body = await response.text().catch(() => '')
+  return body.trim().length > 0
+    ? JSON.parse(body) as Record<string, unknown>
+    : {}
+}
+
+async function loadOmlxModel(
+  endpoint: string,
+  apiKey: string | undefined,
+  modelId: string,
+): Promise<Record<string, unknown>> {
+  return await postOmlxAdminModelAction(endpoint, apiKey, modelId, 'load')
+}
+
 async function canReachOllama(endpoint: string): Promise<boolean> {
   try {
     await requestJson(`${endpoint.replace(/\/$/, '')}/api/version`)
@@ -3726,10 +3995,6 @@ async function loadModelForRuntime(
     const settingsPatch = buildOmlxModelSettingsRecord(
       resolveManagedOmlxLoadProfile(currentSettings, target),
     )
-    if (!settingsPatch || Object.keys(settingsPatch).length === 0) {
-      return target
-    }
-
     const releasePendingLoad = markModelLoadPending(target)
     try {
       await updateOmlxModelSettings(
@@ -3739,6 +4004,13 @@ async function loadModelForRuntime(
         settingsPatch,
       ).catch((error) => {
         console.warn('[gemma-desktop] Failed to sync managed oMLX model settings before use:', error)
+      })
+      await loadOmlxModel(
+        currentSettings.runtimes.omlx.endpoint,
+        apiKey,
+        target.modelId,
+      ).catch((error) => {
+        throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
       })
       return target
     } finally {
@@ -18003,6 +18275,13 @@ export function registerIpcHandlers(): void {
     'environment:load-default-models',
     async (_, modelSelection: unknown): Promise<LoadDefaultModelsResult> => {
       return await loadDefaultModelSelection(modelSelection)
+    },
+  )
+
+  ipcMain.handle(
+    'environment:reload-models',
+    async (_, input: ReloadModelsRequest | null | undefined): Promise<LoadDefaultModelsResult> => {
+      return await reloadModelsForRequest(input)
     },
   )
 
