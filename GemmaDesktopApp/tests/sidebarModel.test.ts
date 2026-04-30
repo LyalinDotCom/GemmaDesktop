@@ -17,7 +17,6 @@ function makeSidebarState(overrides: Partial<SidebarState> = {}): SidebarState {
   return {
     ...EMPTY_SIDEBAR_STATE,
     pinnedSessionIds: [],
-    pinnedAreas: [],
     followUpSessionIds: [],
     closedProjectPaths: [],
     projectPaths: [],
@@ -64,9 +63,7 @@ describe('sidebar model', () => {
       makeSession('beta-chat', '/tmp/beta', 200),
     ]
     const sidebarState = makeSidebarState({
-      pinnedAreas: [
-        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
-      ],
+      pinnedSessionIds: ['alpha-chat'],
       projectPaths: ['/tmp/alpha', '/tmp/beta'],
     })
 
@@ -93,14 +90,7 @@ describe('sidebar model', () => {
       makeSession('alpha-chat', '/tmp/alpha', 100),
     ]
     const sidebarState = makeSidebarState({
-      pinnedAreas: [
-        {
-          id: 'area-1',
-          icon: '⭐',
-          collapsed: false,
-          sessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID, 'alpha-chat'],
-        },
-      ],
+      pinnedSessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID, 'alpha-chat'],
       projectPaths: [
         '/tmp/user-data/global-session-state/talk/workspace',
         '/tmp/alpha',
@@ -114,6 +104,49 @@ describe('sidebar model', () => {
     expect(model.visibleSessionIds).toEqual(['alpha-chat'])
   })
 
+  it('derives icon groups from conversation icons ordered by latest matching chat', () => {
+    const sessions = [
+      makeSession('alpha-old', '/tmp/alpha', 100, { conversationIcon: '🧪' }),
+      makeSession('alpha-new', '/tmp/alpha', 400, { conversationIcon: '🧪' }),
+      makeSession('beta-chat', '/tmp/beta', 300, { conversationIcon: '🚀' }),
+      makeSession('plain-chat', '/tmp/gamma', 500),
+    ]
+    const sidebarState = makeSidebarState({
+      projectPaths: ['/tmp/alpha', '/tmp/beta', '/tmp/gamma'],
+    })
+
+    const model = buildSidebarModel(sessions, sidebarState)
+
+    expect(model.iconGroups.map((group) => ({
+      icon: group.icon,
+      sessionIds: group.sessions.map((session) => session.id),
+    }))).toEqual([
+      { icon: '🧪', sessionIds: ['alpha-new', 'alpha-old'] },
+      { icon: '🚀', sessionIds: ['beta-chat'] },
+    ])
+  })
+
+  it('keeps icon-group conversations visible in normal project folders too', () => {
+    const sessions = [
+      makeSession('alpha-chat', '/tmp/alpha', 100, { conversationIcon: '🧪' }),
+      makeSession('beta-chat', '/tmp/beta', 200),
+    ]
+    const sidebarState = makeSidebarState({
+      projectPaths: ['/tmp/alpha', '/tmp/beta'],
+    })
+
+    const model = buildSidebarModel(sessions, sidebarState)
+
+    expect(model.iconGroups[0]?.sessions.map((session) => session.id)).toEqual([
+      'alpha-chat',
+    ])
+    expect(
+      model.projectGroups.find((group) => group.path === '/tmp/alpha')?.sessions.map(
+        (session) => session.id,
+      ),
+    ).toEqual(['alpha-chat'])
+  })
+
   it('hides closed projects from the visible project list', () => {
     const sessions = [
       makeSession('alpha-chat', '/tmp/alpha', 300),
@@ -121,9 +154,7 @@ describe('sidebar model', () => {
       makeSession('gamma-chat', '/tmp/gamma', 100),
     ]
     const sidebarState = makeSidebarState({
-      pinnedAreas: [
-        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['gamma-chat'] },
-      ],
+      pinnedSessionIds: ['gamma-chat'],
       closedProjectPaths: ['/tmp/alpha'],
       projectPaths: ['/tmp/alpha', '/tmp/beta', '/tmp/gamma'],
     })
@@ -145,9 +176,7 @@ describe('sidebar model', () => {
       makeSession('gamma-chat', '/tmp/gamma', 200),
     ]
     const sidebarState = makeSidebarState({
-      pinnedAreas: [
-        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['pinned-delta'] },
-      ],
+      pinnedSessionIds: ['pinned-delta'],
       closedProjectPaths: ['/tmp/alpha'],
       projectPaths: ['/tmp/alpha', '/tmp/delta', '/tmp/beta', '/tmp/gamma'],
     })

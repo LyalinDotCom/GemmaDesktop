@@ -4,11 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { Sidebar } from '../src/renderer/src/components/Sidebar'
 import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '../src/shared/globalChat'
 import type { SessionSummary, SystemStats } from '../src/renderer/src/types'
-import {
-  DEFAULT_PINNED_AREA_ICON,
-  DEFAULT_PINNED_AREA_ID,
-  type SidebarState,
-} from '../src/shared/sidebar'
+import type { SidebarState } from '../src/shared/sidebar'
 
 function makeSession(
   id: string,
@@ -68,11 +64,6 @@ function renderSidebar(
       onCloseProcess: () => {},
       onPinSession: () => {},
       onUnpinSession: () => {},
-      onCreatePinnedArea: () => {},
-      onDeletePinnedArea: () => {},
-      onUpdatePinnedAreaIcon: () => {},
-      onSetPinnedAreaCollapsed: () => {},
-      onMovePinnedArea: () => {},
       onFlagFollowUp: () => {},
       onUnflagFollowUp: () => {},
       onMovePinnedSession: () => {},
@@ -96,10 +87,6 @@ function renderSidebar(
   )
 }
 
-function findCreatePinnedAreaButton(markup: string): string {
-  return markup.match(/<button(?=[^>]*aria-label="Create pinned area")[^>]*>/)?.[0] ?? ''
-}
-
 describe('Sidebar chat actions', () => {
   it('does not render a Global Chat row above pinned chats', () => {
     const sessions = [
@@ -107,9 +94,6 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: ['alpha-chat'],
-      pinnedAreas: [
-        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
-      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -130,9 +114,6 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: ['alpha-chat'],
-      pinnedAreas: [
-        { id: 'area-1', icon: '⭐', collapsed: false, sessionIds: ['alpha-chat'] },
-      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -148,17 +129,9 @@ describe('Sidebar chat actions', () => {
     expect(markup).toContain('aria-label="Unpin Alpha Chat"')
   })
 
-  it('hides the empty default pinned area behind the pinned header', () => {
+  it('shows the pinned header without empty pinned rows', () => {
     const sidebarState: SidebarState = {
       pinnedSessionIds: [],
-      pinnedAreas: [
-        {
-          id: DEFAULT_PINNED_AREA_ID,
-          icon: DEFAULT_PINNED_AREA_ICON,
-          collapsed: false,
-          sessionIds: [],
-        },
-      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: [],
@@ -170,38 +143,7 @@ describe('Sidebar chat actions', () => {
     const markup = renderSidebar([], sidebarState)
 
     expect(markup).toContain('PINNED')
-    expect(markup).not.toContain('aria-label="Default pinned area"')
     expect(markup).not.toContain('>Empty<')
-    expect(markup).not.toContain('No pinned areas yet.')
-  })
-
-  it('keeps the create pinned area action visible for the active pinned conversation', () => {
-    const sessions = [
-      makeSession('alpha-chat', 'Alpha Chat', '/tmp/alpha', 200),
-    ]
-    const sidebarState: SidebarState = {
-      pinnedSessionIds: [],
-      pinnedAreas: [
-        {
-          id: DEFAULT_PINNED_AREA_ID,
-          icon: DEFAULT_PINNED_AREA_ICON,
-          collapsed: false,
-          sessionIds: ['alpha-chat'],
-        },
-      ],
-      followUpSessionIds: [],
-      closedProjectPaths: [],
-      projectPaths: ['/tmp/alpha'],
-      sessionOrderOverrides: {},
-      projectOrderOverrides: {},
-      lastActiveSessionId: null,
-    }
-
-    const markup = renderSidebar(sessions, sidebarState, 'alpha-chat')
-    const createButton = findCreatePinnedAreaButton(markup)
-
-    expect(createButton).toContain('opacity-100')
-    expect(createButton).not.toContain('opacity-0')
   })
 
   it('renders the restored pin icon action on regular conversations', () => {
@@ -210,7 +152,6 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: [],
-      pinnedAreas: [],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: ['/tmp/alpha'],
@@ -236,14 +177,6 @@ describe('Sidebar chat actions', () => {
     ]
     const sidebarState: SidebarState = {
       pinnedSessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID],
-      pinnedAreas: [
-        {
-          id: 'area-1',
-          icon: '⭐',
-          collapsed: false,
-          sessionIds: [GLOBAL_CHAT_FALLBACK_SESSION_ID],
-        },
-      ],
       followUpSessionIds: [],
       closedProjectPaths: [],
       projectPaths: [

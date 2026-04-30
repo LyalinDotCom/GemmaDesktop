@@ -1,18 +1,5 @@
-import { clampToFirstGrapheme } from './emoji'
-
-export interface PinnedArea {
-  id: string
-  icon: string
-  collapsed: boolean
-  sessionIds: string[]
-}
-
-export const DEFAULT_PINNED_AREA_ID = 'pinned-area-default'
-export const DEFAULT_PINNED_AREA_ICON = '📌'
-
 export interface SidebarState {
   pinnedSessionIds: string[]
-  pinnedAreas?: PinnedArea[]
   followUpSessionIds: string[]
   closedProjectPaths: string[]
   projectPaths: string[]
@@ -28,45 +15,12 @@ export interface SidebarSessionReference {
 
 export const EMPTY_SIDEBAR_STATE: SidebarState = {
   pinnedSessionIds: [],
-  pinnedAreas: [],
   followUpSessionIds: [],
   closedProjectPaths: [],
   projectPaths: [],
   sessionOrderOverrides: {},
   projectOrderOverrides: {},
   lastActiveSessionId: null,
-}
-
-export function isDefaultPinnedArea(areaId: string): boolean {
-  return areaId === DEFAULT_PINNED_AREA_ID
-}
-
-export function createDefaultPinnedArea(
-  sessionIds: readonly string[] = [],
-): PinnedArea {
-  return {
-    id: DEFAULT_PINNED_AREA_ID,
-    icon: DEFAULT_PINNED_AREA_ICON,
-    collapsed: false,
-    sessionIds: [...sessionIds],
-  }
-}
-
-export function getPinnedAreaDestinations(
-  pinnedAreas: readonly PinnedArea[],
-): PinnedArea[] {
-  if (pinnedAreas.length === 0) {
-    return [createDefaultPinnedArea()]
-  }
-
-  if (pinnedAreas.some((area) => isDefaultPinnedArea(area.id))) {
-    return [...pinnedAreas]
-  }
-
-  return [
-    createDefaultPinnedArea(),
-    ...pinnedAreas,
-  ]
 }
 
 export function normalizeSidebarProjectPath(targetPath: string): string {
@@ -98,12 +52,6 @@ export function dedupePreserveOrder(values: readonly string[]): string[] {
 export function cloneSidebarState(state: SidebarState): SidebarState {
   return {
     pinnedSessionIds: [...state.pinnedSessionIds],
-    pinnedAreas: (state.pinnedAreas ?? []).map((area) => ({
-      id: area.id,
-      icon: area.icon,
-      collapsed: area.collapsed,
-      sessionIds: [...area.sessionIds],
-    })),
     followUpSessionIds: [...state.followUpSessionIds],
     closedProjectPaths: [...state.closedProjectPaths],
     projectPaths: [...state.projectPaths],
@@ -113,48 +61,17 @@ export function cloneSidebarState(state: SidebarState): SidebarState {
   }
 }
 
-function sanitizeEmojiIcon(input: unknown): string {
-  return clampToFirstGrapheme(input)
-}
-
-function sanitizePinnedAreas(input: unknown): PinnedArea[] {
+function sanitizeSessionIds(input: unknown): string[] {
   if (!Array.isArray(input)) {
     return []
   }
 
-  const seenAreaIds = new Set<string>()
-  const areas: PinnedArea[] = []
-
-  for (const entry of input) {
-    if (!entry || typeof entry !== 'object') {
-      continue
-    }
-
-    const record = entry as Record<string, unknown>
-    const id = typeof record['id'] === 'string' ? record['id'].trim() : ''
-    if (!id || seenAreaIds.has(id)) {
-      continue
-    }
-
-    const rawSessionIds = Array.isArray(record['sessionIds'])
-      ? record['sessionIds'].filter(
-          (sessionId): sessionId is string =>
-            typeof sessionId === 'string' && sessionId.trim().length > 0,
-        )
-      : []
-
-    seenAreaIds.add(id)
-    areas.push({
-      id,
-      icon: isDefaultPinnedArea(id)
-        ? DEFAULT_PINNED_AREA_ICON
-        : sanitizeEmojiIcon(record['icon']),
-      collapsed: record['collapsed'] === true,
-      sessionIds: dedupePreserveOrder(rawSessionIds),
-    })
-  }
-
-  return areas
+  return dedupePreserveOrder(
+    input.filter(
+      (entry): entry is string =>
+        typeof entry === 'string' && entry.trim().length > 0,
+    ),
+  )
 }
 
 function sanitizeOrderRecord(input: unknown): Record<string, number> {
@@ -197,12 +114,7 @@ export function sanitizeSidebarState(input: unknown): SidebarState {
       ? input as Record<string, unknown>
       : null
 
-  const followUpSessionIds = Array.isArray(record?.['followUpSessionIds'])
-    ? record['followUpSessionIds'].filter(
-        (entry): entry is string =>
-          typeof entry === 'string' && entry.trim().length > 0,
-      )
-    : []
+  const followUpSessionIds = sanitizeSessionIds(record?.['followUpSessionIds'])
 
   const closedProjectPaths = Array.isArray(record?.['closedProjectPaths'])
     ? record['closedProjectPaths'].filter(
@@ -235,9 +147,8 @@ export function sanitizeSidebarState(input: unknown): SidebarState {
   }
 
   return {
-    pinnedSessionIds: [],
-    pinnedAreas: sanitizePinnedAreas(record?.['pinnedAreas']),
-    followUpSessionIds: dedupePreserveOrder(followUpSessionIds),
+    pinnedSessionIds: sanitizeSessionIds(record?.['pinnedSessionIds']),
+    followUpSessionIds,
     closedProjectPaths: dedupePreserveOrder(
       closedProjectPaths.map((entry) => normalizeSidebarProjectPath(entry)),
     ),
@@ -278,58 +189,51 @@ export function applyOrderOverrides<T>(
 
   naturalOrder.forEach((item, index) => {
     const key = getKey(item)
-    const override = key in safeOverrides ? safeOverrides[key] : undefined
-    if (typeof override === 'number' && Number.isFinite(override)) {
-      const target = Math.max(0, Math.min(naturalOrder.length - 1, Math.floor(override)))
-      anchored.push({ item, target, naturalIndex: index })
-    } else {
+    const override = safeOverrides[key]
+    if (override === undefined || !Number.isFinite(override)) {
       unanchored.push({ item, naturalIndex: index })
+      return
     }
+
+    anchored.push({
+      item,
+      target: Math.max(0, Math.min(naturalOrder.length - 1, Math.floor(override))),
+      naturalIndex: index,
+    })
   })
 
   if (anchored.length === 0) {
     return [...naturalOrder]
   }
 
-  anchored.sort((left, right) => {
-    if (left.target !== right.target) {
-      return left.target - right.target
-    }
-    return left.naturalIndex - right.naturalIndex
-  })
-
-  const result: (T | undefined)[] = Array.from(
-    { length: naturalOrder.length },
-    () => undefined,
-  )
-
-  for (const { item, target } of anchored) {
-    let slot = target
-    while (slot < result.length && result[slot] !== undefined) {
-      slot += 1
-    }
-    if (slot >= result.length) {
-      slot = result.length - 1
-      while (slot >= 0 && result[slot] !== undefined) {
-        slot -= 1
+  const slots = new Array<T | null>(naturalOrder.length).fill(null)
+  anchored
+    .sort((left, right) => left.target - right.target || left.naturalIndex - right.naturalIndex)
+    .forEach((entry) => {
+      let index = entry.target
+      while (index < slots.length && slots[index] !== null) {
+        index += 1
       }
-      if (slot < 0) {
-        continue
+      if (index >= slots.length) {
+        index = entry.target
+        while (index >= 0 && slots[index] !== null) {
+          index -= 1
+        }
       }
+      if (index >= 0) {
+        slots[index] = entry.item
+      }
+    })
+
+  let unanchoredIndex = 0
+  for (let index = 0; index < slots.length; index += 1) {
+    if (slots[index] !== null) {
+      continue
     }
-    result[slot] = item
+
+    slots[index] = unanchored[unanchoredIndex]?.item ?? null
+    unanchoredIndex += 1
   }
 
-  let unanchoredCursor = 0
-  for (let i = 0; i < result.length; i += 1) {
-    if (result[i] === undefined) {
-      const next = unanchored[unanchoredCursor]
-      unanchoredCursor += 1
-      if (next) {
-        result[i] = next.item
-      }
-    }
-  }
-
-  return result.filter((entry): entry is T => entry !== undefined)
+  return slots.filter((item): item is T => item !== null)
 }

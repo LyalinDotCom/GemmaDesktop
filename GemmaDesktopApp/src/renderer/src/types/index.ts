@@ -33,7 +33,7 @@ import type {
 } from '@shared/assistantNarration'
 import type { SidebarState } from '@shared/sidebar'
 import type { RunningBackgroundProcessSummary } from '@shared/backgroundProcesses'
-import type { SessionTag } from '@shared/sessionTags'
+import type { ConversationIcon } from '@shared/conversationIcon'
 import type {
   AppNotificationSettings,
   NotificationActivationTarget,
@@ -127,10 +127,10 @@ export interface SessionSummary {
   isGenerating: boolean
   isCompacting: boolean
   runningProcesses?: RunningBackgroundProcessSummary[]
-  sessionTags?: SessionTag[]
+  conversationIcon?: ConversationIcon
 }
 
-export type { SessionTag } from '@shared/sessionTags'
+export type { ConversationIcon } from '@shared/conversationIcon'
 
 export interface SessionDetail extends SessionSummary {
   draftText: string
@@ -971,17 +971,12 @@ export interface MenuBarPopupState {
 export interface GemmaDesktopBridge {
   sidebar: {
     get(): Promise<SidebarState>
-    pinSession(sessionId: string, areaId: string): Promise<SidebarState>
+    pinSession(sessionId: string): Promise<SidebarState>
     unpinSession(sessionId: string): Promise<SidebarState>
     flagFollowUp(sessionId: string): Promise<SidebarState>
     unflagFollowUp(sessionId: string): Promise<SidebarState>
     rememberActiveSession(sessionId: string | null): Promise<SidebarState>
     movePinnedSession(sessionId: string, toIndex: number): Promise<SidebarState>
-    createPinnedArea(icon: string, sessionId: string | null): Promise<SidebarState>
-    deletePinnedArea(areaId: string): Promise<SidebarState>
-    updatePinnedAreaIcon(areaId: string, icon: string): Promise<SidebarState>
-    setPinnedAreaCollapsed(areaId: string, collapsed: boolean): Promise<SidebarState>
-    movePinnedArea(areaId: string, direction: 'up' | 'down'): Promise<SidebarState>
     setSessionOrder(sessionId: string, toIndex: number): Promise<SidebarState>
     clearSessionOrder(sessionId: string): Promise<SidebarState>
     setProjectOrder(projectPath: string, toIndex: number): Promise<SidebarState>
@@ -998,9 +993,7 @@ export interface GemmaDesktopBridge {
     saveDraft(sessionId: string, draftText: string): Promise<{ ok: true }>
     update(sessionId: string, opts: UpdateSessionOpts): Promise<SessionDetail>
     delete(sessionId: string): Promise<void>
-    rename(sessionId: string, title: string): Promise<void>
-    setTags(sessionId: string, tags: SessionTag[]): Promise<void>
-    suggestTagEmoji(tagName: string, excludeEmojis: string[]): Promise<{ emoji: string | null }>
+    rename(sessionId: string, title: string, conversationIcon?: ConversationIcon): Promise<void>
     sendMessage(sessionId: string, message: UserMessage): Promise<void>
     sendHiddenInstruction(sessionId: string, text: string): Promise<void>
     runShellCommand(sessionId: string, input: { command: string }): Promise<void>

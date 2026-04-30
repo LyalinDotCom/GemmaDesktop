@@ -13,7 +13,7 @@ import {
   listPersistedSessionFilePaths,
   relocatePersistedSessionArtifacts,
 } from './sessionPersistence'
-import type { SessionTag } from '../shared/sessionTags'
+import type { ConversationIcon } from '../shared/conversationIcon'
 
 export interface SessionMeta {
   id: string
@@ -22,7 +22,7 @@ export interface SessionMeta {
   lastMessage: string
   createdAt: number
   updatedAt: number
-  sessionTags: SessionTag[]
+  conversationIcon: ConversationIcon
 }
 
 export interface AppMessage {

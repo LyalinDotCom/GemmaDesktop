@@ -1,7 +1,6 @@
 import {
   applyOrderOverrides,
   normalizeSidebarProjectPath,
-  type PinnedArea,
   type SidebarState,
 } from '@shared/sidebar'
 import { GLOBAL_CHAT_FALLBACK_SESSION_ID } from '@shared/globalChat'
@@ -15,9 +14,15 @@ export interface SessionProjectGroup {
   sessions: SessionSummary[]
 }
 
+export interface SessionIconGroup {
+  icon: string
+  updatedAt: number
+  sessions: SessionSummary[]
+}
+
 export interface SidebarModel {
-  pinnedAreas: Array<PinnedArea & { sessions: SessionSummary[] }>
   pinnedSessions: SessionSummary[]
+  iconGroups: SessionIconGroup[]
   projectGroups: SessionProjectGroup[]
   visibleSessionIds: string[]
 }
@@ -105,22 +110,46 @@ function buildProjectGroups(
   )
 }
 
-function buildPinnedAreas(
+function buildPinnedSessions(
   sessions: SessionSummary[],
   sidebarState: SidebarState,
-): Array<PinnedArea & { sessions: SessionSummary[] }> {
+): SessionSummary[] {
   const sessionsById = new Map(sessions.map((session) => [session.id, session]))
 
-  return (sidebarState.pinnedAreas ?? []).map((area) => {
-    const areaSessions = area.sessionIds
-      .map((sessionId) => sessionsById.get(sessionId))
-      .filter((session): session is SessionSummary => Boolean(session))
+  return sidebarState.pinnedSessionIds
+    .map((sessionId) => sessionsById.get(sessionId))
+    .filter((session): session is SessionSummary => Boolean(session))
+}
 
-    return {
-      ...area,
-      sessions: areaSessions,
+function buildIconGroups(sessions: SessionSummary[]): SessionIconGroup[] {
+  const groups = new Map<string, SessionIconGroup>()
+
+  for (const session of sessions) {
+    const icon = session.conversationIcon
+    if (!icon) {
+      continue
     }
-  })
+
+    const current = groups.get(icon)
+    if (!current) {
+      groups.set(icon, {
+        icon,
+        updatedAt: session.updatedAt,
+        sessions: [session],
+      })
+      continue
+    }
+
+    current.updatedAt = Math.max(current.updatedAt, session.updatedAt)
+    current.sessions.push(session)
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      sessions: [...group.sessions].sort(sortProjectSessions),
+    }))
+    .sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
 export function buildSidebarModel(
@@ -128,8 +157,8 @@ export function buildSidebarModel(
   sidebarState: SidebarState,
 ): SidebarModel {
   const visibleSessions = sessions.filter(isSidebarVisibleSession)
-  const pinnedAreas = buildPinnedAreas(visibleSessions, sidebarState)
-  const pinnedSessions = pinnedAreas.flatMap((area) => area.sessions)
+  const pinnedSessions = buildPinnedSessions(visibleSessions, sidebarState)
+  const iconGroups = buildIconGroups(visibleSessions)
   const projectGroups = buildProjectGroups(visibleSessions, sidebarState)
   const visibleSessionIds: string[] = []
   const seen = new Set<string>()
@@ -151,8 +180,8 @@ export function buildSidebarModel(
   }
 
   return {
-    pinnedAreas,
     pinnedSessions,
+    iconGroups,
     projectGroups,
     visibleSessionIds,
   }

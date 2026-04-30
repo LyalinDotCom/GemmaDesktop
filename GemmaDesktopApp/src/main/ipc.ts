@@ -387,10 +387,7 @@ import {
   type RunningBackgroundProcessSummary,
   BACKGROUND_PROCESS_TOOL_NAMES,
 } from '../shared/backgroundProcesses'
-import {
-  normalizeSessionTags,
-  sessionTagsEqual,
-} from '../shared/sessionTags'
+import { normalizeConversationIcon } from '../shared/conversationIcon'
 import {
   ASK_GEMINI_SESSION_TOOL_ID,
   ASK_GEMINI_TOOL_NAME_SET,
@@ -1243,7 +1240,7 @@ function normalizeSessionMeta(
       typeof meta?.updatedAt === 'number' && Number.isFinite(meta.updatedAt)
         ? meta.updatedAt
         : Date.now(),
-    sessionTags: normalizeSessionTags(meta?.sessionTags),
+    conversationIcon: normalizeConversationIcon(meta?.conversationIcon),
   }
 }
 
@@ -6021,7 +6018,6 @@ function sidebarStateToRecord(state: SidebarState): Record<string, unknown> {
   const nextState = cloneSidebarState(state)
   return {
     pinnedSessionIds: nextState.pinnedSessionIds,
-    pinnedAreas: nextState.pinnedAreas,
     followUpSessionIds: nextState.followUpSessionIds,
     closedProjectPaths: nextState.closedProjectPaths,
     projectPaths: nextState.projectPaths,
@@ -6517,49 +6513,6 @@ async function runHelperStructuredTask(input: {
   } finally {
     releaseLease()
   }
-}
-
-const SESSION_TAG_EMOJI_RESPONSE_FORMAT = makeStructuredResponseFormat(
-  'session_tag_emoji',
-  {
-    emoji: { type: 'string' },
-  },
-  ['emoji'],
-)
-
-function extractFirstEmojiGrapheme(raw: unknown): string | null {
-  if (typeof raw !== 'string') {
-    return null
-  }
-  const trimmed = raw.trim()
-  if (!trimmed) {
-    return null
-  }
-  const graphemes = Array.from(trimmed)
-  for (const grapheme of graphemes) {
-    if (/\p{Extended_Pictographic}/u.test(grapheme)) {
-      const graphemeIndex = graphemes.indexOf(grapheme)
-      let result = grapheme
-      for (let index = graphemeIndex + 1; index < graphemes.length; index += 1) {
-        const next = graphemes[index]
-        if (!next) {
-          break
-        }
-        const codePoint = next.codePointAt(0)
-        const isEmojiModifier =
-          codePoint !== undefined
-          && codePoint >= 0x1F3FB
-          && codePoint <= 0x1F3FF
-        if (next === '\u200D' || next === '\uFE0F' || isEmojiModifier) {
-          result += next
-        } else {
-          break
-        }
-      }
-      return result
-    }
-  }
-  return graphemes[0] ?? null
 }
 
 async function distillMemoryNote(input: {
@@ -7530,7 +7483,7 @@ async function ensureTalkSessionInternal(
       lastMessage: '',
       createdAt: now,
       updatedAt: now,
-      sessionTags: [],
+      conversationIcon: null,
     }
 
     liveSessions.set(talkSessionId, talkSession)
@@ -9167,7 +9120,7 @@ function snapshotToDetail(
     lastMessage: meta.lastMessage,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
-    sessionTags: meta.sessionTags ?? [],
+    conversationIcon: meta.conversationIcon ?? null,
     draftText,
     messages: allMessages,
     isGenerating,
@@ -9211,7 +9164,7 @@ function metaToSummary(
     isGenerating: activeTask === 'generation',
     isCompacting: activeTask === 'compaction',
     runningProcesses: listRunningBackgroundProcesses(meta.id),
-    sessionTags: meta.sessionTags ?? [],
+    conversationIcon: meta.conversationIcon ?? null,
   }
 }
 
@@ -11616,10 +11569,9 @@ export function registerIpcHandlers(): void {
     return sidebarStateToRecord(await syncSidebarState())
   })
 
-  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string, areaId: string) => {
+  ipcMain.handle('sidebar:pin-session', async (_, sessionId: string) => {
     const result = await getSidebarStateStore().pinSession(
       sessionId,
-      areaId,
       await listSidebarSessionReferences(),
     )
 
@@ -11691,90 +11643,6 @@ export function registerIpcHandlers(): void {
       const result = await getSidebarStateStore().movePinnedSession(
         sessionId,
         toIndex,
-        await listSidebarSessionReferences(),
-      )
-
-      if (result.changed) {
-        broadcastSidebarChanged(result.state)
-      }
-
-      return sidebarStateToRecord(result.state)
-    },
-  )
-
-  ipcMain.handle(
-    'sidebar:create-pinned-area',
-    async (_, icon: string, sessionId: string | null) => {
-      const result = await getSidebarStateStore().createPinnedArea(
-        icon,
-        sessionId,
-        await listSidebarSessionReferences(),
-      )
-
-      if (result.changed) {
-        broadcastSidebarChanged(result.state)
-      }
-
-      return sidebarStateToRecord(result.state)
-    },
-  )
-
-  ipcMain.handle(
-    'sidebar:delete-pinned-area',
-    async (_, areaId: string) => {
-      const result = await getSidebarStateStore().deletePinnedArea(
-        areaId,
-        await listSidebarSessionReferences(),
-      )
-
-      if (result.changed) {
-        broadcastSidebarChanged(result.state)
-      }
-
-      return sidebarStateToRecord(result.state)
-    },
-  )
-
-  ipcMain.handle(
-    'sidebar:update-pinned-area-icon',
-    async (_, areaId: string, icon: string) => {
-      const result = await getSidebarStateStore().updatePinnedAreaIcon(
-        areaId,
-        icon,
-        await listSidebarSessionReferences(),
-      )
-
-      if (result.changed) {
-        broadcastSidebarChanged(result.state)
-      }
-
-      return sidebarStateToRecord(result.state)
-    },
-  )
-
-  ipcMain.handle(
-    'sidebar:set-pinned-area-collapsed',
-    async (_, areaId: string, collapsed: boolean) => {
-      const result = await getSidebarStateStore().setPinnedAreaCollapsed(
-        areaId,
-        collapsed,
-        await listSidebarSessionReferences(),
-      )
-
-      if (result.changed) {
-        broadcastSidebarChanged(result.state)
-      }
-
-      return sidebarStateToRecord(result.state)
-    },
-  )
-
-  ipcMain.handle(
-    'sidebar:move-pinned-area',
-    async (_, areaId: string, direction: 'up' | 'down') => {
-      const result = await getSidebarStateStore().movePinnedArea(
-        areaId,
-        direction,
         await listSidebarSessionReferences(),
       )
 
@@ -12151,9 +12019,9 @@ export function registerIpcHandlers(): void {
         title: opts.title ?? PLACEHOLDER_SESSION_TITLE,
         titleSource: 'auto',
         lastMessage: '',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        sessionTags: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      conversationIcon: null,
       }
 
       liveSessions.set(session.id, session)
@@ -12461,13 +12329,26 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'sessions:rename',
-    async (_, sessionId: string, title: string) => {
+    async (
+      _,
+      sessionId: string,
+      title: string,
+      rawConversationIcon?: unknown,
+    ) => {
+      const previousMeta =
+        store.getMeta(sessionId)
+        ?? (await getPersistedSession(sessionId))?.meta
+      const previousIcon = previousMeta?.conversationIcon ?? null
+      const conversationIcon =
+        rawConversationIcon === undefined
+          ? previousIcon
+          : normalizeConversationIcon(rawConversationIcon)
       appendDebugLog(sessionId, {
         layer: 'ipc',
         direction: 'renderer->main',
         event: 'sessions.rename.request',
         summary: `Rename session to ${title}`,
-        data: { sessionId, title },
+        data: { sessionId, title, conversationIcon },
       })
       const snapshot =
         liveSessions.get(sessionId)?.snapshot()
@@ -12476,13 +12357,18 @@ export function registerIpcHandlers(): void {
       if (snapshot && isTalkSessionSnapshot(snapshot)) {
         throw new Error('Assistant Chat title is fixed.')
       }
-      store.setMeta(sessionId, { title, titleSource: 'user' })
+      const metaPatch = {
+        title,
+        titleSource: 'user' as const,
+        conversationIcon,
+      }
+      store.setMeta(sessionId, metaPatch)
       const live = liveSessions.get(sessionId)
       if (live) {
         await store.save(
           sessionId,
           live.snapshot(),
-          { title, titleSource: 'user' },
+          metaPatch,
           undefined,
           { preserveUpdatedAt: true },
         )
@@ -12494,118 +12380,12 @@ export function registerIpcHandlers(): void {
         await store.save(
           sessionId,
           persisted.snapshot,
-          { title, titleSource: 'user' },
+          metaPatch,
           undefined,
           { preserveUpdatedAt: true },
         )
       }
       await broadcastSessionsChanged()
-    },
-  )
-
-  ipcMain.handle(
-    'sessions:set-tags',
-    async (_, sessionId: string, rawTags: unknown) => {
-      const nextTags = normalizeSessionTags(rawTags)
-      const previousMeta =
-        store.getMeta(sessionId)
-        ?? (await getPersistedSession(sessionId))?.meta
-      const previousTags = previousMeta?.sessionTags ?? []
-      if (sessionTagsEqual(previousTags, nextTags)) {
-        return
-      }
-
-      appendDebugLog(sessionId, {
-        layer: 'ipc',
-        direction: 'renderer->main',
-        event: 'sessions.set-tags.request',
-        summary: `Set session tags (${nextTags.length})`,
-        data: { sessionId, sessionTags: nextTags },
-      })
-
-      store.setMeta(sessionId, { sessionTags: nextTags })
-      const live = liveSessions.get(sessionId)
-      if (live) {
-        await store.save(
-          sessionId,
-          live.snapshot(),
-          { sessionTags: nextTags },
-          undefined,
-          { preserveUpdatedAt: true },
-        )
-      } else {
-        const persisted = await getPersistedSession(sessionId)
-        if (!persisted) {
-          throw new Error(`Session not found: ${sessionId}`)
-        }
-        await store.save(
-          sessionId,
-          persisted.snapshot,
-          { sessionTags: nextTags },
-          undefined,
-          { preserveUpdatedAt: true },
-        )
-      }
-      await broadcastSessionsChanged()
-    },
-  )
-
-  ipcMain.handle(
-    'sessions:suggest-tag-emoji',
-    async (
-      _,
-      rawTagName: unknown,
-      rawExcludeEmojis: unknown,
-    ): Promise<{ emoji: string | null }> => {
-      const tagName = typeof rawTagName === 'string' ? rawTagName.trim() : ''
-      if (!tagName) {
-        return { emoji: null }
-      }
-      const excludeEmojis = Array.isArray(rawExcludeEmojis)
-        ? rawExcludeEmojis.filter(
-            (entry): entry is string =>
-              typeof entry === 'string' && entry.trim().length > 0,
-          )
-        : []
-
-      try {
-        const excludeLine = excludeEmojis.length > 0
-          ? `Do not suggest any of these emojis already in use: ${excludeEmojis.join(' ')}`
-          : ''
-        const userText = [
-          `Tag name: "${tagName}"`,
-          excludeLine,
-          'Respond with JSON: {"emoji":"<single emoji>"}. The "emoji" value must be exactly one emoji character.',
-        ]
-          .filter((line) => line.length > 0)
-          .join('\n')
-
-        const result = await runHelperStructuredTask({
-          ownerId: `tag-emoji-${Date.now()}`,
-          sessionRole: 'tag_emoji_suggestion',
-          workingDirectory: app.getPath('userData'),
-          systemInstructions: [
-            'You pick a single emoji that best represents a conversation tag.',
-            'Return only one emoji character in the "emoji" field.',
-            'Prefer common, visually distinct emoji.',
-            'Never return words, punctuation, or multiple emojis.',
-          ].join('\n'),
-          responseFormat: SESSION_TAG_EMOJI_RESPONSE_FORMAT,
-          sessionInput: [{ type: 'text', text: userText }],
-        })
-
-        const candidate =
-          extractFirstEmojiGrapheme(result.structuredOutput.emoji)
-          ?? extractFirstEmojiGrapheme(result.outputText)
-
-        if (!candidate || excludeEmojis.includes(candidate)) {
-          return { emoji: null }
-        }
-        return { emoji: candidate }
-      } catch (error) {
-        console.warn('[gemma-desktop] helper tag emoji suggestion failed:', error)
-        return { emoji: null }
-      }
     },
   )
 
@@ -13081,7 +12861,7 @@ export function registerIpcHandlers(): void {
             .slice(0, 120),
           createdAt: Date.now(),
           updatedAt: Date.now(),
-          sessionTags: [],
+          conversationIcon: null,
         }
 
         await store.save(seededSession.id, seededSnapshot, nextMeta)

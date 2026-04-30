@@ -19,8 +19,8 @@ const notificationApi = (
 contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
   sidebar: {
     get: () => ipcRenderer.invoke('sidebar:get'),
-    pinSession: (sessionId: string, areaId: string) =>
-      ipcRenderer.invoke('sidebar:pin-session', sessionId, areaId),
+    pinSession: (sessionId: string) =>
+      ipcRenderer.invoke('sidebar:pin-session', sessionId),
     unpinSession: (sessionId: string) =>
       ipcRenderer.invoke('sidebar:unpin-session', sessionId),
     flagFollowUp: (sessionId: string) =>
@@ -31,16 +31,6 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
       ipcRenderer.invoke('sidebar:remember-active-session', sessionId),
     movePinnedSession: (sessionId: string, toIndex: number) =>
       ipcRenderer.invoke('sidebar:move-pinned-session', sessionId, toIndex),
-    createPinnedArea: (icon: string, sessionId: string | null) =>
-      ipcRenderer.invoke('sidebar:create-pinned-area', icon, sessionId),
-    deletePinnedArea: (areaId: string) =>
-      ipcRenderer.invoke('sidebar:delete-pinned-area', areaId),
-    updatePinnedAreaIcon: (areaId: string, icon: string) =>
-      ipcRenderer.invoke('sidebar:update-pinned-area-icon', areaId, icon),
-    setPinnedAreaCollapsed: (areaId: string, collapsed: boolean) =>
-      ipcRenderer.invoke('sidebar:set-pinned-area-collapsed', areaId, collapsed),
-    movePinnedArea: (areaId: string, direction: 'up' | 'down') =>
-      ipcRenderer.invoke('sidebar:move-pinned-area', areaId, direction),
     setSessionOrder: (sessionId: string, toIndex: number) =>
       ipcRenderer.invoke('sidebar:set-session-order', sessionId, toIndex),
     clearSessionOrder: (sessionId: string) =>
@@ -71,16 +61,8 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
       ipcRenderer.invoke('sessions:update', sessionId, opts),
     delete: (sessionId: string) =>
       ipcRenderer.invoke('sessions:delete', sessionId),
-    rename: (sessionId: string, title: string) =>
-      ipcRenderer.invoke('sessions:rename', sessionId, title),
-    setTags: (sessionId: string, tags: unknown) =>
-      ipcRenderer.invoke('sessions:set-tags', sessionId, tags),
-    suggestTagEmoji: (tagName: string, excludeEmojis: string[]) =>
-      ipcRenderer.invoke(
-        'sessions:suggest-tag-emoji',
-        tagName,
-        excludeEmojis,
-      ),
+    rename: (sessionId: string, title: string, conversationIcon?: string | null) =>
+      ipcRenderer.invoke('sessions:rename', sessionId, title, conversationIcon),
     sendMessage: (sessionId: string, message: unknown) =>
       ipcRenderer.invoke('sessions:send-message', sessionId, message),
     sendHiddenInstruction: (sessionId: string, text: string) =>
