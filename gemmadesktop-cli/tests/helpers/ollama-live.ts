@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import type {
   LoadedModelInstance,
@@ -23,6 +24,13 @@ const DEFAULT_RUNTIME_ENDPOINTS = {
   llamacpp: "http://127.0.0.1:8080",
   omlx: "http://127.0.0.1:8000",
 } as const;
+const GEMMA_DESKTOP_SETTINGS_PATH = path.join(
+  os.homedir(),
+  "Library",
+  "Application Support",
+  "Gemma Desktop",
+  "settings.json",
+);
 const LIVE_MODEL_LOCK_DIRECTORY = path.join(
   os.tmpdir(),
   "gemma-desktop-live-runtime-model.lock",
@@ -87,6 +95,34 @@ function envValue(...names: string[]): string | undefined {
   return undefined;
 }
 
+function readGemmaDesktopGeminiApiSettings(): { apiKey?: string; model?: string } {
+  try {
+    const raw = readFileSync(GEMMA_DESKTOP_SETTINGS_PATH, "utf8");
+    const parsed = JSON.parse(raw) as {
+      integrations?: {
+        geminiApi?: {
+          apiKey?: unknown;
+          model?: unknown;
+        };
+      };
+    };
+    const apiKey =
+      typeof parsed.integrations?.geminiApi?.apiKey === "string"
+        ? parsed.integrations.geminiApi.apiKey.trim()
+        : "";
+    const model =
+      typeof parsed.integrations?.geminiApi?.model === "string"
+        ? parsed.integrations.geminiApi.model.trim()
+        : "";
+    return {
+      ...(apiKey ? { apiKey } : {}),
+      ...(model ? { model } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function resolveLiveRuntimeEndpoints(): LiveRuntimeEndpoints {
   return {
     ollama:
@@ -138,6 +174,7 @@ export function createLiveRuntimeAdapters(): RuntimeAdapter[] {
 
 export function liveRuntimeCliEndpointArgs(): string[] {
   const endpoints = resolveLiveRuntimeEndpoints();
+  const geminiSettings = readGemmaDesktopGeminiApiSettings();
   const args = [
     "--ollama-endpoint",
     endpoints.ollama,
@@ -149,7 +186,16 @@ export function liveRuntimeCliEndpointArgs(): string[] {
     endpoints.omlx,
   ];
   const omlxApiKey = envValue("GEMMA_DESKTOP_OMLX_API_KEY", "OMLX_API_KEY");
-  return omlxApiKey ? [...args, "--omlx-api-key", omlxApiKey] : args;
+  const geminiApiKey =
+    envValue("GEMINI_API_KEY", "GEMMA_DESKTOP_GEMINI_API_KEY") ?? geminiSettings.apiKey;
+  const geminiApiModel =
+    envValue("GEMMA_DESKTOP_GEMINI_API_MODEL") ?? geminiSettings.model;
+  return [
+    ...args,
+    ...(omlxApiKey ? ["--omlx-api-key", omlxApiKey] : []),
+    ...(geminiApiKey ? ["--gemini-api-key", geminiApiKey] : []),
+    ...(geminiApiModel ? ["--gemini-api-model", geminiApiModel] : []),
+  ];
 }
 
 function sleep(delayMs: number): Promise<void> {

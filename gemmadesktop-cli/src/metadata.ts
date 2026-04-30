@@ -4,7 +4,7 @@ export const APP_SESSION_METADATA_KEY = "gemmaDesktopApp";
 export const REQUEST_PREFERENCES_METADATA_KEY = "requestPreferences";
 
 export interface RequestPreferences {
-  reasoningMode?: "auto" | "on";
+  reasoningMode?: "auto" | "on" | "off";
   ollamaOptions?: Record<string, number>;
   ollamaKeepAlive?: string;
   lmstudioOptions?: Record<string, number>;

@@ -82,7 +82,7 @@ export interface ResearchPanelTopicStep {
 export interface ResearchPanelViewModel {
   runId: string
   runStatus: 'running' | 'completed' | 'failed' | 'cancelled'
-  stage: 'planning' | 'discovery' | 'workers' | 'synthesis' | 'completed' | 'failed' | 'cancelled'
+  stage: 'planning' | 'discovery' | 'depth' | 'workers' | 'synthesis' | 'completed' | 'failed' | 'cancelled'
   title?: string
   startedAt?: number
   completedAt?: number
@@ -105,6 +105,10 @@ export interface ResearchPanelViewModel {
     currentPass?: number
     passCount?: number
   }
+  depth: {
+    status: ResearchPanelStepStatus
+    label: string
+  }
   topics: ResearchPanelTopicStep[]
   synthesis: {
     status: ResearchPanelStepStatus
@@ -125,7 +129,7 @@ export type LiveActivityState = 'waiting' | 'thinking' | 'streaming' | 'working'
 export interface SessionLiveActivity {
   source: 'session' | 'research'
   state: LiveActivityState
-  stage?: 'planning' | 'discovery' | 'workers' | 'synthesis'
+  stage?: 'planning' | 'discovery' | 'depth' | 'workers' | 'synthesis'
   topicTitle?: string
   attempt?: number
   startedAt: number

@@ -137,6 +137,9 @@ function createCapabilities(): CapabilityRecord[] {
 }
 
 function resolveReasoningControlValue(modelId: string, settings: ChatRequest["settings"]): boolean | undefined {
+  if (settings?.reasoningMode === "off") {
+    return false;
+  }
   if (isGemma4ModelId(modelId)) {
     return true;
   }

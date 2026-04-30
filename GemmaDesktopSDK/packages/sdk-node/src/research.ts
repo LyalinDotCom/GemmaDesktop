@@ -14,6 +14,7 @@ import {
 import {
   ParallelHostExecutor,
   type BatchTaskResult,
+  type FetchUrlInput,
   type FetchExecutionResult,
   type SearchExecutionResult,
 } from "@gemma-desktop/sdk-tools";
@@ -40,11 +41,22 @@ const NEWS_COLLECTOR_SOURCE_CHUNK_SIZE = 5;
 const NEWS_DOSSIER_FINDING_PREVIEW_CHARS = 360;
 const MAX_TOPIC_WORKER_ATTEMPTS = 2;
 const DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS = 2 * 60_000;
-const DEFAULT_RESEARCH_TOPIC_TIMEOUT_MS = 8 * 60_000;
-const DEFAULT_RESEARCH_SYNTHESIS_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_RESEARCH_TOPIC_TIMEOUT_MS = 2 * 60_000;
+const DEFAULT_RESEARCH_SYNTHESIS_TIMEOUT_MS = 3 * 60_000;
 const MAX_PLANNING_ASSISTANT_CHARS = 12_000;
+const MAX_DEPTH_SCOUT_ASSISTANT_CHARS = 12_000;
 const MAX_TOPIC_ASSISTANT_CHARS = 16_000;
-const MAX_SYNTHESIS_ASSISTANT_CHARS = 40_000;
+const MAX_SYNTHESIS_ASSISTANT_CHARS = 24_000;
+const STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN = /structured-output budget|time budget|timed out|timeout/i;
+const TOPIC_EVIDENCE_CARD_LIMIT = 10;
+const SYNTHESIS_EVIDENCE_CARD_LIMIT = 18;
+const TOPIC_EVIDENCE_EXCERPT_CHARS = 700;
+const SYNTHESIS_EVIDENCE_EXCERPT_CHARS = 420;
+const EVIDENCE_SENTENCE_LIMIT = 3;
+
+function isStructuredOutputBudgetFailure(message: string | undefined): boolean {
+  return typeof message === "string" && STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN.test(message);
+}
 
 export type ResearchProfile = "quick" | "deep";
 export type ResearchTaskType =
@@ -94,6 +106,10 @@ export interface ResearchSourceRecord {
   id: string;
   requestedUrl: string;
   resolvedUrl: string;
+  sourceDepth?: number;
+  discoveryMethod?: "seed" | "search" | "one_hop";
+  parentSourceId?: string;
+  parentResolvedUrl?: string;
   title?: string;
   description?: string;
   kind: string;
@@ -109,6 +125,22 @@ export interface ResearchSourceRecord {
   lowQualityContent?: boolean;
   offTopic?: boolean;
   snippetMerged?: boolean;
+}
+
+interface ResearchEvidenceCard {
+  sourceId: string;
+  title: string;
+  url: string;
+  domain?: string;
+  sourceFamily?: ResearchSourceFamily;
+  pageRole?: ResearchSourceRecord["pageRole"];
+  sourceDepth: number;
+  discoveryMethod: ResearchSourceRecord["discoveryMethod"];
+  parentSourceId?: string;
+  parentResolvedUrl?: string;
+  relevanceScore: number;
+  signals: string[];
+  excerpt: string;
 }
 
 export interface ResearchDossier {
@@ -182,6 +214,24 @@ interface SearchSnippetSourceCandidate {
   passNumber?: number;
 }
 
+interface DepthScoutCandidate {
+  id: string;
+  url: string;
+  parentSourceId: string;
+  parentTitle?: string;
+  parentResolvedUrl: string;
+  topicIds: string[];
+  sourceFamily: ResearchSourceFamily;
+  reason: string;
+}
+
+interface DepthScoutRecord {
+  selectedUrls: string[];
+  rationale: string;
+  openQuestions: string[];
+  confidence: number;
+}
+
 interface NormalizedResearchOptions {
   profile: ResearchProfile;
   artifactDirectory: string;
@@ -205,7 +255,7 @@ export interface ResearchWorkerTimelineEntry {
 }
 
 export interface ResearchWorkerSnapshot {
-  kind: "planning" | "discovery" | "topic" | "synthesis";
+  kind: "planning" | "discovery" | "depth" | "topic" | "synthesis";
   label: string;
   goal?: string;
   childSessionId?: string;
@@ -231,13 +281,14 @@ export interface ResearchRunStatus {
   modelId: string;
   profile: ResearchProfile;
   status: "running" | "completed" | "failed" | "cancelled";
-  stage: "planning" | "discovery" | "workers" | "synthesis" | "completed" | "failed" | "cancelled";
+  stage: "planning" | "discovery" | "depth" | "workers" | "synthesis" | "completed" | "failed" | "cancelled";
   startedAt: string;
   completedAt?: string;
   artifactDirectory: string;
   stages: {
     planning: ResearchStageStatus;
     discovery: ResearchStageStatus;
+    depth: ResearchStageStatus;
     workers: ResearchStageStatus;
     synthesis: ResearchStageStatus;
   };
@@ -276,7 +327,7 @@ interface ResearchStageStatus {
 }
 
 interface RunActivityRecord {
-  phase: "planning" | "topic" | "synthesis";
+  phase: "planning" | "depth" | "topic" | "synthesis";
   attempt: number;
   topicId?: string;
   topicTitle?: string;
@@ -675,6 +726,14 @@ function truncateText(value: string, limit: number): string {
   return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} characters]`;
 }
 
+function truncateInlineText(value: string, limit: number): string {
+  const normalized = normalizeInlineText(value);
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
+}
+
 const LOW_QUALITY_CONTENT_THRESHOLD = 280;
 const LOW_QUALITY_WORD_COUNT_THRESHOLD = 30;
 const MIN_MEANINGFUL_WORD_RATIO = 0.35;
@@ -782,6 +841,287 @@ function isUsableResearchSource(
   source: Pick<ResearchSourceRecord, "lowQualityContent" | "offTopic">,
 ): boolean {
   return !source.lowQualityContent && !source.offTopic;
+}
+
+function buildEvidenceKeywords(
+  brief: ResearchBrief,
+  topic?: Pick<ResearchTopicPlan, "title" | "goal" | "searchQueries">,
+): string[] {
+  return extractRelevanceKeywords(
+    [
+      brief.subject,
+      brief.focusQuery,
+      brief.objective,
+      brief.scopeSummary,
+      topic?.title,
+      topic?.goal,
+      ...(topic?.searchQueries ?? []),
+    ],
+    18,
+  );
+}
+
+function countKeywordHits(value: string, keywords: string[]): number {
+  const normalized = value.toLowerCase();
+  let hits = 0;
+  for (const keyword of keywords) {
+    if (normalized.includes(keyword)) {
+      hits += 1;
+    }
+  }
+  return hits;
+}
+
+function splitEvidenceSentences(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .replace(/\r/g, "\n")
+    .split(/(?:\n+|(?<=[.!?])\s+|\s+[|•]\s+)/g)
+    .map((entry) => normalizeInlineText(entry))
+    .filter((entry) => entry.length >= 24)
+    .filter((entry) => {
+      const key = entry.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 120);
+}
+
+function scoreEvidenceSentence(sentence: string, keywords: string[]): number {
+  const normalized = sentence.toLowerCase();
+  let score = countKeywordHits(normalized, keywords) * 12;
+  if (/\b(?:released?|available|availability|download|source|license|runtime|catalog|model|models?|version|sizes?|parameters?|architecture|official|docs?|documentation|ollama|hugging\s?face|gguf|mxfp|nvfp)\b/i.test(sentence)) {
+    score += 10;
+  }
+  if (/\b(?:\d{4}|\d+(?:\.\d+)?\s?(?:b|m|k)\b|\d+b\b|[a-z]?\d+b-[a-z0-9-]+)\b/i.test(sentence)) {
+    score += 8;
+  }
+  if (sentence.length >= 60 && sentence.length <= 360) {
+    score += 4;
+  }
+  if (/^(?:cookie|privacy|terms|subscribe|sign in|log in|javascript|enable)/i.test(normalized)) {
+    score -= 25;
+  }
+  return score;
+}
+
+function extractBestEvidenceExcerpt(
+  source: ResearchSourceRecord,
+  keywords: string[],
+  limit: number,
+): string {
+  const evidenceText = [
+    source.description,
+    source.contentPreview,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join("\n");
+  const sentences = splitEvidenceSentences(evidenceText);
+  const selected = sentences
+    .map((sentence, index) => ({
+      sentence,
+      index,
+      score: scoreEvidenceSentence(sentence, keywords),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, EVIDENCE_SENTENCE_LIMIT)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.sentence);
+
+  const excerpt = selected.length > 0
+    ? selected.join(" ")
+    : normalizeInlineText(evidenceText);
+  return truncateInlineText(excerpt, limit);
+}
+
+function scoreResearchEvidenceSource(
+  source: ResearchSourceRecord,
+  keywords: string[],
+): number {
+  if (!isUsableResearchSource(source)) {
+    return -10_000;
+  }
+  const title = source.title ?? "";
+  const description = source.description ?? "";
+  const haystack = `${title}\n${description}\n${source.contentPreview}`;
+  let score = countKeywordHits(haystack, keywords) * 14;
+  score += countKeywordHits(`${title}\n${description}`, keywords) * 8;
+  const firstPartyDomain = isLikelyFirstPartyDomain(source.domain);
+  const runtimeCatalogDomain = isLikelyRuntimeCatalogDomain(source.domain);
+  if (source.sourceFamily === "official" && firstPartyDomain) {
+    score += 34;
+  } else if (source.sourceFamily === "official") {
+    score += 4;
+  } else if (source.sourceFamily === "reference_github_docs") {
+    score += 24;
+  } else if (source.sourceFamily === "wire") {
+    score += 18;
+  } else if (source.sourceFamily === "blogs_analysis") {
+    score += 12;
+  }
+  if (runtimeCatalogDomain) {
+    score += 18;
+  }
+  if (/^ollama\.com$/i.test(source.domain ?? "") && /\/library\/gemma4(?::|$)/i.test(source.resolvedUrl)) {
+    score += 46;
+  }
+  if (/^huggingface\.co$/i.test(source.domain ?? "") && /\/(?:google\/gemma-4|collections\/google\/gemma-4)/i.test(source.resolvedUrl)) {
+    score += 36;
+  }
+  if (/^lmstudio\.ai$/i.test(source.domain ?? "") && /\/models\/gemma-4/i.test(source.resolvedUrl)) {
+    score += 28;
+  }
+  if (source.pageRole === "reference" || source.pageRole === "article") {
+    score += 14;
+  } else if (source.pageRole === "community") {
+    score += 8;
+  }
+  if ((source.sourceDepth ?? 0) > 0 || source.discoveryMethod === "one_hop") {
+    score += 16;
+  }
+  if (source.blockedLikely) {
+    score -= 42;
+  }
+  if (source.kind === "search-result") {
+    score -= 24;
+  }
+  if ((source.contentLength ?? source.contentPreview.length) >= 900) {
+    score += 6;
+  }
+  if (/\b(?:\d{4}|\d+b\b|available|download|license|runtime|official|catalog)\b/i.test(haystack)) {
+    score += 8;
+  }
+  return score;
+}
+
+function isLikelyFirstPartyDomain(domain: string | undefined): boolean {
+  if (!domain) {
+    return false;
+  }
+  return /(?:^|\.)google$|(?:^|\.)google\.com$|(?:^|\.)google\.dev$|(?:^|\.)blog\.google$|(?:^|\.)deepmind\.google$|(?:^|\.)developers\.googleblog\.com$|(?:^|\.)cloud\.google\.com$|(?:^|\.)ai\.google\.dev$/i
+    .test(domain);
+}
+
+function isLikelyRuntimeCatalogDomain(domain: string | undefined): boolean {
+  if (!domain) {
+    return false;
+  }
+  return /(?:^|\.)ollama\.com$|(?:^|\.)lmstudio\.ai$|(?:^|\.)huggingface\.co$|(?:^|\.)github\.com$/i
+    .test(domain);
+}
+
+function buildResearchEvidenceCardFromKeywords(
+  source: ResearchSourceRecord,
+  keywords: string[],
+  excerptLimit: number,
+): ResearchEvidenceCard {
+  const signals: string[] = [];
+  if (source.sourceFamily) {
+    signals.push(
+      source.sourceFamily === "official" && !isLikelyFirstPartyDomain(source.domain)
+        ? "official-query candidate"
+        : SOURCE_FAMILY_LABELS[source.sourceFamily],
+    );
+  }
+  if (source.pageRole) {
+    signals.push(`${source.pageRole.replace(/_/g, " ")} page`);
+  }
+  if ((source.sourceDepth ?? 0) > 0 || source.discoveryMethod === "one_hop") {
+    signals.push("one-hop detail page");
+  }
+  if (source.blockedLikely || source.kind === "search-result") {
+    signals.push("snippet-only fallback");
+  }
+  return {
+    sourceId: source.id,
+    title: formatResearchSourceTitle(source),
+    url: source.resolvedUrl,
+    domain: source.domain,
+    sourceFamily: source.sourceFamily,
+    pageRole: source.pageRole,
+    sourceDepth: source.sourceDepth ?? 0,
+    discoveryMethod: source.discoveryMethod,
+    parentSourceId: source.parentSourceId,
+    parentResolvedUrl: source.parentResolvedUrl,
+    relevanceScore: scoreResearchEvidenceSource(source, keywords),
+    signals: dedupeStrings(signals),
+    excerpt: extractBestEvidenceExcerpt(source, keywords, excerptLimit),
+  };
+}
+
+function buildResearchEvidenceCards(
+  brief: ResearchBrief,
+  topic: Pick<ResearchTopicPlan, "title" | "goal" | "searchQueries"> | undefined,
+  sources: ResearchSourceRecord[],
+  limit = TOPIC_EVIDENCE_CARD_LIMIT,
+  excerptLimit = TOPIC_EVIDENCE_EXCERPT_CHARS,
+): ResearchEvidenceCard[] {
+  const keywords = buildEvidenceKeywords(brief, topic);
+  return sources
+    .filter((source) => isUsableResearchSource(source))
+    .map((source) => buildResearchEvidenceCardFromKeywords(source, keywords, excerptLimit))
+    .sort((left, right) =>
+      right.relevanceScore - left.relevanceScore
+      || left.sourceDepth - right.sourceDepth
+      || left.sourceId.localeCompare(right.sourceId),
+    )
+    .slice(0, limit);
+}
+
+function buildSynthesisEvidenceCards(
+  brief: ResearchBrief,
+  plan: ResearchPlan,
+  dossiers: ResearchDossier[],
+  sources: ResearchSourceRecord[],
+): ResearchEvidenceCard[] {
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const citedSourceIds = dedupeStrings(dossiers.flatMap((dossier) => dossier.sourceIds));
+  const citedSources = citedSourceIds
+    .map((sourceId) => sourceById.get(sourceId))
+    .filter((source): source is ResearchSourceRecord => Boolean(source))
+    .filter((source) => isUsableResearchSource(source));
+  const citedSet = new Set(citedSources.map((source) => source.id));
+  const keywords = extractRelevanceKeywords(
+    [
+      brief.subject,
+      brief.focusQuery,
+      brief.objective,
+      brief.scopeSummary,
+      plan.objective,
+      plan.scopeSummary,
+      ...plan.topics.flatMap((topic) => [topic.title, topic.goal, ...topic.searchQueries]),
+    ],
+    24,
+  );
+  const fillSources = sources
+    .filter((source) => !citedSet.has(source.id))
+    .filter((source) => isUsableResearchSource(source))
+    .sort((left, right) =>
+      scoreResearchEvidenceSource(right, keywords) - scoreResearchEvidenceSource(left, keywords)
+      || left.id.localeCompare(right.id),
+    );
+  return [...citedSources, ...fillSources]
+    .slice(0, SYNTHESIS_EVIDENCE_CARD_LIMIT)
+    .map((source) => buildResearchEvidenceCardFromKeywords(source, keywords, SYNTHESIS_EVIDENCE_EXCERPT_CHARS));
+}
+
+function formatEvidenceCard(card: ResearchEvidenceCard): string {
+  return [
+    `[${card.sourceId}] ${card.title}`,
+    `URL: ${card.url}`,
+    card.domain ? `Domain: ${card.domain}` : "",
+    card.signals.length > 0 ? `Signals: ${card.signals.join(", ")}` : "",
+    card.sourceDepth > 0 && card.parentSourceId
+      ? `Depth: ${card.sourceDepth} from ${card.parentSourceId}`
+      : `Depth: ${card.sourceDepth}`,
+    `Relevance score: ${card.relevanceScore}`,
+    `Evidence: ${card.excerpt}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function isCatalogStyleRequest(text: string): boolean {
@@ -1294,6 +1634,13 @@ function toTitleCase(value: string): string {
 }
 
 function inferResearchSubject(requestText: string): string | undefined {
+  for (const family of KNOWN_MODEL_FAMILIES) {
+    const match = new RegExp(`\\b(${family})(?:\\s+([0-9][a-z0-9.-]*))?\\b`, "i").exec(requestText);
+    if (match?.[1]) {
+      return [match[1], match[2]].filter(Boolean).join(" ");
+    }
+  }
+
   const patterns = [
     /\b(?:news|coverage|stories?|headlines?)\s+from\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:across|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
     /\b(?:news|coverage|stories?|headlines?)\s+(?:on|about|regarding)\s+([a-z0-9+_.:-]+(?:\s+[a-z0-9+_.:-]+){0,4}?)(?=\s+(?:across|from|and|with|for|plus|read|give|report|call|compare|see|using)\b|[,.!?]|$)/i,
@@ -1316,12 +1663,6 @@ function inferResearchSubject(requestText: string): string | undefined {
       .trim();
     if (candidate && candidate.length > 0) {
       return toTitleCase(candidate);
-    }
-  }
-
-  for (const family of KNOWN_MODEL_FAMILIES) {
-    if (new RegExp(`\\b${family}\\b`, "i").test(requestText)) {
-      return family;
     }
   }
 
@@ -2431,6 +2772,164 @@ function extractOneHopNewsUrlsFromSource(
     .slice(0, 5);
 }
 
+function isLikelyResearchDetailUrl(url: string, source: ResearchSourceRecord, brief: ResearchBrief): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return false;
+    }
+    if (parsed.hash) {
+      parsed.hash = "";
+    }
+    if (parsed.pathname === "/" || isLikelyNewsMetaPage(url)) {
+      return false;
+    }
+    if (/^\/(?:about|careers?|contact|privacy|terms|team|people|press|legal)\/?$/i.test(parsed.pathname)) {
+      return false;
+    }
+    if (/\.(?:avif|gif|ico|jpe?g|mp4|png|svg|webm|webp)(?:$|\?)/i.test(parsed.pathname)) {
+      return false;
+    }
+    const domain = parseUrlDomain(url);
+    if (!domain || !source.domain) {
+      return false;
+    }
+    if (
+      domain !== source.domain
+      && !domain.endsWith(`.${source.domain}`)
+      && !source.domain.endsWith(`.${domain}`)
+    ) {
+      return false;
+    }
+    const focusTerms = buildResearchFocusTerms(brief);
+    const compactSubject = (brief.subject ?? brief.focusQuery)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
+    const loweredUrl = url.toLowerCase();
+    const compactUrl = loweredUrl.replace(/[^a-z0-9]+/g, "");
+    const detailPathHint = /\b(?:blog|docs?|model|models|card|cards|library|tags?|release|releases|announcement|announcements|guide|guides|reference|research|paper|papers|download|downloads|catalog|api)\b/i
+      .test(parsed.pathname);
+    return (
+      (compactSubject.length >= 4 && compactUrl.includes(compactSubject))
+      || focusTerms.some((term) => term.length >= 4 && loweredUrl.includes(term))
+      || (detailPathHint && sourceMatchesKeywords(source, focusTerms))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function extractOneHopResearchUrlsFromSource(
+  source: ResearchSourceRecord,
+  brief: ResearchBrief,
+): string[] {
+  if ((source.sourceDepth ?? 0) >= 1 || !isUsableResearchSource(source)) {
+    return [];
+  }
+  if (brief.taskType === "news-sweep") {
+    return extractOneHopNewsUrlsFromSource(source, brief);
+  }
+
+  const extractedUrls = extractExplicitUrlsFromText(source.contentPreview);
+  if (extractedUrls.length === 0) {
+    return [];
+  }
+
+  return dedupeStrings(extractedUrls)
+    .filter((url) => url !== source.resolvedUrl && url !== source.requestedUrl)
+    .filter((url) => isLikelyResearchDetailUrl(url, source, brief))
+    .slice(0, 5);
+}
+
+function buildDepthScoutPrompt(
+  brief: ResearchBrief,
+  passNumber: number,
+  candidates: DepthScoutCandidate[],
+): string {
+  return [
+    "You are the source-depth scout for a deep research run.",
+    "The first pass already fetched search results, seeds, or hub/front pages. Your job is to select the second-level pages that should be fetched next.",
+    "Pick pages likely to contain primary facts, model cards, article bodies, release notes, docs, tags, product details, or other concrete data. Avoid generic home pages, unrelated pages, image assets, navigation-only pages, and duplicates.",
+    "Use only the candidate URLs provided. Do not invent URLs.",
+    `Current date: ${formatResearchCurrentDate()}.`,
+    `Task type: ${brief.taskType}.`,
+    `Focus query: ${brief.focusQuery}.`,
+    brief.subject ? `Subject: ${brief.subject}.` : "",
+    `Gather pass: ${passNumber}.`,
+    [
+      "Candidate second-level pages:",
+      ...candidates.map((candidate) =>
+        [
+          `ID: ${candidate.id}`,
+          `URL: ${candidate.url}`,
+          `Parent: ${candidate.parentSourceId} ${candidate.parentTitle ?? candidate.parentResolvedUrl}`,
+          `Family: ${SOURCE_FAMILY_LABELS[candidate.sourceFamily]}`,
+          `Reason: ${candidate.reason}`,
+        ].join("\n"),
+      ),
+    ].join("\n\n"),
+    "Use this exact shape:",
+    "{\"selectedUrls\":[\"https://example.com/detail\"],\"rationale\":\"...\",\"openQuestions\":[\"...\"],\"confidence\":0.0}",
+    "Allowed keys are only: selectedUrls, rationale, openQuestions, confidence.",
+    "Return only a JSON object that matches the requested schema.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function normalizeDepthScoutRecord(
+  raw: Record<string, unknown>,
+  candidates: DepthScoutCandidate[],
+): DepthScoutRecord | undefined {
+  const candidateUrls = new Set(candidates.map((candidate) => candidate.url));
+  const selectedUrls = normalizeStringArray(raw.selectedUrls)
+    .map((url) => normalizeSourceLookupUrl(url) ?? url)
+    .filter((url) => candidateUrls.has(url));
+  const rationale = toNonEmptyString(raw.rationale);
+  if (selectedUrls.length === 0 || !rationale) {
+    return undefined;
+  }
+  return {
+    selectedUrls: dedupeStrings(selectedUrls),
+    rationale: normalizeInlineText(rationale),
+    openQuestions: normalizeStringArray(raw.openQuestions),
+    confidence: clampConfidence(raw.confidence),
+  };
+}
+
+function recoverDepthScoutRecord(
+  result: ToolSubsessionResult,
+  candidates: DepthScoutCandidate[],
+): DepthScoutRecord | undefined {
+  const rawSelection = extractStructuredObjectCandidate(result);
+  if (rawSelection) {
+    const normalized = normalizeDepthScoutRecord(rawSelection, candidates);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const selectedUrlsMatch = /"selectedUrls"\s*:\s*\[([\s\S]*?)\]/i.exec(result.outputText);
+  if (!selectedUrlsMatch?.[1]) {
+    return undefined;
+  }
+  const selectedUrls = [...selectedUrlsMatch[1].matchAll(/"([^"]+)"/g)]
+    .map((match) => normalizeSourceLookupUrl(match[1] ?? "") ?? (match[1] ?? ""))
+    .filter(Boolean);
+  if (selectedUrls.length === 0) {
+    return undefined;
+  }
+  return normalizeDepthScoutRecord(
+    {
+      selectedUrls,
+      rationale: "Recovered candidate URL selection from malformed source-depth scout output.",
+      openQuestions: ["The source-depth scout returned malformed structured output, so only its candidate URL list was recovered."],
+      confidence: 0.55,
+    },
+    candidates,
+  );
+}
+
 function inferTaskType(requestText: string, plan: ResearchPlan): ResearchTaskType {
   const haystack = `${requestText} ${plan.objective} ${plan.scopeSummary ?? ""} ${plan.topics.map((topic) => `${topic.title} ${topic.goal}`).join(" ")}`;
   if (/\b(?:news|headlines|front page|front-page|latest stories?|latest articles?|breaking news|mainstream outlets?|what['’]s on the front page)\b/i.test(haystack)) {
@@ -3072,16 +3571,18 @@ function buildCoverageAssessment(
         && source.domain.length > 0,
     );
     if (officialHubSources.length > 0) {
-      const sourcesByDomain = new Map<string, ResearchSourceRecord[]>();
+      const oneHopSourcesByDomain = new Map<string, ResearchSourceRecord[]>();
       for (const source of sources) {
         if (!source.domain) continue;
-        sourcesByDomain.set(source.domain, [...(sourcesByDomain.get(source.domain) ?? []), source]);
+        if ((source.sourceDepth ?? 0) >= 1 || source.parentSourceId) {
+          oneHopSourcesByDomain.set(source.domain, [...(oneHopSourcesByDomain.get(source.domain) ?? []), source]);
+        }
       }
       const hubDomains = dedupeStrings(
         officialHubSources.map((source) => source.domain!).filter(Boolean),
       );
       const underExploredHosts = hubDomains.filter(
-        (domain) => (sourcesByDomain.get(domain)?.length ?? 0) < 4,
+        (domain) => (oneHopSourcesByDomain.get(domain)?.length ?? 0) === 0,
       );
       if (underExploredHosts.length > 0) {
         gaps.push(
@@ -3411,6 +3912,8 @@ function buildWorkerPrompt(
   const topicHaystack = `${topic.title} ${topic.goal}`.toLowerCase();
   const catalogTopic = isCatalogStyleRequest(`${brief.focusQuery} ${brief.objective} ${topic.title} ${topic.goal}`);
   const discardedSourceCount = options.discardedSourceCount ?? 0;
+  const evidenceCards = buildResearchEvidenceCards(brief, topic, sources);
+  const excludedEvidenceCount = Math.max(0, sources.length - evidenceCards.length) + discardedSourceCount;
   const taskSpecificInstructions = brief.taskType === "news-sweep"
     ? [
         `Current date: ${formatResearchCurrentDate()}.`,
@@ -3458,23 +3961,12 @@ function buildWorkerPrompt(
           ...discovery.fetchErrors.map((entry) => `${entry.url}\nError: ${entry.error}`),
         ].join("\n\n")
       : "",
-    sources.length > 0
+    evidenceCards.length > 0
       ? [
-          "Prefetched sources:",
-          ...sources.map((source) =>
-            [
-              `[${source.id}] ${source.title ?? source.resolvedUrl}`,
-              source.resolvedUrl,
-              source.sourceFamily ? `Family: ${SOURCE_FAMILY_LABELS[source.sourceFamily]}` : "",
-              source.pageRole ? `Page role: ${source.pageRole}` : "",
-              source.description ? `Description: ${source.description}` : "",
-              `Preview:\n${truncateText(source.contentPreview, 3200)}`,
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          ),
+          "Prefetched evidence cards:",
+          ...evidenceCards.map((card) => formatEvidenceCard(card)),
         ].join("\n\n")
-      : "Prefetched sources: none",
+      : "Prefetched evidence cards: none",
   ];
 
   return [
@@ -3482,16 +3974,16 @@ function buildWorkerPrompt(
     "Use only the discovery material and prefetched sources included in this prompt.",
     "Do not call tools. The evidence bundle should already contain the material you need.",
     "Cite only source IDs that are present in the prefetched sources list.",
-    discardedSourceCount > 0
-      ? `Discovery found ${discardedSourceCount} additional prefetched source${discardedSourceCount === 1 ? "" : "s"}, but they were excluded from this prompt because they were already flagged low-quality or off-topic.`
+    excludedEvidenceCount > 0
+      ? `Discovery found ${excludedEvidenceCount} additional prefetched source${excludedEvidenceCount === 1 ? "" : "s"}, but they were excluded from this prompt because they were low-value, low-quality, off-topic, or below the evidence-card cutoff.`
       : "",
     ...taskSpecificInstructions,
     ...catalogInstructions,
-    sources.length > 0
-      ? `You must include at least one supporting sourceRef from these prefetched sources when they support your findings: ${sources.map((source) => source.id).join(", ")}.`
+    evidenceCards.length > 0
+      ? `You must include at least one supporting sourceRef from these evidence cards when they support your findings: ${evidenceCards.map((card) => card.sourceId).join(", ")}.`
       : "",
-    sources.length === 0
-      ? "No usable prefetched sources survived quality/relevance filtering for this topic. If the discovery bundle is still insufficient, say that plainly and leave sourceRefs empty rather than inventing citations."
+    evidenceCards.length === 0
+      ? "No usable evidence cards survived quality/relevance filtering for this topic. If the discovery bundle is still insufficient, say that plainly and leave sourceRefs empty rather than inventing citations."
       : "",
     "Use this exact shape:",
     "{\"summary\":\"...\",\"findings\":[\"...\"],\"contradictions\":[\"...\"],\"openQuestions\":[\"...\"],\"sourceRefs\":[\"source-1\"],\"confidence\":0.0}",
@@ -3514,19 +4006,17 @@ function formatResearchSourceTitle(source: ResearchSourceRecord): string {
   return normalizeInlineText(source.title ?? source.domain ?? source.resolvedUrl);
 }
 
-function formatResearchSourceFinding(source: ResearchSourceRecord): string {
+function formatResearchSourceFinding(source: ResearchSourceRecord, topic?: ResearchTopicPlan): string {
+  const keywords = topic
+    ? extractRelevanceKeywords([topic.title, topic.goal, ...topic.searchQueries], 18)
+    : [];
   const preview = normalizeInlineText(
-    [
-      source.description,
-      source.contentPreview,
-    ]
-      .filter((value): value is string => Boolean(value && value.trim().length > 0))
-      .join(" ")
+    extractBestEvidenceExcerpt(source, keywords, NEWS_DOSSIER_FINDING_PREVIEW_CHARS)
       .replace(/\b(?:Title|Description|Content|Byline|Page text|Snippet|Query|URL|Site|Top headlines \/ links):\s*/gi, " "),
   );
   const title = formatResearchSourceTitle(source);
   const domain = source.domain ? ` (${source.domain})` : "";
-  return `${title}${domain}: ${truncateText(preview, NEWS_DOSSIER_FINDING_PREVIEW_CHARS)}`;
+  return `${title}${domain}: ${preview}`;
 }
 
 function selectNewsDossierSources(
@@ -3541,10 +4031,11 @@ function selectNewsDossierSources(
     .filter((source): source is ResearchSourceRecord => Boolean(source));
 }
 
-function buildSourceBackedNewsDossier(
+function buildSourceBackedResearchDossier(
   runId: string,
   topic: ResearchTopicPlan,
   sources: ResearchSourceRecord[],
+  openQuestions: string[] = [],
 ): ResearchDossier {
   const selectedSources = selectNewsDossierSources(topic, sources);
   const domains = dedupeStrings(
@@ -3561,16 +4052,153 @@ function buildSourceBackedNewsDossier(
       selectedSources.length > 0
         ? `Collected ${selectedSources.length} usable source${selectedSources.length === 1 ? "" : "s"} for ${topic.title}${domains.length > 0 ? ` across ${domains.slice(0, 5).join(", ")}` : ""}.`
         : `No usable sources survived filtering for ${topic.title}.`,
-    findings: selectedSources.map((source) => formatResearchSourceFinding(source)),
+    findings: selectedSources.map((source) => formatResearchSourceFinding(source, topic)),
     contradictions: [],
     openQuestions:
       selectedSources.length > 0
-        ? []
-        : [`No usable source evidence was available for ${topic.title}.`],
+        ? openQuestions
+        : [`No usable source evidence was available for ${topic.title}.`, ...openQuestions],
     sourceIds,
     unresolvedSourceRefs: [],
     confidence: selectedSources.length > 0 ? 0.68 : 0.2,
     workerSessionId: `source-backed:${runId}:${topic.id}`,
+  };
+}
+
+function formatSourceMarker(sourceIds: string[]): string {
+  const ids = sourceIds
+    .filter((sourceId) => /^source-\d+$/.test(sourceId))
+    .slice(0, 4);
+  return ids.length > 0 ? ` [${ids.join(", ")}]` : "";
+}
+
+function compactSourceMarker(sourceIds: string[], limit = 2): string {
+  return formatSourceMarker(dedupeStrings(sourceIds).slice(0, limit));
+}
+
+function cleanFallbackReportEntry(value: string): string | undefined {
+  const normalized = normalizeInlineText(value)
+    .replace(/\s*(?:\(|\[)\s*source-\d+(?:\s*,\s*source-\d+)*\s*(?:\)|\])/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (/^[a-z][a-z0-9_ -]{2,40}:\s*$/i.test(normalized)) {
+    return undefined;
+  }
+  return truncateInlineText(normalized, 520);
+}
+
+function buildSourceBackedFinalSynthesis(
+  brief: ResearchBrief,
+  plan: ResearchPlan,
+  dossiers: ResearchDossier[],
+  sources: ResearchSourceRecord[],
+  options: {
+    fallbackIssues?: string[];
+    gapsRemaining?: string[];
+  } = {},
+): FinalSynthesisRecord {
+  const knownSourceIds = new Set(sources.map((source) => source.id));
+  const dossierSourceIds = dedupeStrings(
+    dossiers
+      .flatMap((dossier) => dossier.sourceIds)
+      .filter((sourceId) => knownSourceIds.has(sourceId)),
+  );
+  const selectedSourceIds =
+    dossierSourceIds.length > 0
+      ? dossierSourceIds
+      : sources
+          .filter((source) => isUsableResearchSource(source))
+          .slice(0, 12)
+          .map((source) => source.id);
+  const selectedSourceSet = new Set(selectedSourceIds);
+  const fallbackIssues = options.fallbackIssues?.filter(Boolean) ?? [];
+  const formattedFallbackIssues = fallbackIssues.map((issue) => issue.replace(/[.]+$/g, ""));
+  const gapsRemaining = options.gapsRemaining?.filter(Boolean) ?? [];
+  const openQuestions = dedupeStrings([...dossiers.flatMap((dossier) => dossier.openQuestions), ...gapsRemaining])
+    .map((entry) => cleanFallbackReportEntry(entry))
+    .filter((entry): entry is string => Boolean(entry))
+    .slice(0, 12);
+  const sections = dossiers.map((dossier) => {
+    const sectionSourceIds = dossier.sourceIds.filter((sourceId) => selectedSourceSet.has(sourceId));
+    const sectionCitation = compactSourceMarker(sectionSourceIds, 3);
+    const findings = dossier.findings
+      .map((finding) => cleanFallbackReportEntry(finding))
+      .filter((finding): finding is string => Boolean(finding))
+      .slice(0, 6);
+    const contradictions = dossier.contradictions
+      .map((entry) => cleanFallbackReportEntry(entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .slice(0, 4);
+    const findingLines = findings.map((finding, index) => {
+      const sourceId = sectionSourceIds[index] ?? sectionSourceIds[0];
+      return `- ${finding}${sourceId ? compactSourceMarker([sourceId], 1) : sectionCitation}`;
+    });
+    const contradictionLines = contradictions.map((entry) => `- ${entry}${sectionCitation}`);
+    return [
+      `## ${dossier.title}`,
+      "",
+      `${dossier.summary}${sectionCitation}`,
+      findingLines.length > 0 ? ["", "### Findings", "", ...findingLines].join("\n") : "",
+      contradictionLines.length > 0 ? ["", "### Contradictions", "", ...contradictionLines].join("\n") : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  });
+  const coverageNotes = [
+    selectedSourceIds.length > 0
+      ? `The source-backed report is grounded in ${selectedSourceIds.length} fetched source${selectedSourceIds.length === 1 ? "" : "s"}.`
+      : "The fallback report had no usable fetched source IDs to cite.",
+    gapsRemaining.length > 0 ? `Coverage gaps remained: ${gapsRemaining.join(" | ")}.` : "",
+    fallbackIssues.length > 0
+      ? `Model synthesis fallback was used because the coordinator did not return a bounded structured report: ${formattedFallbackIssues.join(" | ")}.`
+      : "",
+  ].filter(Boolean);
+  const sourceContextLines = buildSynthesisEvidenceCards(brief, plan, dossiers, sources)
+    .slice(0, 8)
+    .map((card) => {
+      const marker = formatSourceMarker([card.sourceId]).trim();
+      return `- ${marker || card.title}: ${card.excerpt}`;
+    })
+    .filter(Boolean);
+  const reportSummary =
+    [plan.scopeSummary, brief.scopeSummary, plan.objective, brief.objective]
+      .map((entry) => normalizeInlineText(entry ?? ""))
+      .find((entry) => entry.length >= 48)
+    ?? normalizeInlineText(plan.objective || brief.objective || "Research findings.");
+  const reportMarkdown = [
+    "# Research Report",
+    "",
+    `## Summary`,
+    "",
+    reportSummary,
+    "",
+    ...sections,
+    coverageNotes.length > 0 ? ["", "## Coverage Notes", "", ...coverageNotes.map((entry) => `- ${entry}`)].join("\n") : "",
+    sourceContextLines.length > 0
+      ? ["", "## Source Context", "", ...sourceContextLines].join("\n")
+      : "",
+    openQuestions.length > 0
+      ? ["", "## Open Questions", "", ...openQuestions.map((entry) => `- ${entry}`)].join("\n")
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const dossierConfidence =
+    dossiers.length > 0
+      ? dossiers.reduce((sum, dossier) => sum + dossier.confidence, 0) / dossiers.length
+      : 0.2;
+  return {
+    summary:
+      selectedSourceIds.length > 0
+        ? `Source-backed fallback synthesized ${dossiers.length} topic dossier${dossiers.length === 1 ? "" : "s"} from ${selectedSourceIds.length} fetched source${selectedSourceIds.length === 1 ? "" : "s"}.`
+        : "Source-backed fallback could not find usable fetched sources for the final synthesis.",
+    reportMarkdown,
+    openQuestions,
+    sourceIds: selectedSourceIds,
+    confidence: clampConfidence(Math.min(0.72, dossierConfidence * 0.85)),
   };
 }
 
@@ -3582,6 +4210,7 @@ function buildSynthesisPrompt(
   attempt = 1,
   retryIssues: string[] = [],
 ): string {
+  const evidenceCards = buildSynthesisEvidenceCards(brief, plan, dossiers, sources);
   const lines = [
     `Research objective: ${plan.objective}`,
     plan.scopeSummary ? `Scope summary: ${plan.scopeSummary}` : "",
@@ -3607,22 +4236,14 @@ function buildSynthesisPrompt(
       ),
     ].join("\n\n"),
     [
-      "Source registry:",
-      ...sources.map((source) =>
-        [
-          `[${source.id}] ${source.title ?? source.resolvedUrl}`,
-          source.resolvedUrl,
-          source.sourceFamily ? `Family: ${SOURCE_FAMILY_LABELS[source.sourceFamily]}` : "",
-          source.pageRole ? `Page role: ${source.pageRole}` : "",
-          source.description ? `Description: ${source.description}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      ),
+      `Cited evidence cards (${evidenceCards.length}/${sources.length} fetched sources shown):`,
+      ...evidenceCards.map((card) => formatEvidenceCard(card)),
     ].join("\n\n"),
     "Write a clear final research report in markdown.",
+    "Prefer a compact, evidence-dense report over a long narrative. Cover the requested dimensions, but do not restate every source card.",
+    "Keep reportMarkdown under 1,400 words and do not include a bibliography; inline citations are enough.",
     "Preserve disagreements and unresolved questions instead of flattening them away.",
-    "Use only the topic dossiers and source registry as authoritative evidence for this synthesis.",
+    "Use only the topic dossiers and cited evidence cards as authoritative evidence for this synthesis.",
     "Do not inject outside knowledge to correct or overwrite the gathered evidence set.",
     [
       "Citation style:",
@@ -3662,6 +4283,16 @@ function _buildSynthesisSelfCheckPrompt(
   finalSynthesis: FinalSynthesisRecord,
   sources: ResearchSourceRecord[],
 ): string {
+  const sourceCards = sources
+    .filter((source) => finalSynthesis.sourceIds.includes(source.id))
+    .slice(0, SYNTHESIS_EVIDENCE_CARD_LIMIT)
+    .map((source) =>
+      buildResearchEvidenceCardFromKeywords(
+        source,
+        extractRelevanceKeywords([plan.objective, plan.scopeSummary, ...plan.topics.flatMap((topic) => [topic.title, topic.goal])], 24),
+        SYNTHESIS_EVIDENCE_EXCERPT_CHARS,
+      ),
+    );
   return [
     `Research objective: ${plan.objective}`,
     plan.scopeSummary ? `Scope summary: ${plan.scopeSummary}` : "",
@@ -3669,16 +4300,8 @@ function _buildSynthesisSelfCheckPrompt(
     "Draft report:",
     finalSynthesis.reportMarkdown,
     [
-      "Available sources:",
-      ...sources.map((source) =>
-        [
-          `[${source.id}] ${source.title ?? source.resolvedUrl}`,
-          source.resolvedUrl,
-          source.sourceFamily ? `Family: ${SOURCE_FAMILY_LABELS[source.sourceFamily]}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      ),
+      "Available source cards:",
+      ...sourceCards.map((card) => formatEvidenceCard(card)),
     ].join("\n\n"),
     "Check whether the report follows instructions, stays grounded in the gathered evidence, and cites enough support.",
     "If the report is good enough, set ok to true and leave issues empty.",
@@ -3725,6 +4348,11 @@ function resolveResearchSubsessionBudget(
         timeoutMs: DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS,
         maxAssistantChars: MAX_PLANNING_ASSISTANT_CHARS,
       };
+    case "depth":
+      return {
+        timeoutMs: DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS,
+        maxAssistantChars: MAX_DEPTH_SCOUT_ASSISTANT_CHARS,
+      };
     case "synthesis":
       return {
         timeoutMs: DEFAULT_RESEARCH_SYNTHESIS_TIMEOUT_MS,
@@ -3746,6 +4374,8 @@ function formatResearchSubsessionBudgetLabel(
   switch (phase) {
     case "planning":
       return "Research planner";
+    case "depth":
+      return "Source-depth scout";
     case "synthesis":
       return "Research synthesis";
     case "topic":
@@ -3857,6 +4487,9 @@ function buildResearchWorkerTextLabel(
     if (phase === "planning") {
       return "Drafting research plan";
     }
+    if (phase === "depth") {
+      return "Selecting source-depth targets";
+    }
     if (phase === "synthesis") {
       return "Drafting final synthesis";
     }
@@ -3864,6 +4497,9 @@ function buildResearchWorkerTextLabel(
   }
 
   if (channel === "reasoning") {
+    if (phase === "depth") {
+      return "Reasoning about source depth";
+    }
     return phase === "topic"
       ? "Reasoning about topic evidence"
       : "Reasoning about next research step";
@@ -4133,6 +4769,7 @@ function selectFallbackCitationSourceIds(
   sources: ResearchSourceRecord[],
   limit = 4,
 ): string[] {
+  const keywords = extractRelevanceKeywords([topic.title, topic.goal, ...topic.searchQueries], 18);
   const preferredPageRole =
     /front page|headline/i.test(`${topic.title} ${topic.goal}`)
       ? "front_page"
@@ -4147,14 +4784,27 @@ function selectFallbackCitationSourceIds(
         if (source.pageRole === preferredPageRole) {
           value += 100;
         }
+        value += countKeywordHits(
+          `${source.title ?? ""}\n${source.description ?? ""}\n${source.contentPreview}`,
+          keywords,
+        ) * 12;
         if (source.sourceFamily === "official") {
           value += 30;
         }
         if (source.sourceFamily === "wire") {
           value += 20;
         }
+        if ((source.sourceDepth ?? 0) > 0 || source.discoveryMethod === "one_hop") {
+          value += 15;
+        }
+        if (source.pageRole === "reference" || source.pageRole === "article") {
+          value += 10;
+        }
         if (source.pageRole === "front_page") {
           value += 10;
+        }
+        if (source.blockedLikely || source.kind === "search-result") {
+          value -= 8;
         }
         return value;
       };
@@ -4180,6 +4830,16 @@ export const __testOnly = {
   sourceMatchesKeywords,
   isCatalogStyleRequest,
   extractCatalogDomainHints,
+  extractOneHopResearchUrlsFromSource,
+  buildResearchEvidenceCards,
+  buildSynthesisEvidenceCards,
+  buildSourceBackedFinalSynthesis,
+  formatEvidenceCard,
+  cleanFallbackReportEntry,
+  normalizeDepthScoutRecord,
+  recoverDepthScoutRecord,
+  inferResearchSubject,
+  isStructuredOutputBudgetFailure,
   buildPlanningPrompt,
   enhanceReportWithSourceLinks,
 };
@@ -4232,6 +4892,9 @@ export class ResearchRunner {
           startedAt,
         },
         discovery: {
+          status: "pending",
+        },
+        depth: {
           status: "pending",
         },
         workers: {
@@ -4314,7 +4977,9 @@ export class ResearchRunner {
             ? "Starting topic worker"
             : phase === "planning"
               ? "Starting research planning"
-              : "Starting final synthesis",
+              : phase === "depth"
+                ? "Starting source-depth scout"
+                : "Starting final synthesis",
         assistantDeltaCount: 0,
         reasoningDeltaCount: 0,
         lifecycleCount: 0,
@@ -4328,7 +4993,9 @@ export class ResearchRunner {
                 ? "Topic worker started"
                 : phase === "planning"
                   ? "Research coordinator started"
-                  : "Synthesis coordinator started",
+                  : phase === "depth"
+                    ? "Source-depth scout started"
+                    : "Synthesis coordinator started",
             timestamp: startedAtIso,
           },
         ],
@@ -4447,10 +5114,20 @@ export class ResearchRunner {
           record.searchCount = options.searchCount ?? record.searchCount;
           record.fetchCount = options.fetchCount ?? record.fetchCount;
           record.sourceCount = options.sourceCount ?? record.sourceCount;
-          record.currentAction = phase === "synthesis" ? "Synthesis complete" : "Worker complete";
+          record.currentAction =
+            phase === "synthesis"
+              ? "Synthesis complete"
+              : phase === "depth"
+                ? "Source-depth scout complete"
+                : "Worker complete";
           record.timeline = upsertResearchWorkerTimelineEntry(record.timeline, {
             id: "worker-complete",
-            label: phase === "synthesis" ? "Synthesis complete" : "Worker complete",
+            label:
+              phase === "synthesis"
+                ? "Synthesis complete"
+                : phase === "depth"
+                  ? "Source-depth scout complete"
+                  : "Worker complete",
             detail: record.resultSummary,
             timestamp: new Date().toISOString(),
             tone: "success",
@@ -4472,6 +5149,9 @@ export class ResearchRunner {
 
     const buildResearchSubsessionMetadata = (
       metadata: Record<string, unknown>,
+      options: {
+        reasoningMode?: "off" | "on";
+      } = {},
     ): Record<string, unknown> => {
       const parentPreferencesValue = this.snapshot.metadata?.requestPreferences;
       const parentPreferences =
@@ -4480,11 +5160,14 @@ export class ResearchRunner {
         && !Array.isArray(parentPreferencesValue)
           ? parentPreferencesValue as Record<string, unknown>
           : undefined;
+      const reasoningMode = options.reasoningMode
+        ?? (metadata.researchStage === "synthesis" ? "on" : "off");
 
       return {
         ...metadata,
         requestPreferences: {
           ...(parentPreferences ?? {}),
+          reasoningMode,
         },
       };
     };
@@ -4698,6 +5381,12 @@ export class ResearchRunner {
         fetchResult: FetchExecutionResult,
         fallbackFamily?: ResearchSourceFamily,
         searchSnippetCandidate?: SearchSnippetSourceCandidate,
+        discovery: {
+          sourceDepth?: number;
+          discoveryMethod?: ResearchSourceRecord["discoveryMethod"];
+          parentSourceId?: string;
+          parentResolvedUrl?: string;
+        } = {},
       ): string => {
         const existingSourceId =
           getRegisteredSourceId(sourceIdByUrl, fetchResult.structuredOutput.resolvedUrl)
@@ -4715,6 +5404,10 @@ export class ResearchRunner {
               description: existing.description,
             });
             existing.domain ??= parseUrlDomain(existing.resolvedUrl);
+            existing.sourceDepth ??= discovery.sourceDepth;
+            existing.discoveryMethod ??= discovery.discoveryMethod;
+            existing.parentSourceId ??= discovery.parentSourceId;
+            existing.parentResolvedUrl ??= discovery.parentResolvedUrl;
           }
           return existingSourceId;
         }
@@ -4767,6 +5460,10 @@ export class ResearchRunner {
           pageRole: classifyPageRole(resolvedUrl, sourceFamily),
           contentPreview,
           contentLength,
+          sourceDepth: discovery.sourceDepth,
+          discoveryMethod: discovery.discoveryMethod,
+          parentSourceId: discovery.parentSourceId,
+          parentResolvedUrl: discovery.parentResolvedUrl,
           lowQualityContent: quality.lowQuality ? true : undefined,
           offTopic: offTopic ? true : undefined,
           snippetMerged: snippetMerged ? true : undefined,
@@ -4820,6 +5517,8 @@ export class ResearchRunner {
           sourceFamily,
           pageRole: classifyPageRole(candidate.url, sourceFamily),
           contentPreview: preview,
+          sourceDepth: 0,
+          discoveryMethod: "search",
         };
         sourceRegistry.set(sourceRecord.id, sourceRecord);
         rememberSourceUrl(sourceIdByUrl, sourceRecord.requestedUrl, sourceRecord.id);
@@ -4911,18 +5610,28 @@ export class ResearchRunner {
           })
           : [];
 
-        const queuedFetchTasks = new Map<string, {
+        type ResearchFetchTask = FetchUrlInput & {
           key: string;
-          url: string;
           topicIds: Set<string>;
           sourceFamily: ResearchSourceFamily;
-        }>();
+          sourceDepth: number;
+          discoveryMethod: ResearchSourceRecord["discoveryMethod"];
+          parentSourceId?: string;
+          parentResolvedUrl?: string;
+        };
+        const queuedFetchTasks = new Map<string, ResearchFetchTask>();
         const searchSnippetCandidatesByUrl = new Map<string, SearchSnippetSourceCandidate>();
         const queueFetch = (
           topicId: string,
           url: string,
           sourceFamily: ResearchSourceFamily,
           candidate?: SearchSnippetSourceCandidate,
+          discovery: {
+            sourceDepth?: number;
+            discoveryMethod?: ResearchSourceRecord["discoveryMethod"];
+            parentSourceId?: string;
+            parentResolvedUrl?: string;
+          } = {},
         ): void => {
           const existingSourceId = getRegisteredSourceId(sourceIdByUrl, url);
           if (existingSourceId) {
@@ -4939,12 +5648,22 @@ export class ResearchRunner {
           const existingTask = queuedFetchTasks.get(url);
           if (existingTask) {
             existingTask.topicIds.add(topicId);
+            if ((discovery.sourceDepth ?? 0) < existingTask.sourceDepth) {
+              existingTask.sourceDepth = discovery.sourceDepth ?? 0;
+              existingTask.discoveryMethod = discovery.discoveryMethod ?? existingTask.discoveryMethod;
+              existingTask.parentSourceId = discovery.parentSourceId;
+              existingTask.parentResolvedUrl = discovery.parentResolvedUrl;
+            }
           } else {
             queuedFetchTasks.set(url, {
               key: `${passNumber}:${topicId}:${url}`,
               url,
               topicIds: new Set([topicId]),
               sourceFamily,
+              sourceDepth: discovery.sourceDepth ?? 0,
+              discoveryMethod: discovery.discoveryMethod ?? (candidate ? "search" : "seed"),
+              parentSourceId: discovery.parentSourceId,
+              parentResolvedUrl: discovery.parentResolvedUrl,
             });
           }
           if (candidate && !searchSnippetCandidatesByUrl.has(url)) {
@@ -5019,16 +5738,9 @@ export class ResearchRunner {
 
         const fetchTaskEntries = [...queuedFetchTasks.values()];
         const fetchResults = fetchTaskEntries.length > 0
-          ? await executor.fetchUrlBatch(
-            fetchTaskEntries.map((task) => ({
-              key: task.key,
-              topicId: [...task.topicIds][0] ?? "topic",
-              url: task.url,
-            })),
-            {
-              signal: normalizedOptions.signal,
-            },
-          )
+          ? await executor.fetchUrlBatch(fetchTaskEntries, {
+            signal: normalizedOptions.signal,
+          })
           : [];
 
         const applyFetchResults = (
@@ -5066,7 +5778,12 @@ export class ResearchRunner {
               return;
             }
             const searchSnippetCandidate = searchSnippetCandidatesByUrl.get(task.url);
-            const sourceId = registerFetchResult(topicIds, fetchResult, task.sourceFamily, searchSnippetCandidate);
+            const sourceId = registerFetchResult(topicIds, fetchResult, task.sourceFamily, searchSnippetCandidate, {
+              sourceDepth: task.sourceDepth,
+              discoveryMethod: task.discoveryMethod,
+              parentSourceId: task.parentSourceId,
+              parentResolvedUrl: task.parentResolvedUrl,
+            });
             const source = sourceRegistry.get(sourceId);
             if (source) {
               registeredSources.push(source);
@@ -5082,28 +5799,178 @@ export class ResearchRunner {
         };
 
         const firstWaveSources = applyFetchResults(fetchTaskEntries, fetchResults);
+        const depthCandidatesByUrl = new Map<string, DepthScoutCandidate>();
+        for (const source of firstWaveSources) {
+          const sourceFamily = source.sourceFamily ?? "mainstream_article";
+          for (const rawUrl of extractOneHopResearchUrlsFromSource(source, brief)) {
+            const url = normalizeSourceLookupUrl(rawUrl) ?? rawUrl;
+            if (getRegisteredSourceId(sourceIdByUrl, url) || queuedFetchTasks.has(url) || depthCandidatesByUrl.has(url)) {
+              continue;
+            }
+            depthCandidatesByUrl.set(url, {
+              id: `depth-${passNumber}-${depthCandidatesByUrl.size + 1}`,
+              url,
+              parentSourceId: source.id,
+              parentTitle: source.title,
+              parentResolvedUrl: source.resolvedUrl,
+              topicIds: source.topicIds,
+              sourceFamily,
+              reason: `${source.id} exposed this linked detail page during first-wave fetch.`,
+            });
+          }
+        }
+        const depthCandidateLimit = normalizedOptions.profile === "quick" ? 12 : 40;
+        const depthCandidates = [...depthCandidatesByUrl.values()].slice(0, depthCandidateLimit);
+        let selectedDepthCandidates = depthCandidates;
+        if (depthCandidates.length > 0) {
+          runState.stage = "depth";
+          markStageRunning("depth");
+          runState.stages.depth.worker = {
+            kind: "depth",
+            label: "Source-depth scout",
+            goal: "Select second-level source pages that contain concrete research data.",
+            assistantDeltaCount: 0,
+            reasoningDeltaCount: 0,
+            lifecycleCount: 0,
+            toolCallCount: 0,
+            toolResultCount: 0,
+            searchCount: searchTasks.length,
+            fetchCount: fetchTaskEntries.length,
+            sourceCount: depthCandidates.length,
+            timeline: [],
+          };
+          const shouldUseModelDepthScout =
+            depthCandidates.length > 1
+            && !(passNumber > 1 && latestAssessment?.sufficient === true);
+          if (!shouldUseModelDepthScout) {
+            const reason =
+              passNumber > 1 && latestAssessment?.sufficient === true
+                ? "Coverage was already sufficient before this follow-up pass."
+                : "Candidate set was a single clear source-depth target.";
+            runState.stages.depth.worker.currentAction = "Deterministic depth selection";
+            runState.stages.depth.worker.resultSummary =
+              `Queued ${selectedDepthCandidates.length}/${depthCandidates.length} second-level page${selectedDepthCandidates.length === 1 ? "" : "s"}. ${reason}`;
+            runState.stages.depth.worker.sourceCount = selectedDepthCandidates.length;
+            runState.stages.depth.worker.timeline = upsertResearchWorkerTimelineEntry(
+              runState.stages.depth.worker.timeline,
+              {
+                id: `depth-deterministic-${passNumber}`,
+                label: "Deterministic depth selection",
+                detail: runState.stages.depth.worker.resultSummary,
+                timestamp: new Date().toISOString(),
+                tone: "success",
+              },
+            );
+            markStageCompleted("depth");
+            runState.stage = "discovery";
+            await writeState();
+          } else {
+          const tracker = createActivityTracker("depth", passNumber, {
+            label: "Source-depth scout",
+            goal: "Select second-level source pages that contain concrete research data.",
+            target: runState.stages.depth.worker,
+          });
+          const budgetGuard = createResearchSubsessionBudgetGuard("depth", {
+            parentSignal: normalizedOptions.signal,
+          });
+          let completeDepthStage = true;
+          await tracker.begin();
+          try {
+            const attemptResult = await this.runSubsession(
+              {
+                prompt: buildDepthScoutPrompt(brief, passNumber, depthCandidates),
+                mode: "minimal",
+                systemInstructions: [
+                  "This is a focused source-depth scout for a deep research run.",
+                  "Select only URLs from the provided candidate list.",
+                  "Return compact structured JSON only.",
+                ].join("\n"),
+                responseFormat: makeStructuredResponseFormat(
+                  "research_depth_selection",
+                  {
+                    selectedUrls: { type: "array", items: { type: "string" } },
+                    rationale: { type: "string" },
+                    openQuestions: { type: "array", items: { type: "string" } },
+                    confidence: { type: "number" },
+                  },
+                  ["selectedUrls", "rationale"],
+                ),
+                maxSteps: 2,
+                metadata: buildResearchSubsessionMetadata({
+                  researchRunId: runId,
+                  researchStage: "depth",
+                  researchAttempt: passNumber,
+                }),
+                signal: budgetGuard.signal,
+                onSessionStarted: async (info) => await tracker.onSessionStarted(info),
+                onEvent: async (event) => {
+                  await tracker.onEvent(event);
+                  budgetGuard.onEvent(event);
+                },
+              },
+              `research:${runId}:depth:${passNumber}`,
+            );
+            const selection = recoverDepthScoutRecord(attemptResult, depthCandidates);
+            if (selection) {
+              const selectedUrlSet = new Set(selection.selectedUrls);
+              selectedDepthCandidates = depthCandidates.filter((candidate) => selectedUrlSet.has(candidate.url));
+            }
+            await tracker.complete(attemptResult, {
+              resultSummary: selection
+                ? `Selected ${selectedDepthCandidates.length}/${depthCandidates.length} second-level page${selectedDepthCandidates.length === 1 ? "" : "s"}. ${selection.rationale}`
+                : `Depth scout returned no valid selection; falling back to ${selectedDepthCandidates.length} deterministic second-level page${selectedDepthCandidates.length === 1 ? "" : "s"}.`,
+              searchCount: searchTasks.length,
+              fetchCount: fetchTaskEntries.length,
+              sourceCount: selectedDepthCandidates.length,
+            });
+            await persistSubsessionArtifacts(runDirectory, `workers/depth-pass-${passNumber}`, attemptResult);
+          } catch (error) {
+            const wrapped = budgetGuard.wrapError(error);
+            if (normalizedOptions.signal?.aborted === true) {
+              completeDepthStage = false;
+              throw wrapped;
+            }
+            await tracker.update({
+              currentAction: "Depth scout fell back to deterministic linked pages",
+              resultSummary: wrapped instanceof Error ? wrapped.message : String(wrapped),
+              sourceCount: selectedDepthCandidates.length,
+            });
+          } finally {
+            budgetGuard.cleanup();
+            await tracker.end();
+            if (completeDepthStage) {
+              markStageCompleted("depth");
+              runState.stage = "discovery";
+            } else {
+              markStageFailed("depth");
+            }
+            await writeState();
+          }
+          }
+        }
         const oneHopFetchTasks = new Map<string, {
           key: string;
           url: string;
           topicIds: Set<string>;
           sourceFamily: ResearchSourceFamily;
+          sourceDepth: number;
+          discoveryMethod: ResearchSourceRecord["discoveryMethod"];
+          parentSourceId?: string;
+          parentResolvedUrl?: string;
         }>();
-        for (const source of firstWaveSources) {
-          const sourceFamily = source.sourceFamily ?? "mainstream_article";
-          for (const url of extractOneHopNewsUrlsFromSource(source, brief)) {
-            if (getRegisteredSourceId(sourceIdByUrl, url) || queuedFetchTasks.has(url) || oneHopFetchTasks.has(url)) {
-              continue;
-            }
-            oneHopFetchTasks.set(url, {
-              key: `${passNumber}:one-hop:${source.id}:${url}`,
-              url,
-              topicIds: new Set(source.topicIds),
-              sourceFamily,
-            });
-          }
+        for (const candidate of selectedDepthCandidates) {
+          oneHopFetchTasks.set(candidate.url, {
+            key: `${passNumber}:one-hop:${candidate.parentSourceId}:${candidate.url}`,
+            url: candidate.url,
+            topicIds: new Set(candidate.topicIds),
+            sourceFamily: candidate.sourceFamily,
+            sourceDepth: 1,
+            discoveryMethod: "one_hop",
+            parentSourceId: candidate.parentSourceId,
+            parentResolvedUrl: candidate.parentResolvedUrl,
+          });
         }
-        const oneHopFetchTaskEntries = [...oneHopFetchTasks.values()]
-          .slice(0, normalizedOptions.profile === "quick" ? 12 : 40);
+        const oneHopFetchTaskEntries = [...oneHopFetchTasks.values()];
         if (oneHopFetchTaskEntries.length > 0) {
           if (runState.stages.discovery.worker) {
             runState.stages.discovery.worker.currentAction =
@@ -5121,16 +5988,9 @@ export class ResearchRunner {
           await writeState();
         }
         const oneHopFetchResults = oneHopFetchTaskEntries.length > 0
-          ? await executor.fetchUrlBatch(
-            oneHopFetchTaskEntries.map((task) => ({
-              key: task.key,
-              topicId: [...task.topicIds][0] ?? "topic",
-              url: task.url,
-            })),
-            {
-              signal: normalizedOptions.signal,
-            },
-          )
+          ? await executor.fetchUrlBatch(oneHopFetchTaskEntries, {
+            signal: normalizedOptions.signal,
+          })
           : [];
         applyFetchResults(oneHopFetchTaskEntries, oneHopFetchResults);
 
@@ -5229,7 +6089,34 @@ export class ResearchRunner {
       syncTopicStatuses();
       await writeSourceArtifacts();
       await syncTopicArtifacts();
+      const evidenceCardArtifacts = plan.topics.map((topic) => {
+        const discovery = discoveryByTopic.get(topic.id);
+        const topicSources = (discovery?.fetchedSourceIds ?? [])
+          .map((sourceId) => sourceRegistry.get(sourceId))
+          .filter((source): source is ResearchSourceRecord => Boolean(source));
+        const cards = buildResearchEvidenceCards(brief, topic, topicSources);
+        return {
+          topicId: topic.id,
+          title: topic.title,
+          sourceCount: topicSources.length,
+          cardCount: cards.length,
+          cards,
+        };
+      });
+      await writeJson(path.join(runDirectory, "evidence-cards", "index.json"), {
+        generatedAt: new Date().toISOString(),
+        topicCardLimit: TOPIC_EVIDENCE_CARD_LIMIT,
+        topics: evidenceCardArtifacts,
+      });
+      await Promise.all(
+        evidenceCardArtifacts.map((artifact) =>
+          writeJson(path.join(runDirectory, "evidence-cards", `${artifact.topicId}.json`), artifact),
+        ),
+      );
       markStageCompleted("discovery");
+      if (runState.stages.depth.status === "pending") {
+        markStageCompleted("depth");
+      }
       runState.stage = "workers";
       markStageRunning("workers");
       await writeState();
@@ -5413,7 +6300,7 @@ export class ResearchRunner {
                         confidence: candidateDossier.confidence,
                         workerSessionId: attemptResult.sessionId,
                       }
-                    : buildSourceBackedNewsDossier(runId, topic, sourceChunk);
+                    : buildSourceBackedResearchDossier(runId, topic, sourceChunk);
                   chunkDossiers.push(chunkDossier);
                   await tracker.complete(attemptResult, {
                     resultSummary: chunkDossier.summary,
@@ -5428,7 +6315,7 @@ export class ResearchRunner {
                   );
                 } catch (error) {
                   const wrapped = budgetGuard.wrapError(error);
-                  const fallbackDossier = buildSourceBackedNewsDossier(runId, topic, sourceChunk);
+                  const fallbackDossier = buildSourceBackedResearchDossier(runId, topic, sourceChunk);
                   chunkDossiers.push({
                     ...fallbackDossier,
                     id: `${topic.id}-bundle-${chunkNumber}-dossier`,
@@ -5451,7 +6338,7 @@ export class ResearchRunner {
               const fallbackDossier =
                 chunkDossiers.length > 0
                   ? undefined
-                  : buildSourceBackedNewsDossier(runId, topic, prefetchedSources);
+                  : buildSourceBackedResearchDossier(runId, topic, prefetchedSources);
               const sourceIds = [
                 ...new Set((fallbackDossier ? [fallbackDossier] : chunkDossiers).flatMap((dossier) => dossier.sourceIds)),
               ];
@@ -5673,7 +6560,28 @@ export class ResearchRunner {
                     : path.join("workers", topic.id);
                 await persistSubsessionArtifacts(runDirectory, attemptArtifactPath, attemptResult);
               } catch (error) {
-                throw budgetGuard.wrapError(error);
+                const wrapped = budgetGuard.wrapError(error);
+                workerFailureMessage = wrapped instanceof Error ? wrapped.message : String(wrapped);
+                await tracker.update({
+                  currentAction: `Topic worker attempt ${attempt} failed`,
+                  resultSummary: workerFailureMessage,
+                  searchCount: discovery.searches.length,
+                  fetchCount: discovery.fetchedSourceIds.length,
+                  sourceCount: discovery.fetchedSourceIds.length,
+                });
+                if (normalizedOptions.signal?.aborted === true) {
+                  throw wrapped;
+                }
+                if (isStructuredOutputBudgetFailure(workerFailureMessage)) {
+                  await tracker.update({
+                    currentAction: "Source-backed topic fallback scheduled",
+                    resultSummary: workerFailureMessage,
+                    searchCount: discovery.searches.length,
+                    fetchCount: discovery.fetchedSourceIds.length,
+                    sourceCount: discovery.fetchedSourceIds.length,
+                  });
+                  break;
+                }
               } finally {
                 budgetGuard.cleanup();
                 await tracker.end();
@@ -5681,7 +6589,52 @@ export class ResearchRunner {
             }
 
             if (!workerResult || !normalizedDossier) {
-              throw new GemmaDesktopError("tool_execution_failed", workerFailureMessage);
+              if (/cited URLs without fetching them/i.test(workerFailureMessage)) {
+                throw new GemmaDesktopError("tool_execution_failed", workerFailureMessage);
+              }
+              const fallbackSources = discovery.fetchedSourceIds
+                .map((sourceId) => sourcesById.get(sourceId))
+                .filter((source): source is ResearchSourceRecord => Boolean(source))
+                .filter((source) => isUsableResearchSource(source));
+              const fallbackDossier = buildSourceBackedResearchDossier(
+                runId,
+                topic,
+                fallbackSources,
+                [workerFailureMessage],
+              );
+              const dossierIndex = topicIndexById.get(topic.id);
+              if (dossierIndex === undefined) {
+                throw new GemmaDesktopError("runtime_unavailable", `Missing dossier index for topic ${topic.id}.`);
+              }
+              dossiers[dossierIndex] = fallbackDossier;
+              await writeJson(path.join(runDirectory, "topics", `${topic.id}.json`), {
+                ...topic,
+                discovery,
+              });
+              await writeDossierArtifacts(topic, fallbackDossier);
+              if (stateEntry) {
+                stateEntry.status = "completed";
+                stateEntry.completedAt = new Date().toISOString();
+                stateEntry.summary = fallbackDossier.summary;
+                stateEntry.sourceCount = fallbackDossier.sourceIds.length;
+                if (stateEntry.worker) {
+                  stateEntry.worker.currentAction = "Source-backed dossier used";
+                  stateEntry.worker.sourceCount = fallbackDossier.sourceIds.length;
+                  stateEntry.worker.resultSummary = fallbackDossier.summary;
+                  stateEntry.worker.timeline = upsertResearchWorkerTimelineEntry(
+                    stateEntry.worker.timeline,
+                    {
+                      id: `${topic.id}-source-backed-fallback`,
+                      label: "Source-backed dossier used",
+                      detail: workerFailureMessage,
+                      timestamp: new Date().toISOString(),
+                      tone: "warning",
+                    },
+                  );
+                }
+              }
+              await writeState();
+              return;
             }
 
             await persistSubsessionArtifacts(runDirectory, path.join("workers", topic.id), workerResult);
@@ -5759,6 +6712,7 @@ export class ResearchRunner {
       let finalSynthesis: FinalSynthesisRecord | undefined;
       let finalSelfCheck: SynthesisSelfCheckRecord | undefined;
       let synthesisRetryIssues: string[] = [];
+      let synthesisFailureMessage: string | undefined;
       runState.stages.synthesis.worker = {
         kind: "synthesis",
         label: "Research coordinator",
@@ -5853,13 +6807,28 @@ export class ResearchRunner {
           await tracker.complete(attemptResult, {
             resultSummary: "Synthesis attempt completed without a valid final report.",
           });
+          synthesisFailureMessage = "Synthesis attempt completed without a valid final report.";
+          synthesisRetryIssues = [synthesisFailureMessage];
           await persistSubsessionArtifacts(
             runDirectory,
             `workers/coordinator-synthesis-attempt-${attempt}`,
             attemptResult,
           );
         } catch (error) {
-          throw budgetGuard.wrapError(error);
+          const wrapped = budgetGuard.wrapError(error);
+          if (normalizedOptions.signal?.aborted === true) {
+            throw wrapped;
+          }
+          synthesisFailureMessage = wrapped instanceof Error ? wrapped.message : String(wrapped);
+          synthesisRetryIssues = [synthesisFailureMessage];
+          await tracker.update({
+            currentAction: "Source-backed synthesis fallback scheduled",
+            resultSummary: synthesisFailureMessage,
+          });
+          if (attempt < 2 && !isStructuredOutputBudgetFailure(synthesisFailureMessage)) {
+            continue;
+          }
+          break;
         } finally {
           budgetGuard.cleanup();
           await tracker.end();
@@ -5867,10 +6836,40 @@ export class ResearchRunner {
       }
 
       if (!synthesisResult || !finalSynthesis) {
-        throw new GemmaDesktopError(
-          "tool_execution_failed",
-          "Synthesis did not produce a valid final report after retry.",
-        );
+        const fallbackIssue =
+          synthesisFailureMessage ?? "Synthesis did not produce a valid final report after retry.";
+        finalSynthesis = buildSourceBackedFinalSynthesis(brief, plan, dossiers, [...sourceRegistry.values()], {
+          fallbackIssues: [fallbackIssue],
+          gapsRemaining: runState.gapsRemaining,
+        });
+        finalSelfCheck = {
+          ok: false,
+          issues: [fallbackIssue],
+          needsRetry: false,
+        };
+        synthesisResult = {
+          sessionId: `source-backed:${runId}:synthesis`,
+          turnId: `source-backed:${runId}:synthesis`,
+          events: [],
+          outputText: finalSynthesis.summary,
+          structuredOutput: finalSynthesis,
+        };
+        if (runState.stages.synthesis.worker) {
+          runState.stages.synthesis.worker.currentAction = "Source-backed synthesis used";
+          runState.stages.synthesis.worker.resultSummary = fallbackIssue;
+          runState.stages.synthesis.worker.sourceCount = finalSynthesis.sourceIds.length;
+          runState.stages.synthesis.worker.timeline = upsertResearchWorkerTimelineEntry(
+            runState.stages.synthesis.worker.timeline,
+            {
+              id: "source-backed-synthesis-fallback",
+              label: "Source-backed synthesis used",
+              detail: fallbackIssue,
+              timestamp: new Date().toISOString(),
+              tone: "warning",
+            },
+          );
+        }
+        await writeState();
       }
 
       const finalSourceIds =
@@ -5956,6 +6955,8 @@ export class ResearchRunner {
         markStageFailed("planning");
       } else if (runState.stage === "discovery") {
         markStageFailed("discovery");
+      } else if (runState.stage === "depth") {
+        markStageFailed("depth");
       } else if (runState.stage === "workers") {
         markStageFailed("workers");
       } else if (runState.stage === "synthesis") {

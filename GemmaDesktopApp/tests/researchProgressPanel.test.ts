@@ -32,6 +32,10 @@ function buildPanel(): ResearchPanelViewModel {
       otherDomainCount: 0,
       otherDomainSourceCount: 0,
     },
+    depth: {
+      status: 'pending',
+      label: 'Choose second-level source pages',
+    },
     topics: [],
     synthesis: {
       status: 'pending',

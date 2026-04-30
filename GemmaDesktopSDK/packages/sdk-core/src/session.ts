@@ -396,7 +396,13 @@ function buildEnvironmentInstructions(options: {
   ].join("\n");
 }
 
-function buildGemma4ThinkingInstructions(modelId: string): string | undefined {
+function buildGemma4ThinkingInstructions(
+  modelId: string,
+  reasoningMode?: "auto" | "on" | "off",
+): string | undefined {
+  if (reasoningMode === "off") {
+    return undefined;
+  }
   if (!isGemma4ModelId(modelId)) {
     return undefined;
   }
@@ -816,8 +822,8 @@ const COMPACTION_SYSTEM_PROMPT = [
 
 function normalizeRequestReasoningMode(
   value: unknown,
-): "auto" | "on" | undefined {
-  return value === "auto" || value === "on"
+): "auto" | "on" | "off" | undefined {
+  return value === "auto" || value === "on" || value === "off"
     ? value
     : undefined;
 }
@@ -849,9 +855,10 @@ function buildRequestSettings(
     preferencesValue && typeof preferencesValue === "object" && !Array.isArray(preferencesValue)
       ? preferencesValue as Record<string, unknown>
       : undefined;
-  const reasoningMode = modelId && isGemma4ModelId(modelId)
+  const requestedReasoningMode = normalizeRequestReasoningMode(preferences?.reasoningMode);
+  const reasoningMode = modelId && isGemma4ModelId(modelId) && requestedReasoningMode !== "off"
     ? "on"
-    : normalizeRequestReasoningMode(preferences?.reasoningMode);
+    : requestedReasoningMode;
   if (reasoningMode) {
     settings.reasoningMode = reasoningMode;
   }
@@ -1415,6 +1422,7 @@ export function resolveSessionSystemInstructions(options: {
   systemInstructions?: string;
   history?: SessionMessage[];
   availableTools?: readonly string[];
+  reasoningMode?: "auto" | "on" | "off";
   now?: Date;
   timeZone?: string;
 }): ResolvedSystemInstructionSection[] {
@@ -1422,7 +1430,7 @@ export function resolveSessionSystemInstructions(options: {
   const base = resolveModeBase(options.mode);
   if (base !== "minimal") {
     sections.push(...resolvePromptProfileSections(options.modelId));
-    const gemma4ThinkingInstructions = buildGemma4ThinkingInstructions(options.modelId);
+    const gemma4ThinkingInstructions = buildGemma4ThinkingInstructions(options.modelId, options.reasoningMode);
     if (gemma4ThinkingInstructions) {
       sections.push({
         source: "model",
@@ -1744,6 +1752,7 @@ export class SessionEngine {
     availableTools?: ToolDefinition[],
   ): ChatRequest {
     const effectiveTools = availableTools ?? this.availableTools;
+    const settings = buildRequestSettings(this.mode, this.metadata, this.model);
     const systemPromptSections = resolveSessionSystemInstructions({
       modelId: this.model,
       mode: this.mode,
@@ -1752,6 +1761,7 @@ export class SessionEngine {
       systemInstructions: this.systemInstructions,
       history: this.history,
       availableTools: effectiveTools.map((tool) => tool.name),
+      reasoningMode: settings.reasoningMode as "auto" | "on" | "off" | undefined,
     });
     const systemPrompt = composeSystemPrompt(
       systemPromptSections,
@@ -1784,7 +1794,7 @@ export class SessionEngine {
       responseFormat,
       signal,
       debug,
-      settings: buildRequestSettings(this.mode, this.metadata, this.model),
+      settings,
     };
   }
 

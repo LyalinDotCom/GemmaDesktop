@@ -89,6 +89,14 @@ describe("CLI argument parsing", () => {
     ).toThrow(CliArgumentError);
   });
 
+  it("accepts explicit reasoning off request preferences", () => {
+    const command = parseSession(["run", "hello", "--reasoning", "off"]);
+
+    expect(command.requestPreferences).toEqual({
+      reasoningMode: "off",
+    });
+  });
+
   it("parses ACT build policy and scenario runner flags", () => {
     const runCommand = parseSession([
       "run",

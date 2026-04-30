@@ -2,6 +2,31 @@ import { describe, expect, it } from "vitest";
 import { __testOnly } from "../packages/sdk-node/src/research.js";
 
 describe("research content-quality hardening", () => {
+  describe("structured output budget failures", () => {
+    it("classifies runaway and timeout failures as source-backed fallback triggers", () => {
+      expect(
+        __testOnly.isStructuredOutputBudgetFailure(
+          "Topic worker \"Gemma Sources\" exceeded the 16,000 character structured-output budget and looks runaway.",
+        ),
+      ).toBe(true);
+      expect(
+        __testOnly.isStructuredOutputBudgetFailure(
+          "Topic worker \"Gemma Sources\" exceeded the 2 minute time budget while generating structured output.",
+        ),
+      ).toBe(true);
+      expect(__testOnly.isStructuredOutputBudgetFailure("Stream timed out while waiting for model output.")).toBe(true);
+    });
+
+    it("does not classify citation validation failures as budget failures", () => {
+      expect(
+        __testOnly.isStructuredOutputBudgetFailure(
+          "Topic worker \"Gemma Sources\" cited URLs without fetching them.",
+        ),
+      ).toBe(false);
+      expect(__testOnly.isStructuredOutputBudgetFailure(undefined)).toBe(false);
+    });
+  });
+
   describe("assessContentQuality", () => {
     it("flags short bodies as low-quality", () => {
       const result = __testOnly.assessContentQuality("short body", 25);
@@ -87,6 +112,276 @@ describe("research content-quality hardening", () => {
           [],
         ),
       ).toBe(true);
+    });
+  });
+
+  describe("research evidence cards", () => {
+    function buildBrief() {
+      return {
+        objective: "Research Gemma 4 model availability across official and runtime catalog sources.",
+        scopeSummary: "Find official sizes and runtime availability.",
+        taskType: "catalog-status" as const,
+        focusQuery: "Gemma 4 26B 31B Ollama availability",
+        subject: "Gemma 4",
+        requiredSourceFamilies: [],
+        optionalSourceFamilies: [],
+        reportRequirements: [],
+      };
+    }
+
+    function buildTopic() {
+      return {
+        id: "runtime-availability",
+        title: "Gemma 4 Runtime Availability",
+        goal: "Find 26B and 31B runtime catalog availability.",
+        priority: 1,
+        searchQueries: ["Ollama Gemma 4 catalog", "Gemma 4 26B 31B runtime"],
+      };
+    }
+
+    it("ranks compact source cards by relevant evidence instead of raw source order", () => {
+      const sources = [
+        {
+          id: "source-1",
+          requestedUrl: "https://en.wikipedia.org/wiki/Gemma_(language_model)",
+          resolvedUrl: "https://en.wikipedia.org/wiki/Gemma_(language_model)",
+          title: "Gemma (language model)",
+          description: "A broad encyclopedia page surfaced by an official-source search.",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: true,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          topicIds: ["runtime-availability"],
+          domain: "en.wikipedia.org",
+          sourceFamily: "official" as const,
+          pageRole: "reference" as const,
+          contentPreview:
+            "Gemma is a family of open models, but this search-result style page does not confirm Gemma 4 26B Ollama availability.",
+        },
+        {
+          id: "source-2",
+          requestedUrl: "https://ollama.com/library/gemma4:26b-mxfp8",
+          resolvedUrl: "https://ollama.com/library/gemma4:26b-mxfp8",
+          title: "gemma4:26b-mxfp8",
+          description: "Ollama catalog page for Gemma 4 26B MXFP8.",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: false,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          topicIds: ["runtime-availability"],
+          domain: "ollama.com",
+          sourceFamily: "reference_github_docs" as const,
+          pageRole: "reference" as const,
+          sourceDepth: 1,
+          discoveryMethod: "one_hop" as const,
+          parentSourceId: "source-0",
+          parentResolvedUrl: "https://ollama.com/library/gemma4",
+          contentPreview:
+            "Gemma 4 26B is available in the Ollama runtime catalog as gemma4:26b-mxfp8. The page lists download and runtime details for local use.",
+        },
+        {
+          id: "source-3",
+          requestedUrl: "https://spam.example/jwt",
+          resolvedUrl: "https://spam.example/jwt",
+          title: "Token dump",
+          description: "No usable evidence.",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: true,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          topicIds: ["runtime-availability"],
+          domain: "spam.example",
+          sourceFamily: "blogs_analysis" as const,
+          pageRole: "other" as const,
+          contentPreview: "eyJ" + "A".repeat(900),
+          lowQualityContent: true,
+        },
+        {
+          id: "source-4",
+          requestedUrl: "https://github.com/ollama/ollama",
+          resolvedUrl: "https://github.com/ollama/ollama",
+          title: "GitHub - ollama/ollama",
+          description: "Get up and running with Gemma and other models.",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: false,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          topicIds: ["runtime-availability"],
+          domain: "github.com",
+          sourceFamily: "reference_github_docs" as const,
+          pageRole: "reference" as const,
+          contentPreview:
+            "Ollama supports running Gemma models locally, but this repository page is a generic runtime page rather than a Gemma 4 catalog detail page.",
+        },
+      ];
+
+      const cards = __testOnly.buildResearchEvidenceCards(buildBrief(), buildTopic(), sources, 3, 220);
+      expect(cards[0]?.sourceId).toBe("source-2");
+      expect(cards.map((card) => card.sourceId)).toContain("source-4");
+      expect(cards[0]?.signals).toContain("one-hop detail page");
+      expect(cards[0]?.excerpt).toContain("Gemma 4 26B");
+      expect(JSON.stringify(cards)).not.toContain("source-3");
+      expect(cards[0]?.excerpt).not.toContain("[truncated");
+      expect(cards[0]?.excerpt.length).toBeLessThanOrEqual(260);
+    });
+
+    it("keeps cited synthesis cards first and fills with ranked supporting cards", () => {
+      const brief = buildBrief();
+      const topic = buildTopic();
+      const sources = ["26B", "31B", "general"].map((label, index) => ({
+        id: `source-${index + 1}`,
+        requestedUrl: `https://example.com/${label}`,
+        resolvedUrl: `https://example.com/${label}`,
+        title: `Gemma 4 ${label}`,
+        description: `Gemma 4 ${label} availability note.`,
+        kind: "html",
+        extractedWith: "readability",
+        blockedLikely: false,
+        fetchedAt: "2026-04-30T00:00:00.000Z",
+        topicIds: [topic.id],
+        domain: "example.com",
+        sourceFamily: index === 2 ? "blogs_analysis" as const : "official" as const,
+        pageRole: "reference" as const,
+        contentPreview: `Gemma 4 ${label} source evidence with model availability and runtime details.`,
+      }));
+      const cards = __testOnly.buildSynthesisEvidenceCards(
+        brief,
+        {
+          objective: brief.objective,
+          scopeSummary: brief.scopeSummary,
+          topics: [topic],
+          risks: [],
+          stopConditions: [],
+        },
+        [
+          {
+            id: "runtime-dossier",
+            topicId: topic.id,
+            title: topic.title,
+            summary: "Runtime availability cites the 31B card.",
+            findings: ["31B runtime availability is supported."],
+            contradictions: [],
+            openQuestions: [],
+            sourceIds: ["source-2"],
+            unresolvedSourceRefs: [],
+            confidence: 0.8,
+            workerSessionId: "test",
+          },
+        ],
+        sources,
+      );
+
+      expect(cards[0]?.sourceId).toBe("source-2");
+      expect(cards.map((card) => card.sourceId)).toContain("source-1");
+      expect(cards.every((card) => card.excerpt.length > 0)).toBe(true);
+    });
+  });
+
+  describe("source-backed fallback report cleanup", () => {
+    it("drops empty structured labels and trims noisy source markers", () => {
+      expect(__testOnly.cleanFallbackReportEntry("modalities_and_capabilities:")).toBeUndefined();
+      expect(
+        __testOnly.cleanFallbackReportEntry(
+          "Gemma 4 26B is available in Ollama and Hugging Face. [source-7, source-9]",
+        ),
+      ).toBe("Gemma 4 26B is available in Ollama and Hugging Face.");
+      expect(
+        __testOnly.cleanFallbackReportEntry(
+          "The 31B model is listed as dense (source-4, source-8).",
+        ),
+      ).toBe("The 31B model is listed as dense.");
+    });
+
+    it("keeps deterministic fallback reports readable when model synthesis fails", () => {
+      const brief = {
+        objective: "Research Gemma 4 availability.",
+        scopeSummary: "Find official and runtime availability.",
+        taskType: "catalog-status" as const,
+        focusQuery: "Gemma 4 26B 31B Ollama availability",
+        subject: "Gemma 4",
+        requiredSourceFamilies: [],
+        optionalSourceFamilies: [],
+        reportRequirements: [],
+      };
+      const topic = {
+        id: "runtime-availability",
+        title: "Runtime Availability",
+        goal: "Find runtime catalog availability.",
+        priority: 1,
+        searchQueries: ["Ollama Gemma 4 26B 31B"],
+      };
+      const synthesis = __testOnly.buildSourceBackedFinalSynthesis(
+        brief,
+        {
+          objective: brief.objective,
+          scopeSummary: brief.scopeSummary,
+          topics: [topic],
+          risks: [],
+          stopConditions: [],
+        },
+        [
+          {
+            id: "runtime-dossier",
+            topicId: topic.id,
+            title: topic.title,
+            summary: "Runtime catalogs identify available Gemma 4 variants.",
+            findings: [
+              "runtime_catalog:",
+              "Ollama lists Gemma 4 26B and 31B runtime variants. [source-1, source-2]",
+              "Hugging Face hosts Google Gemma 4 model pages.",
+            ],
+            contradictions: [],
+            openQuestions: ["Which quantization is best for each machine? (source-2)"],
+            sourceIds: ["source-1", "source-2"],
+            unresolvedSourceRefs: [],
+            confidence: 0.7,
+            workerSessionId: "test",
+          },
+        ],
+        [
+          {
+            id: "source-1",
+            requestedUrl: "https://ollama.com/library/gemma4",
+            resolvedUrl: "https://ollama.com/library/gemma4",
+            title: "gemma4",
+            description: "Ollama Gemma 4 catalog.",
+            kind: "html",
+            extractedWith: "readability",
+            blockedLikely: false,
+            fetchedAt: "2026-04-30T00:00:00.000Z",
+            topicIds: [topic.id],
+            domain: "ollama.com",
+            sourceFamily: "reference_github_docs" as const,
+            pageRole: "reference" as const,
+            contentPreview: "Ollama lists gemma4:26b and gemma4:31b runtime variants.",
+          },
+          {
+            id: "source-2",
+            requestedUrl: "https://huggingface.co/google/gemma-4-31B",
+            resolvedUrl: "https://huggingface.co/google/gemma-4-31B",
+            title: "google/gemma-4-31B",
+            description: "Hugging Face model page.",
+            kind: "html",
+            extractedWith: "readability",
+            blockedLikely: false,
+            fetchedAt: "2026-04-30T00:00:00.000Z",
+            topicIds: [topic.id],
+            domain: "huggingface.co",
+            sourceFamily: "reference_github_docs" as const,
+            pageRole: "reference" as const,
+            contentPreview: "Hugging Face hosts Google Gemma 4 model pages.",
+          },
+        ],
+        { fallbackIssues: ["structured-output budget exceeded."] },
+      );
+
+      expect(synthesis.reportMarkdown).not.toContain("runtime_catalog:");
+      expect(synthesis.reportMarkdown).toContain("- Ollama lists Gemma 4 26B and 31B runtime variants. [source-1]");
+      expect(synthesis.reportMarkdown).toContain("- [source-1]: Ollama lists gemma4:26b");
+      expect(synthesis.reportMarkdown).not.toContain("## Open Questions\n\n- The model synthesis coordinator");
+      expect(synthesis.reportMarkdown).toContain("Model synthesis fallback was used");
+      expect(synthesis.reportMarkdown).not.toContain("exceeded..");
+      expect(synthesis.openQuestions).toEqual(["Which quantization is best for each machine?"]);
     });
   });
 

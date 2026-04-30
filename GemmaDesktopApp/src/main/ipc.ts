@@ -5564,6 +5564,7 @@ function withResolvedRequestPreferencesMetadata(
   const currentReasoningMode =
     currentPreferences?.reasoningMode === 'auto'
     || currentPreferences?.reasoningMode === 'on'
+    || currentPreferences?.reasoningMode === 'off'
       ? currentPreferences.reasoningMode
       : undefined
   const currentOllamaKeepAlive =

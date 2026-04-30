@@ -27,7 +27,7 @@ function createInspection(): RuntimeInspectionResult {
 }
 
 describe("session request reasoning settings", () => {
-  it("propagates requestPreferences and keeps Gemma 4 reasoning enabled", async () => {
+  it("propagates requestPreferences and honors explicit Gemma 4 reasoning off", async () => {
     const requests: ChatRequest[] = [];
     const adapter: RuntimeAdapter = {
       identity: createInspection().runtime,
@@ -81,7 +81,7 @@ describe("session request reasoning settings", () => {
     expect(result.text).toBe("Reasoning configured.");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.settings).toEqual(expect.objectContaining({
-      reasoningMode: "on",
+      reasoningMode: "off",
       ollamaOptions: {
         num_ctx: 65536,
         temperature: 1,
@@ -92,6 +92,48 @@ describe("session request reasoning settings", () => {
         max_tokens: 4096,
         temperature: 0.8,
       },
+    }));
+  });
+
+  it("enables Gemma 4 reasoning by default when no explicit off preference is set", async () => {
+    const requests: ChatRequest[] = [];
+    const adapter: RuntimeAdapter = {
+      identity: createInspection().runtime,
+      async inspect() {
+        return createInspection();
+      },
+      async generate() {
+        return {
+          text: "unused",
+          content: [{ type: "text", text: "unused" }],
+          toolCalls: [],
+        };
+      },
+      async *stream(request) {
+        requests.push(request);
+        yield {
+          type: "response.complete",
+          response: {
+            text: "Reasoning configured.",
+            content: [{ type: "text", text: "Reasoning configured." }],
+            toolCalls: [],
+          },
+        };
+      },
+    };
+
+    const session = new SessionEngine({
+      adapter,
+      model: "gemma4:31b",
+      mode: "cowork",
+      workingDirectory: "/tmp",
+      metadata: {},
+    });
+
+    await session.run("Hello");
+
+    expect(requests[0]?.settings).toEqual(expect.objectContaining({
+      reasoningMode: "on",
     }));
   });
 });

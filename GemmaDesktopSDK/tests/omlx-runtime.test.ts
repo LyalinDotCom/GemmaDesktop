@@ -293,6 +293,52 @@ describe("oMLX OpenAI-compatible runtime adapter", () => {
     }));
   });
 
+  it("does not enable oMLX Gemma 4 thinking when reasoningMode is explicitly off", async () => {
+    let chatBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        chatBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            id: "chatcmpl_omlx",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "Ready from oMLX.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOmlxOpenAICompatibleAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      messages: [{
+        id: "msg_1",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        createdAt: new Date().toISOString(),
+      }],
+      settings: {
+        reasoningMode: "off",
+      },
+    });
+
+    expect(chatBody).toEqual(expect.objectContaining({
+      model: "gemma-4-26b-a4b-it-nvfp4",
+      stream: false,
+    }));
+    expect(chatBody).not.toHaveProperty("thinking_budget");
+    expect(chatBody).not.toHaveProperty("chat_template_kwargs");
+  });
+
   it("preserves explicit oMLX thinking budget overrides", async () => {
     let chatBody: Record<string, unknown> | undefined;
     const server = await createMockServer((request) => {

@@ -47,6 +47,9 @@ function buildStatus(
       discovery: {
         status: 'pending',
       },
+      depth: {
+        status: 'pending',
+      },
       workers: {
         status: 'pending',
       },
@@ -95,6 +98,11 @@ describe('research presentation', () => {
           status: 'completed',
           startedAt: new Date(2_000).toISOString(),
           completedAt: new Date(3_000).toISOString(),
+        },
+        depth: {
+          status: 'completed',
+          startedAt: new Date(3_000).toISOString(),
+          completedAt: new Date(3_500).toISOString(),
         },
         workers: {
           status: 'running',
@@ -162,6 +170,7 @@ describe('research presentation', () => {
       { domain: 'blog.google', count: 6 },
     ])
     expect(panel.sources.otherDomainCount).toBe(0) // 5 domains fit under the top limit
+    expect(panel.depth.status).toBe('completed')
     expect(panel.topics).toHaveLength(2)
     expect(panel.topics[0]).toMatchObject({
       id: 'topic-1',
@@ -188,6 +197,7 @@ describe('research presentation', () => {
         discovery: {
           status: 'running',
         },
+        depth: { status: 'pending' },
         workers: { status: 'pending' },
         synthesis: { status: 'pending' },
       },
@@ -244,6 +254,7 @@ describe('research presentation', () => {
       stages: {
         planning: { status: 'completed' },
         discovery: { status: 'completed' },
+        depth: { status: 'completed' },
         workers: {
           status: 'running',
           startedAt: new Date(3_000).toISOString(),
@@ -301,6 +312,62 @@ describe('research presentation', () => {
     expect(panel.liveHint).toMatch(/No new activity/)
   })
 
+  it('shows the source-depth stage as its own research step', () => {
+    const status = buildStatus({
+      stage: 'depth',
+      stages: {
+        planning: { status: 'completed' },
+        discovery: { status: 'completed' },
+        depth: {
+          status: 'running',
+          startedAt: new Date(3_000).toISOString(),
+          worker: {
+            kind: 'depth',
+            label: 'Source-depth scout',
+            goal: 'Select second-level source pages.',
+            assistantDeltaCount: 0,
+            reasoningDeltaCount: 4,
+            lifecycleCount: 0,
+            toolCallCount: 0,
+            toolResultCount: 0,
+            timeline: [],
+            currentAction: 'Selecting source-depth targets',
+          },
+        },
+        workers: { status: 'pending' },
+        synthesis: { status: 'pending' },
+      },
+      activities: [
+        {
+          phase: 'depth',
+          attempt: 1,
+          startedAt: new Date(3_000).toISOString(),
+          lastEventAt: new Date(4_000).toISOString(),
+          label: 'Source-depth scout',
+          currentAction: 'Selecting source-depth targets',
+          assistantDeltaCount: 0,
+          reasoningDeltaCount: 4,
+          lifecycleCount: 0,
+          toolCallCount: 0,
+          toolResultCount: 0,
+          timeline: [],
+        },
+      ],
+    })
+
+    const panel = buildResearchPanelViewModel(status, { now: 5_000 })
+    expect(panel.depth).toMatchObject({
+      status: 'running',
+      label: 'Selecting second-level source pages…',
+    })
+    expect(panel.liveHint).toBe('Selecting source-depth targets')
+    expect(buildResearchLiveActivity(status)).toMatchObject({
+      source: 'research',
+      stage: 'depth',
+      state: 'thinking',
+    })
+  })
+
   it('normalizes cancelled runs so unfinished steps stop looking active', () => {
     const status = buildStatus({
       status: 'cancelled',
@@ -316,6 +383,11 @@ describe('research presentation', () => {
           status: 'completed',
           startedAt: new Date(2_000).toISOString(),
           completedAt: new Date(3_000).toISOString(),
+        },
+        depth: {
+          status: 'completed',
+          startedAt: new Date(3_000).toISOString(),
+          completedAt: new Date(3_500).toISOString(),
         },
         workers: {
           status: 'running',

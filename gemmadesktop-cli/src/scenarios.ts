@@ -15,7 +15,7 @@ import {
   type ToolResult,
   type TurnResult,
 } from "@gemma-desktop/sdk-core";
-import type { CreateSessionOptions } from "@gemma-desktop/sdk-node";
+import type { CreateSessionOptions, ResearchRunOptions, ResearchRunResult } from "@gemma-desktop/sdk-node";
 import type { ScenarioCliOptions } from "./args.js";
 import { buildDesktopParitySessionMetadata } from "./metadata.js";
 
@@ -28,6 +28,7 @@ interface WritableTextStream {
 interface ScenarioSession {
   id: string;
   runStreamed(input: SessionInput, options?: SessionTurnOptions): Promise<StreamedTurnResult>;
+  runResearch?(input: SessionInput, options?: ResearchRunOptions): Promise<ResearchRunResult>;
   compact?(options?: SessionCompactionOptions): Promise<SessionCompactionResult>;
   snapshot(): SessionSnapshot;
 }
@@ -52,6 +53,17 @@ interface ScenarioTurnRecord {
   warnings?: string[];
   toolNames?: string[];
   build?: TurnResult["build"];
+  research?: {
+    runId: string;
+    profile: string;
+    artifactDirectory: string;
+    taskType?: string;
+    passCount?: number;
+    sourceCount: number;
+    sourceFamilies?: string[];
+    confidence: number;
+    gapsRemaining?: string[];
+  };
   performance?: ScenarioTurnPerformance;
   compaction?: {
     status: "completed" | "unavailable" | "error";
@@ -162,8 +174,8 @@ const REST_IS_HISTORY_LYNDON_PROMPTS = [
 
 const GEMMA4_RESEARCH_PROMPTS = [
   [
-    "Run a research-style headless check for the latest Gemma 4 model availability details.",
-    "Use fetch_url directly on https://ollama.com/library/gemma4 and https://ai.google.dev/gemma/docs. Also use exec_command to inspect local Ollama availability with `ollama list | grep gemma4`.",
+    "Run a deep research pass for the latest Gemma 4 model availability details.",
+    "Use current web sources, including official Google documentation and runtime catalog sources such as Ollama when available.",
     "Find what Gemma 4 versions are available, including 26B and 31B if current sources support them, and summarize model sizes, sources, runtimes, and availability.",
     "Use current web sources and include the URLs you relied on. Distinguish official source information from runtime catalog information such as Ollama availability.",
   ].join(" "),
@@ -283,6 +295,7 @@ interface ScenarioDefinition {
   artifactDirectoryName: string;
   prompts: readonly ScenarioPrompt[];
   kind: string;
+  researchProfile?: NonNullable<ResearchRunOptions["profile"]>;
   compactAfterTurns?: Array<{ afterTurn: number; options?: SessionCompactionOptions }>;
   prepare?(context: ScenarioFixtureContext): Promise<void>;
   evaluator(input: {
@@ -1070,13 +1083,17 @@ async function evaluateGemma4ResearchScenario(input: {
   const haystack = buildScenarioHaystack(input.turns, input.rawResults);
   const normalized = normalizeForSearch(haystack);
   const toolNames = collectToolNames(input.rawResults);
+  const researchTurns = input.turns.filter((turn) => turn.research);
   const checks = {
     researchToolUsed:
+      researchTurns.length > 0 ||
       toolNames.has("web_research_agent")
       || toolNames.has("search_web")
       || toolNames.has("fetch_url")
       || toolNames.has("fetch_url_safe")
       || toolNames.has("exec_command"),
+    researchArtifactsWritten: researchTurns.some((turn) => Boolean(turn.research?.artifactDirectory)),
+    sourcesCollected: researchTurns.some((turn) => (turn.research?.sourceCount ?? 0) >= 2),
     gemma4Covered: /gemma\s*4/.test(normalized),
     modelSizesCovered: /\b26b\b/.test(normalized) && /\b31b\b/.test(normalized),
     availabilityCovered:
@@ -1461,6 +1478,91 @@ async function runScenarioTurn(input: {
   }
 }
 
+async function runResearchScenarioTurn(input: {
+  session: ScenarioSession;
+  prompt: SessionInput;
+  promptSummary: string;
+  index: number;
+  command: ScenarioCliOptions;
+  artifactDirectory: string;
+  profile: NonNullable<ResearchRunOptions["profile"]>;
+  runtime: ScenarioRuntimeLike;
+}): Promise<{ record: ScenarioTurnRecord; result?: undefined }> {
+  const startedAtMs = Date.now();
+  const timeoutController = new AbortController();
+  const relayAbort = () => {
+    timeoutController.abort(input.runtime.signal?.reason);
+  };
+  input.runtime.signal?.addEventListener("abort", relayAbort, { once: true });
+  const timeout = setTimeout(() => {
+    timeoutController.abort(
+      new Error(`Scenario research turn timed out after ${input.command.turnTimeoutMs}ms.`),
+    );
+  }, input.command.turnTimeoutMs);
+
+  try {
+    if (!input.session.runResearch) {
+      throw new Error("Scenario requested SDK runResearch(), but the CLI session does not expose it.");
+    }
+    if (input.runtime.signal?.aborted === true) {
+      relayAbort();
+    }
+
+    const result = await input.session.runResearch(input.prompt, {
+      profile: input.profile,
+      artifactDirectory: input.artifactDirectory,
+      signal: timeoutController.signal,
+    });
+    const completedAtMs = Date.now();
+    const outputText = result.finalReport || result.summary;
+    return {
+      record: {
+        index: input.index,
+        prompt: input.promptSummary,
+        text: outputText,
+        toolNames: ["research_runner"],
+        research: {
+          runId: result.runId,
+          profile: result.profile,
+          artifactDirectory: result.artifactDirectory,
+          ...(result.taskType ? { taskType: result.taskType } : {}),
+          ...(result.passCount != null ? { passCount: result.passCount } : {}),
+          sourceCount: result.sources.length,
+          ...(result.sourceFamilies ? { sourceFamilies: result.sourceFamilies } : {}),
+          confidence: result.confidence,
+          ...(result.gapsRemaining && result.gapsRemaining.length > 0
+            ? { gapsRemaining: result.gapsRemaining }
+            : {}),
+        },
+        performance: buildTurnPerformance({
+          startedAtMs,
+          completedAtMs,
+          events: [],
+          outputText,
+        }),
+      },
+    };
+  } catch (error) {
+    const completedAtMs = Date.now();
+    return {
+      record: {
+        index: input.index,
+        prompt: input.promptSummary,
+        toolNames: ["research_runner"],
+        performance: buildTurnPerformance({
+          startedAtMs,
+          completedAtMs,
+          events: [],
+        }),
+        error: formatError(error),
+      },
+    };
+  } finally {
+    clearTimeout(timeout);
+    input.runtime.signal?.removeEventListener("abort", relayAbort);
+  }
+}
+
 const SCENARIO_DEFINITIONS: Record<ScenarioCliOptions["scenarioId"], ScenarioDefinition> = {
   "act-webapp-black-hole": {
     id: "act-webapp-black-hole",
@@ -1509,10 +1611,11 @@ const SCENARIO_DEFINITIONS: Record<ScenarioCliOptions["scenarioId"], ScenarioDef
   },
   "research-gemma4-availability": {
     id: "research-gemma4-availability",
-    mode: "build",
+    mode: "cowork",
     artifactDirectoryName: path.join(".gemma-headless", "gemma4-research"),
     prompts: GEMMA4_RESEARCH_PROMPTS,
     kind: "web-research",
+    researchProfile: "deep",
     evaluator: evaluateGemma4ResearchScenario,
   },
   "image-reading-card": {
@@ -1631,15 +1734,26 @@ export async function runHeadlessScenario(
     const resolvedPrompt = await resolveScenarioPrompt(prompt, fixtureContext);
     const promptSummary = summarizeSessionInput(resolvedPrompt);
     try {
-      const turn = await runScenarioTurn({
-        session,
-        prompt: resolvedPrompt,
-        promptSummary,
-        index: index + 1,
-        command,
-        buildPolicy: isBuildScenario ? command.buildPolicy : undefined,
-        runtime,
-      });
+      const turn = definition.researchProfile
+        ? await runResearchScenarioTurn({
+            session,
+            prompt: resolvedPrompt,
+            promptSummary,
+            index: index + 1,
+            command,
+            artifactDirectory,
+            profile: definition.researchProfile,
+            runtime,
+          })
+        : await runScenarioTurn({
+            session,
+            prompt: resolvedPrompt,
+            promptSummary,
+            index: index + 1,
+            command,
+            buildPolicy: isBuildScenario ? command.buildPolicy : undefined,
+            runtime,
+          });
       turns.push(turn.record);
       if (turn.result) {
         rawResults.push(turn.result);

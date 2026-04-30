@@ -391,6 +391,13 @@ export function ResearchProgressPanel({
           )}
         </li>
 
+        <li>
+          <StepHeader
+            status={panel.depth.status}
+            label={panel.depth.label}
+          />
+        </li>
+
         {panel.topics.map((topic) => (
           <li key={topic.id}>
             <TopicRow topic={topic} />

@@ -43,7 +43,9 @@ export interface ReadableTextStream extends AsyncIterable<unknown> {
   setEncoding?(encoding: BufferEncoding): void;
 }
 
-export type SessionLike = Pick<GemmaDesktopSession, "id" | "runStreamed" | "snapshot">;
+export type SessionLike =
+  Pick<GemmaDesktopSession, "id" | "runStreamed" | "snapshot">
+  & Partial<Pick<GemmaDesktopSession, "runResearch">>;
 
 export interface GemmaDesktopLike {
   inspectEnvironment(): Promise<EnvironmentInspectionResult>;

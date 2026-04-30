@@ -60,6 +60,10 @@ describe('useAppState stop handling', () => {
             otherDomainCount: 0,
             otherDomainSourceCount: 0,
           },
+          depth: {
+            status: 'running',
+            label: 'Selecting second-level source pages…',
+          },
           topics: [
             {
               id: 'topic-1',
@@ -109,6 +113,10 @@ describe('useAppState stop handling', () => {
             topDomains: [],
             otherDomainCount: 0,
             otherDomainSourceCount: 0,
+          },
+          depth: {
+            status: 'cancelled',
+            label: 'Selecting second-level source pages…',
           },
           topics: [
             {

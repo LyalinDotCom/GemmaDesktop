@@ -145,7 +145,7 @@ export interface SessionDetail extends SessionSummary {
 export interface LiveActivitySnapshot {
   source: 'session' | 'research'
   state: 'waiting' | 'thinking' | 'streaming' | 'working'
-  stage?: 'planning' | 'discovery' | 'workers' | 'synthesis'
+  stage?: 'planning' | 'discovery' | 'depth' | 'workers' | 'synthesis'
   topicTitle?: string
   attempt?: number
   startedAt: number
@@ -328,7 +328,7 @@ export interface ResearchPanelTopicStep {
 export interface ResearchPanelViewModel {
   runId: string
   runStatus: 'running' | 'completed' | 'failed' | 'cancelled'
-  stage: 'planning' | 'discovery' | 'workers' | 'synthesis' | 'completed' | 'failed' | 'cancelled'
+  stage: 'planning' | 'discovery' | 'depth' | 'workers' | 'synthesis' | 'completed' | 'failed' | 'cancelled'
   title?: string
   startedAt?: number
   completedAt?: number
@@ -350,6 +350,10 @@ export interface ResearchPanelViewModel {
     otherDomainSourceCount: number
     currentPass?: number
     passCount?: number
+  }
+  depth: {
+    status: ResearchPanelStepStatus
+    label: string
   }
   topics: ResearchPanelTopicStep[]
   synthesis: {

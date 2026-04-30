@@ -46,7 +46,7 @@ describe("ollama reasoning control", () => {
     expect(requests[0]?.think).toBe(true);
   });
 
-  it("keeps Gemma 4 thinking enabled even when stale metadata says off", async () => {
+  it("sends think=false for Gemma 4 when reasoningMode is explicitly off", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const server = await createMockServer((request) => {
       requests.push((request.bodyJson ?? {}) as Record<string, unknown>);
@@ -77,7 +77,7 @@ describe("ollama reasoning control", () => {
       },
     });
 
-    expect(requests[0]?.think).toBe(true);
+    expect(requests[0]?.think).toBe(false);
   });
 
   it("enables Gemma 4 thinking in both the Ollama request and system prompt", async () => {
@@ -177,6 +177,69 @@ describe("ollama reasoning control", () => {
     });
 
     expect(requests[0]?.think).toBe(true);
+  });
+
+  it("omits Gemma 4 thinking prompt instructions when reasoningMode is explicitly off", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      switch (request.path) {
+        case "/api/version":
+          return { json: { version: "0.6.0" } };
+        case "/api/tags":
+          return {
+            json: {
+              models: [{
+                name: "gemma4:31b",
+                details: {
+                  family: "gemma",
+                },
+              }],
+            },
+          };
+        case "/api/ps":
+          return { json: { models: [] } };
+        case "/api/show":
+          return { json: { capabilities: ["completion"] } };
+        case "/api/chat":
+          capturedBody = request.bodyJson as Record<string, unknown>;
+          return {
+            json: {
+              message: {
+                role: "assistant",
+                content: "Hello.",
+              },
+            },
+          };
+        default:
+          throw new Error(`Unhandled route: ${request.path}`);
+      }
+    });
+    cleanup.push(server.close);
+
+    const gemmaDesktop = await createGemmaDesktop({
+      adapters: [createOllamaNativeAdapter({ baseUrl: server.url })],
+    });
+    const session = await gemmaDesktop.sessions.create({
+      runtime: "ollama-native",
+      model: "gemma4:31b",
+      mode: "cowork",
+      metadata: {
+        requestPreferences: {
+          reasoningMode: "off",
+        },
+      },
+    });
+
+    await session.run("Hello.");
+
+    expect(capturedBody?.think).toBe(false);
+    const systemText = ((capturedBody?.messages as Array<Record<string, unknown>> | undefined) ?? [])
+      .filter((message) => message.role === "system")
+      .map((message) => String(message.content ?? ""))
+      .join("\n");
+    expect(systemText).toContain("<gemma_desktop_system_prompt>");
+    expect(systemText).not.toContain("<|think|>");
+    expect(systemText).not.toContain("Thinking mode is enabled for this Gemma 4 conversation.");
   });
 
   it("sends explicit ollama options when provided", async () => {

@@ -121,6 +121,9 @@ function resolveOmlxOpenAICompatibleOptions(
 }
 
 function shouldEnableOmlxReasoning(modelId: string, settings: ChatRequest["settings"]): boolean {
+  if (settings?.reasoningMode === "off") {
+    return false;
+  }
   return isGemma4ModelId(modelId)
     || settings?.reasoningMode === "on"
     || settings?.reasoningMode === "auto";

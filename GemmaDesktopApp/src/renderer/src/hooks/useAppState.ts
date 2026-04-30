@@ -2793,6 +2793,10 @@ function finalizeStreamingContentForStopping(
             ...block.panel.sources,
             status: normalizeCancelledStepStatus(block.panel.sources.status),
           },
+          depth: {
+            ...block.panel.depth,
+            status: normalizeCancelledStepStatus(block.panel.depth.status),
+          },
           topics: block.panel.topics.map((topic) => ({
             ...topic,
             status: normalizeCancelledStepStatus(topic.status),

@@ -330,6 +330,203 @@ describe("research runs", { timeout: 120000 }, () => {
     expect(finalReportText).toContain("Tooling quality depends on observability");
   });
 
+  it("runs a source-depth scout before topic workers and records one-hop provenance", async () => {
+    const workingDirectory = await createWorkspace();
+    process.env.GEMMA_DESKTOP_DISABLE_RESEARCH_FALLBACK_URLS = "1";
+    const requests: Array<Record<string, unknown>> = [];
+    const hits = new Map<string, number>();
+    const statusSnapshots: ResearchRunStatus[] = [];
+
+    let chatRequestCount = 0;
+
+    const server = await createMockServer((request) => {
+      const url = new URL(request.path, "http://127.0.0.1");
+      hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
+
+      if (url.pathname === "/health") {
+        return { status: 200, text: "ok" };
+      }
+
+      if (url.pathname === "/v1/models") {
+        return { json: { data: [{ id: "mock-model" }] } };
+      }
+
+      if (url.pathname === "/v1/chat/completions") {
+        requests.push(request.bodyJson as Record<string, unknown>);
+        chatRequestCount += 1;
+        const prompt = getLastUserPrompt(request.bodyJson as Record<string, unknown>);
+        if (chatRequestCount === 1) {
+          return {
+            sse: sseJsonResponse("plan-1", {
+              objective: "Research Gemma 4 versions and availability.",
+              scopeSummary: "Use first-party and runtime catalog sources.",
+              topics: [
+                {
+                  title: "Gemma 4 versions",
+                  goal: "Find official Gemma 4 model versions and sizes.",
+                  priority: 1,
+                  searchQueries: ["Gemma 4 model card"],
+                },
+              ],
+              risks: [],
+              stopConditions: [],
+            }),
+          };
+        }
+        if (prompt.includes("source-depth scout")) {
+          return {
+            sse: sseJsonResponse("depth-1", {
+              selectedUrls: [`${server.url}/model-card`],
+              rationale: "The model-card page is the concrete detail page behind the hub.",
+              openQuestions: [],
+              confidence: 0.82,
+            }),
+          };
+        }
+        if (prompt.includes("Analyze the gathered evidence for this topic")) {
+          return {
+            sse: sseJsonResponse("worker-1", {
+              summary: "The detail page provides the concrete Gemma 4 model-card evidence.",
+              findings: ["Gemma 4 model-card details are available from the second-level source."],
+              contradictions: [],
+              openQuestions: [],
+              sourceRefs: ["source-1"],
+              confidence: 0.76,
+            }),
+          };
+        }
+        return {
+          sse: sseJsonResponse("synthesis-1", {
+            summary: "Gemma 4 availability was grounded in hub and second-level model-card evidence.",
+            reportMarkdown: "# Report\n\nGemma 4 model-card details were confirmed from the one-hop detail page [source-2].",
+            openQuestions: [],
+            sourceIds: ["source-1", "source-2"],
+            confidence: 0.8,
+          }),
+        };
+      }
+
+      if (url.pathname === "/html") {
+        return {
+          headers: { "content-type": "text/html; charset=utf-8" },
+          text: `
+            <html>
+              <body>
+                <li class="b_algo">
+                  <h2><a href="${server.url}/hub">Gemma 4 model hub</a></h2>
+                  <div class="b_caption"><p>Official Gemma 4 model hub with model-card links.</p></div>
+                </li>
+              </body>
+            </html>
+          `,
+        };
+      }
+
+      if (url.pathname === "/hub") {
+        return {
+          headers: { "content-type": "text/html; charset=utf-8" },
+          text: `
+            <html>
+              <head>
+                <title>Gemma 4 model hub</title>
+                <meta name="description" content="Gemma 4 official model hub with links to concrete model card data." />
+              </head>
+              <body>
+                <main>
+                  <h1>Gemma 4 model hub</h1>
+                  <p>
+                    Gemma 4 model hub with concrete detail links for Gemma 4 availability, versions,
+                    model card evidence, runtime packaging, and release notes. Fetch the detail page
+                    at ${server.url}/model-card for model card data and ${server.url}/release-notes
+                    for release information.
+                  </p>
+                  <a href="${server.url}/model-card">Gemma 4 model card</a>
+                  <a href="${server.url}/release-notes">Gemma 4 release notes</a>
+                  <a href="${server.url}/runtime-catalog">Gemma 4 runtime catalog</a>
+                  <a href="${server.url}/size-table">Gemma 4 size table</a>
+                  <a href="${server.url}/license">Gemma 4 license terms</a>
+                  <a href="${server.url}/downloads">Gemma 4 downloads</a>
+                  <a href="${server.url}/quantization">Gemma 4 quantization notes</a>
+                  <a href="${server.url}/api">Gemma 4 API availability</a>
+                </main>
+              </body>
+            </html>
+          `,
+        };
+      }
+
+      if (url.pathname === "/model-card") {
+        return {
+          headers: { "content-type": "text/html; charset=utf-8" },
+          text: `
+            <html>
+              <head><title>Gemma 4 model card</title></head>
+              <body>
+                <main>
+                  <article>
+                    <p>Gemma 4 model card lists version, size, runtime availability, and deployment notes for Gemma 4 models.</p>
+                  </article>
+                </main>
+              </body>
+            </html>
+          `,
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+    configureMockSearchEndpoints(server.url);
+
+    const gemmaDesktop = await createGemmaDesktop({
+      workingDirectory,
+      adapters: [createLlamaCppServerAdapter({ baseUrl: server.url })],
+    });
+    const session = await gemmaDesktop.sessions.create({
+      runtime: "llamacpp-server",
+      model: "mock-model",
+      mode: "cowork",
+      workingDirectory,
+    });
+
+    const result = await session.runResearch(
+      "Research Gemma 4 versions and availability from official Google and runtime catalog sources.",
+      {
+        onStatus: async (status) => {
+          statusSnapshots.push(status);
+        },
+      },
+    );
+
+    expect(requests.length).toBeGreaterThanOrEqual(4);
+    expect(requests.some((request) =>
+      getLastUserPrompt(request).includes("source-depth scout"),
+    )).toBe(true);
+    expect(hits.get("/hub") ?? 0).toBeGreaterThanOrEqual(1);
+    expect(hits.get("/model-card") ?? 0).toBeGreaterThanOrEqual(1);
+    const oneHopSource = result.sources.find((source) => source.resolvedUrl === `${server.url}/model-card`);
+    expect(oneHopSource).toMatchObject({
+      sourceDepth: 1,
+      discoveryMethod: "one_hop",
+      parentSourceId: "source-1",
+      parentResolvedUrl: `${server.url}/hub`,
+    });
+    const finalStatus = statusSnapshots[statusSnapshots.length - 1];
+    expect(finalStatus?.stages.depth.worker?.label).toBe("Source-depth scout");
+    expect(finalStatus?.stages.depth.worker?.childSessionId).toEqual(expect.any(String));
+    expect(result.finalReport).toContain("one-hop detail page");
+    const evidenceCards = JSON.parse(
+      await readFile(path.join(result.artifactDirectory, "evidence-cards", "index.json"), "utf8"),
+    ) as {
+      topics: Array<{ topicId: string; sourceCount: number; cardCount: number; cards: Array<{ sourceId: string; excerpt: string }> }>;
+    };
+    expect(evidenceCards.topics[0]?.sourceCount).toBeGreaterThan(0);
+    expect(evidenceCards.topics[0]?.cardCount).toBeGreaterThan(0);
+    const firstEvidenceCard = evidenceCards.topics[0]?.cards[0];
+    expect(firstEvidenceCard?.sourceId).toMatch(/^source-\d+$/);
+    expect(typeof firstEvidenceCard?.excerpt).toBe("string");
+  });
+
   it("marks runaway topic-worker assistant output as a budget failure", () => {
     const guard = createResearchSubsessionBudgetGuard("topic", {
       topicTitle: "Oversized Topic",
@@ -369,6 +566,12 @@ describe("research runs", { timeout: 120000 }, () => {
     );
 
     expect(focus).toBe("Kyiv");
+  });
+
+  it("prefers known model-family subjects over generic research verbs", () => {
+    expect(__testOnly.inferResearchSubject(
+      "Run a deep research pass for the latest Gemma 4 model availability details.",
+    )).toBe("Gemma 4");
   });
 
   it("builds an ambitious source plan for simple latest-news requests", () => {
@@ -495,30 +698,32 @@ describe("research runs", { timeout: 120000 }, () => {
                 <title>${url.pathname === "/kyiv-a" ? "Kyiv latest update" : "Kyiv city report"}</title>
               </head>
               <body>
-                <article>
+                <main>
                   <p>${url.pathname === "/kyiv-a"
-                    ? "April 30, 2026 coverage from Kyiv described air-defense activity and city services."
+                    ? "April 30, 2026 Kyiv latest coverage with links to deeper story pages."
                     : "April 30, 2026 reporting from Kyiv described municipal updates and resident impacts."}</p>
                   ${url.pathname === "/kyiv-a"
-                    ? '<h2><a href="/2026/04/30/kyiv-linked-report">Kyiv air defense report expands chronology</a></h2>'
+                    ? [
+                        `<h2><a href="${server.url}/2026/04/30/kyiv-linked-report">Kyiv air defense report expands chronology</a></h2>`,
+                        `<h2><a href="${server.url}/2026/04/30/kyiv-services">Kyiv city services update</a></h2>`,
+                        `<h2><a href="${server.url}/weather">Weather outside Kyiv</a></h2>`,
+                      ].join("\n")
                     : ""}
-                </article>
+                </main>
               </body>
             </html>
           `,
         };
       }
 
-      if (url.pathname === "/2026/04/30/kyiv-linked-report") {
+      if (url.pathname === "/2026/04/30/kyiv-linked-report" || url.pathname === "/2026/04/30/kyiv-services") {
         return {
           headers: {
             "content-type": "text/html; charset=utf-8",
           },
           text: `
             <html>
-              <head>
-                <title>Kyiv air defense report expands chronology</title>
-              </head>
+              <head><title>${url.pathname.endsWith("kyiv-services") ? "Kyiv city services update" : "Kyiv air defense report expands chronology"}</title></head>
               <body>
                 <article>
                   <p>Linked April 30, 2026 reporting added a second-level Kyiv chronology from the first source page.</p>
@@ -797,6 +1002,151 @@ describe("research runs", { timeout: 120000 }, () => {
         "https://abcnews.com/International/live-updates/iran-live-updates-casualties-reported-missile-strikes-israel/?id=131757074",
       ]),
     );
+  });
+
+  it("extracts one-hop detail URLs from generic reference pages", () => {
+    const request = "Research Gemma 4 versions and availability from official Google and Ollama sources.";
+    const plan = {
+      objective: request,
+      scopeSummary: "Map Gemma 4 model versions and runtime availability.",
+      topics: [
+        {
+          id: "gemma-4-versions-1",
+          title: "Gemma 4 versions",
+          goal: "Find Gemma 4 model cards and reference pages.",
+          priority: 1,
+          searchQueries: ["Gemma 4 versions"],
+        },
+      ],
+      risks: [],
+      stopConditions: [],
+    };
+    const brief = __testOnly.buildResearchBrief(request, plan);
+    const source = {
+      id: "source-1",
+      requestedUrl: "https://deepmind.google/models/",
+      resolvedUrl: "https://deepmind.google/models/",
+      title: "Google DeepMind models",
+      description: "Gemma 4 model hub",
+      kind: "html",
+      extractedWith: "headline-fallback",
+      blockedLikely: false,
+      fetchedAt: new Date().toISOString(),
+      topicIds: ["gemma-4-versions-1"],
+      domain: "deepmind.google",
+      sourceFamily: "official" as const,
+      pageRole: "reference" as const,
+      sourceDepth: 0,
+      discoveryMethod: "search" as const,
+      contentPreview: [
+        "Top headlines / links:",
+        "1. Gemma 4",
+        "   https://deepmind.google/models/gemma/gemma-4/",
+        "2. Gemma 4 model card",
+        "   https://deepmind.google/models/gemma/gemma-4/model-card/",
+        "3. Decorative image",
+        "   https://deepmind.google/static/gemma4.png",
+        "4. About Google DeepMind",
+        "   https://deepmind.google/about/",
+      ].join("\n"),
+    };
+
+    expect(__testOnly.extractOneHopResearchUrlsFromSource(source, brief)).toEqual([
+      "https://deepmind.google/models/gemma/gemma-4/",
+      "https://deepmind.google/models/gemma/gemma-4/model-card/",
+    ]);
+  });
+
+  it("normalizes depth-scout selections to candidate URLs only", () => {
+    const candidates = [
+      {
+        id: "depth-1",
+        url: "https://deepmind.google/models/gemma/gemma-4/model-card",
+        parentSourceId: "source-1",
+        parentTitle: "Gemma 4",
+        parentResolvedUrl: "https://deepmind.google/models/gemma/gemma-4/",
+        topicIds: ["topic-1"],
+        sourceFamily: "official" as const,
+        reason: "Model-card link from hub.",
+      },
+      {
+        id: "depth-2",
+        url: "https://ollama.com/library/gemma4/tags",
+        parentSourceId: "source-2",
+        parentResolvedUrl: "https://ollama.com/library/gemma4",
+        topicIds: ["topic-1"],
+        sourceFamily: "reference_github_docs" as const,
+        reason: "Tags link from catalog.",
+      },
+    ];
+
+    expect(__testOnly.normalizeDepthScoutRecord(
+      {
+        selectedUrls: [
+          "https://deepmind.google/models/gemma/gemma-4/model-card/",
+          "https://example.com/invented",
+        ],
+        rationale: "Select concrete model-card data.",
+        openQuestions: ["Check quantization details."],
+        confidence: 0.91,
+      },
+      candidates,
+    )).toEqual({
+      selectedUrls: ["https://deepmind.google/models/gemma/gemma-4/model-card"],
+      rationale: "Select concrete model-card data.",
+      openQuestions: ["Check quantization details."],
+      confidence: 0.91,
+    });
+
+    expect(__testOnly.normalizeDepthScoutRecord(
+      {
+        selectedUrls: ["https://example.com/invented"],
+        rationale: "Invented URL.",
+      },
+      candidates,
+    )).toBeUndefined();
+  });
+
+  it("recovers depth-scout URL selections from malformed structured output", () => {
+    const candidates = [
+      {
+        id: "depth-1",
+        url: "https://ollama.com/library/gemma4:26b-mxfp8",
+        parentSourceId: "source-1",
+        parentResolvedUrl: "https://ollama.com/library/gemma4/tags",
+        topicIds: ["topic-1"],
+        sourceFamily: "reference_github_docs" as const,
+        reason: "Tags page linked the concrete runtime variant.",
+      },
+      {
+        id: "depth-2",
+        url: "https://ollama.com/library/gemma4:31b-mxfp8",
+        parentSourceId: "source-1",
+        parentResolvedUrl: "https://ollama.com/library/gemma4/tags",
+        topicIds: ["topic-1"],
+        sourceFamily: "reference_github_docs" as const,
+        reason: "Tags page linked the concrete runtime variant.",
+      },
+    ];
+
+    const recovered = __testOnly.recoverDepthScoutRecord(
+      {
+        sessionId: "session-1",
+        turnId: "turn-1",
+        events: [],
+        outputText: [
+          "Useful notes before JSON.",
+          "{\"selectedUrls\":[\"https://ollama.com/library/gemma4:26b-mxfp8\",\"https://example.com/not-a-candidate\"],",
+          "\"rationale\":\"truncated",
+        ].join("\n"),
+      },
+      candidates,
+    );
+
+    expect(recovered).toMatchObject({
+      selectedUrls: ["https://ollama.com/library/gemma4:26b-mxfp8"],
+      confidence: 0.55,
+    });
   });
 
   it("classifies first-party doc domains like react.dev as official coverage", () => {

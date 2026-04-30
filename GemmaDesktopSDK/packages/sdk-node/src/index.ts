@@ -290,7 +290,9 @@ function buildRequestPreviewSettings(
     preferencesValue && typeof preferencesValue === "object" && !Array.isArray(preferencesValue)
       ? preferencesValue as Record<string, unknown>
       : undefined;
-  if (modelId && isGemma4ModelId(modelId)) {
+  if (preferences?.reasoningMode === "off") {
+    settings.reasoningMode = "off";
+  } else if (modelId && isGemma4ModelId(modelId)) {
     settings.reasoningMode = "on";
   } else if (preferences?.reasoningMode === "auto" || preferences?.reasoningMode === "on") {
     settings.reasoningMode = preferences.reasoningMode;
@@ -356,6 +358,7 @@ function buildSessionDebugSnapshot(
     && snapshot.capabilityContext.runtime.id === snapshot.runtimeId
       ? snapshot.capabilityContext
       : undefined;
+  const requestPreviewSettings = buildRequestPreviewSettings(snapshot.mode, snapshot.metadata, snapshot.modelId);
   const systemPromptSections = resolveSessionSystemInstructions({
     modelId: snapshot.modelId,
     mode: snapshot.mode,
@@ -364,6 +367,7 @@ function buildSessionDebugSnapshot(
     systemInstructions: snapshot.systemInstructions,
     history: snapshot.history,
     availableTools: toolNames,
+    reasoningMode: requestPreviewSettings.reasoningMode as "auto" | "on" | "off" | undefined,
   });
   const systemPrompt = composeSystemPrompt(systemPromptSections);
 
@@ -413,7 +417,7 @@ function buildSessionDebugSnapshot(
       ],
       tools: structuredClone(tools),
       settings: {
-        ...buildRequestPreviewSettings(snapshot.mode, snapshot.metadata, snapshot.modelId),
+        ...requestPreviewSettings,
         ...(snapshot.buildPolicy
           ? { buildPolicy: structuredClone(snapshot.buildPolicy) }
           : {}),

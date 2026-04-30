@@ -95,6 +95,22 @@ function buildSourcesLabel(
   return 'Gather sources'
 }
 
+function buildDepthLabel(stageStatus: ResearchPanelStepStatus): string {
+  if (stageStatus === 'completed') {
+    return 'Second-level sources selected'
+  }
+  if (stageStatus === 'failed') {
+    return 'Source-depth selection failed'
+  }
+  if (stageStatus === 'cancelled') {
+    return 'Source-depth selection cancelled'
+  }
+  if (stageStatus === 'running') {
+    return 'Selecting second-level source pages…'
+  }
+  return 'Choose second-level source pages'
+}
+
 function buildSynthesisLabel(stageStatus: ResearchPanelStepStatus): string {
   if (stageStatus === 'completed') {
     return 'Final report ready'
@@ -183,6 +199,8 @@ function deriveLiveHint(status: ResearchRunStatus, now: number): string | undefi
       return status.currentPass != null
         ? `Gather pass ${status.currentPass} in progress`
         : 'Running gather passes'
+    case 'depth':
+      return 'Selecting second-level source pages'
     case 'workers':
       return 'Topic workers are reading sources'
     case 'synthesis':
@@ -266,6 +284,10 @@ function buildInitialPanel(promptText?: string): ResearchPanelViewModel {
       otherDomainCount: 0,
       otherDomainSourceCount: 0,
     },
+    depth: {
+      status: 'pending',
+      label: buildDepthLabel('pending'),
+    },
     topics: [],
     synthesis: {
       status: 'pending',
@@ -296,6 +318,7 @@ export function buildResearchPanelViewModel(
 
   const planStatus = mapStageStatus(status.stages.planning.status)
   const discoveryStatus = mapStageStatus(status.stages.discovery.status)
+  const depthStatus = mapStageStatus(status.stages.depth.status)
   const workersStatus = mapStageStatus(status.stages.workers.status)
   const synthesisStatus = mapStageStatus(status.stages.synthesis.status)
 
@@ -326,6 +349,7 @@ export function buildResearchPanelViewModel(
           : discoveryStatus
   const sourcesStatus = normalizeTerminalStepStatus(status.status, rawSourcesStatus)
   const normalizedPlanStatus = normalizeTerminalStepStatus(status.status, planStatus)
+  const normalizedDepthStatus = normalizeTerminalStepStatus(status.status, depthStatus)
   const normalizedSynthesisStatus = normalizeTerminalStepStatus(status.status, synthesisStatus)
 
   const liveHint = deriveLiveHint(status, now)
@@ -361,6 +385,10 @@ export function buildResearchPanelViewModel(
       currentPass: status.currentPass,
       passCount: status.passCount,
     },
+    depth: {
+      status: normalizedDepthStatus,
+      label: buildDepthLabel(normalizedDepthStatus),
+    },
     topics: buildTopicSteps(status),
     synthesis: {
       status: normalizedSynthesisStatus,
@@ -394,6 +422,7 @@ export function buildResearchLiveActivity(
   const stage =
     status.stage === 'planning'
     || status.stage === 'discovery'
+    || status.stage === 'depth'
     || status.stage === 'workers'
     || status.stage === 'synthesis'
       ? status.stage

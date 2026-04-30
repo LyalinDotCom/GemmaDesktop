@@ -7,7 +7,12 @@ import {
   type SessionSnapshot,
   type TurnResult,
 } from "@gemma-desktop/sdk-core";
-import type { CreateGemmaDesktopOptions, CreateSessionOptions, SessionDebugSnapshot } from "@gemma-desktop/sdk-node";
+import type {
+  CreateGemmaDesktopOptions,
+  CreateSessionOptions,
+  ResearchRunResult,
+  SessionDebugSnapshot,
+} from "@gemma-desktop/sdk-node";
 import { describe, expect, it } from "vitest";
 import { runCli, type CliDependencies, type SessionLike } from "../src/cli.js";
 import { DESKTOP_PARITY_RUNTIME_ADAPTER_IDS } from "../src/desktopParity.js";
@@ -614,6 +619,161 @@ describe("headless CLI", () => {
         },
       },
     });
+  });
+
+  it("runs the research scenario through the SDK research runner and reports artifacts", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-research-scenario-"));
+    const calls = {
+      sessionOptions: [] as CreateSessionOptions[],
+      researchInputs: [] as unknown[],
+      researchOptions: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+    const sources: ResearchRunResult["sources"] = [
+      {
+        id: "source-1",
+        requestedUrl: "https://ai.google.dev/gemma/docs",
+        resolvedUrl: "https://ai.google.dev/gemma/docs",
+        title: "Gemma docs",
+        description: "Official Gemma documentation",
+        kind: "html",
+        extractedWith: "readability",
+        blockedLikely: false,
+        fetchedAt: "2026-04-30T00:00:00.000Z",
+        topicIds: ["official-gemma-1"],
+        domain: "ai.google.dev",
+        sourceFamily: "official",
+        pageRole: "article",
+        contentPreview: "Official Gemma 4 documentation.",
+        contentLength: 1200,
+      },
+      {
+        id: "source-2",
+        requestedUrl: "https://ollama.com/library/gemma4",
+        resolvedUrl: "https://ollama.com/library/gemma4",
+        title: "Gemma 4 on Ollama",
+        description: "Ollama runtime catalog",
+        kind: "html",
+        extractedWith: "readability",
+        blockedLikely: false,
+        fetchedAt: "2026-04-30T00:00:00.000Z",
+        topicIds: ["runtime-gemma-2"],
+        domain: "ollama.com",
+        sourceFamily: "reference_github_docs",
+        pageRole: "article",
+        contentPreview: "Runtime catalog includes Gemma 4 26B and 31B.",
+        contentLength: 900,
+      },
+    ];
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: () => {
+        const snapshot = makeSnapshot({
+          mode: "cowork",
+          workingDirectory: tempDirectory,
+          maxSteps: 20,
+        });
+        const session: SessionLike = {
+          id: snapshot.sessionId,
+          snapshot: () => snapshot,
+          runStreamed: () => {
+            throw new Error("research scenario should use runResearch, not runStreamed");
+          },
+          runResearch: async (input, options) => {
+            await Promise.resolve();
+            calls.researchInputs.push(input);
+            calls.researchOptions.push(options);
+            return {
+              runId: "research-run-1",
+              profile: "deep",
+              artifactDirectory: path.join(tempDirectory, ".gemma-headless", "gemma4-research", "research-run-1"),
+              plan: {
+                objective: "Research Gemma 4 availability",
+                scopeSummary: "Official and runtime catalog coverage.",
+                topics: [],
+                risks: [],
+                stopConditions: [],
+              },
+              sources,
+              dossiers: [],
+              finalReport: [
+                "Gemma 4 availability report.",
+                "Official docs: https://ai.google.dev/gemma/docs.",
+                "Runtime catalog: https://ollama.com/library/gemma4.",
+                "Gemma 4 26B and Gemma 4 31B are covered with availability details.",
+              ].join("\n"),
+              summary: "Gemma 4 26B and 31B availability covered.",
+              sourceIds: ["source-1", "source-2"],
+              confidence: 0.82,
+              completedAt: "2026-04-30T00:00:00.000Z",
+              taskType: "catalog-status",
+              passCount: 2,
+              sourceFamilies: ["official", "reference_github_docs"],
+            };
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "scenario",
+          "run",
+          "research-gemma4-availability",
+          "--model",
+          "gemma4:26b",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          tempDirectory,
+          "--json",
+        ],
+        cwd: tempDirectory,
+        env: {},
+        stdin: new MemoryStream(),
+        stdout,
+        stderr: new MemoryStream(),
+        dependencies,
+      });
+
+      expect(code).toBe(0);
+      expect(calls.researchInputs).toHaveLength(1);
+      expect(calls.researchOptions[0]).toMatchObject({
+        profile: "deep",
+        artifactDirectory: path.join(tempDirectory, ".gemma-headless", "gemma4-research"),
+      });
+      expect(calls.sessionOptions[0]).toMatchObject({
+        runtime: "ollama-native",
+        model: "gemma4:26b",
+        mode: "cowork",
+        workingDirectory: tempDirectory,
+      });
+      const output = JSON.parse(stdout.text()) as {
+        evaluation: { success: boolean; checks: Record<string, boolean> };
+        turns: Array<{ toolNames?: string[]; research?: { sourceCount: number } }>;
+      };
+      expect(output.evaluation.success).toBe(true);
+      expect(output.evaluation.checks).toMatchObject({
+        researchToolUsed: true,
+        researchArtifactsWritten: true,
+        sourcesCollected: true,
+      });
+      expect(output.turns[0]?.toolNames).toEqual(["research_runner"]);
+      expect(output.turns[0]?.research?.sourceCount).toBe(2);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
   });
 
   it("runs the ACT repair fixture scenario and validates the fixed project", async () => {
