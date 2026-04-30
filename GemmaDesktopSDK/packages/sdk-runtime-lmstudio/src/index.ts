@@ -36,6 +36,16 @@ const LMSTUDIO_TRANSPORT_CHANNEL_PAIR_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>\s*(?:thought|assistant|analysis|commentary|final)?\s*<channel\|[^>\r\n]*>/gi;
 const LMSTUDIO_TRANSPORT_CHANNEL_MARKER_PATTERN =
   /<\|channel(?:\|[^>\r\n]*)?>|<channel\|[^>\r\n]*>/gi;
+const LMSTUDIO_TRANSPORT_THOUGHT_BLOCK_PATTERN =
+  /<\|channel(?:\|[^>\r\n]*)?>\s*(?:thought|analysis)\b[\s\S]*?<channel\|[^>\r\n]*>/gi;
+const LMSTUDIO_TRANSPORT_INCOMPLETE_THOUGHT_BLOCK_PATTERN =
+  /<\|channel(?:\|[^>\r\n]*)?>\s*(?:thought|analysis)\b[\s\S]*$/i;
+const LMSTUDIO_TRANSPORT_TOOL_CALL_BLOCK_PATTERN =
+  /<\|tool_call(?:\|[^>\r\n]*)?>[\s\S]*?<tool_call\|[^>\r\n]*>/gi;
+const LMSTUDIO_TRANSPORT_INCOMPLETE_TOOL_CALL_BLOCK_PATTERN =
+  /<\|tool_call(?:\|[^>\r\n]*)?>[\s\S]*$/i;
+const LMSTUDIO_TRANSPORT_TOOL_CALL_MARKER_PATTERN =
+  /<\|tool_call(?:\|[^>\r\n]*)?>|<tool_call\|[^>\r\n]*>/gi;
 const LMSTUDIO_XML_THOUGHT_COMPLETE_BLOCK_PATTERN =
   /(^|\r?\n)[ \t]*<thought\b[\s\S]*?<\/thought\s*>(?:[ \t]*\r?\n)?/gi;
 const LMSTUDIO_XML_THOUGHT_INCOMPLETE_BLOCK_PATTERN =
@@ -568,8 +578,16 @@ function sanitizeLmStudioOpenAIText(text: string): string {
     return text;
   }
 
-  const withoutWrappedArtifacts = text.replace(LMSTUDIO_TRANSPORT_CHANNEL_PAIR_PATTERN, "");
-  const withoutMarkers = withoutWrappedArtifacts.replace(LMSTUDIO_TRANSPORT_CHANNEL_MARKER_PATTERN, "");
+  const withoutThoughtBlocks = text
+    .replace(LMSTUDIO_TRANSPORT_THOUGHT_BLOCK_PATTERN, "")
+    .replace(LMSTUDIO_TRANSPORT_INCOMPLETE_THOUGHT_BLOCK_PATTERN, "");
+  const withoutRawToolCalls = withoutThoughtBlocks
+    .replace(LMSTUDIO_TRANSPORT_TOOL_CALL_BLOCK_PATTERN, "")
+    .replace(LMSTUDIO_TRANSPORT_INCOMPLETE_TOOL_CALL_BLOCK_PATTERN, "");
+  const withoutWrappedArtifacts = withoutRawToolCalls.replace(LMSTUDIO_TRANSPORT_CHANNEL_PAIR_PATTERN, "");
+  const withoutMarkers = withoutWrappedArtifacts
+    .replace(LMSTUDIO_TRANSPORT_CHANNEL_MARKER_PATTERN, "")
+    .replace(LMSTUDIO_TRANSPORT_TOOL_CALL_MARKER_PATTERN, "");
   let sawIncompleteXmlThought = false;
   const withoutXmlThoughtBlocks = withoutMarkers
     .replace(LMSTUDIO_XML_THOUGHT_COMPLETE_BLOCK_PATTERN, (_match, prefix: string) => prefix)

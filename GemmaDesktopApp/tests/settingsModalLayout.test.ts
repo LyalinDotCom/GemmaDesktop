@@ -229,6 +229,7 @@ describe('SettingsModal layout', () => {
       modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
       modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-native', 'LM Studio', 'Native API'),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-openai', 'Ollama', 'OpenAI-compatible API'),
     ])
 
     expect(groups.map((group) => group.providerLabel)).toEqual([
@@ -237,9 +238,11 @@ describe('SettingsModal layout', () => {
     ])
     expect(groups[0]?.options.map(formatDefaultModelOptionLabel)).toEqual([
       'Alpha 7B - LM Studio - OpenAI-compatible API',
-      'Qwen3 8B - LM Studio - Native API',
       'Qwen3 8B - LM Studio - OpenAI-compatible API',
       'Zeta 7B - LM Studio - OpenAI-compatible API',
+    ])
+    expect(groups[1]?.options.map(formatDefaultModelOptionLabel)).toEqual([
+      'Gemma 4 26B - Ollama - Native API',
     ])
   })
 

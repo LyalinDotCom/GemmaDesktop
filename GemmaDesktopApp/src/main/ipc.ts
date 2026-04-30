@@ -288,6 +288,7 @@ import {
 import {
   createDefaultModelSelectionSettings,
   normalizeAppModelSelectionSettings,
+  normalizeProviderRuntimeId,
   resolveConfiguredHelperModelTarget,
   resolveConfiguredSessionPrimaryTarget,
   resolveSavedDefaultSessionPrimaryTarget,
@@ -633,6 +634,7 @@ function normalizeSessionConfig(config: AppSessionConfig): AppSessionConfig {
       conversationKind === 'normal' && baseMode === 'build'
         ? Boolean(config.planMode)
         : false,
+    preferredRuntimeId: normalizeProviderRuntimeId(config.preferredRuntimeId),
     approvalMode: normalizeConversationApprovalMode(config.approvalMode),
     surface: normalizeAppSessionSurface(config.surface),
     visibility: normalizeAppSessionVisibility(config.visibility),
@@ -1550,7 +1552,14 @@ let primaryModelLoadPromise: Promise<PrimaryModelTarget> | null = null
 let primaryModelLoadTarget: PrimaryModelTarget | null = null
 
 function modelTargetKey(target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>): string {
-  return `${target.runtimeId}::${target.modelId}`
+  return `${normalizeProviderRuntimeId(target.runtimeId)}::${target.modelId}`
+}
+
+function normalizePrimaryModelTarget(target: PrimaryModelTarget): PrimaryModelTarget {
+  return {
+    ...target,
+    runtimeId: normalizeProviderRuntimeId(target.runtimeId),
+  }
 }
 
 class PrimaryModelUnavailableError extends Error {
@@ -2227,7 +2236,7 @@ function primaryTargetsMatch(
     left
     && right
     && left.modelId === right.modelId
-    && left.runtimeId === right.runtimeId,
+    && normalizeProviderRuntimeId(left.runtimeId) === normalizeProviderRuntimeId(right.runtimeId),
   )
 }
 
@@ -2455,8 +2464,9 @@ async function isTrackedModelTargetResident(
 }
 
 async function ensurePrimaryModelTargetLoaded(
-  target: PrimaryModelTarget,
+  inputTarget: PrimaryModelTarget,
 ): Promise<void> {
+  const target = normalizePrimaryModelTarget(inputTarget)
   if (
     currentPrimaryHoldCount() > 0
     && activePrimaryModelTarget
@@ -3500,8 +3510,9 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
 
 async function acquirePrimaryModelLease(
   ownerId: string,
-  target: PrimaryModelTarget,
+  inputTarget: PrimaryModelTarget,
 ): Promise<() => void> {
+  const target = normalizePrimaryModelTarget(inputTarget)
   const existingIssue = findPrimaryModelAvailabilityIssue(target)
   if (existingIssue) {
     throw new PrimaryModelUnavailableError(existingIssue)
@@ -4629,7 +4640,7 @@ function getSessionConfig(snapshot: SessionSnapshot): AppSessionConfig {
     preferredRuntimeId:
       config.preferredRuntimeId.trim().length > 0
         ? config.preferredRuntimeId
-        : snapshot.runtimeId,
+        : normalizeProviderRuntimeId(snapshot.runtimeId),
   }
 }
 
@@ -5601,7 +5612,13 @@ function normalizeRuntimeForSessionMode(
   runtimeId: string,
   _sessionMode: AppSessionMode,
 ): { runtimeId: string; reason?: string } {
-  return { runtimeId }
+  const normalizedRuntimeId = normalizeProviderRuntimeId(runtimeId)
+  return normalizedRuntimeId === runtimeId
+    ? { runtimeId }
+    : {
+        runtimeId: normalizedRuntimeId,
+        reason: 'provider-runtime-canonicalized',
+      }
 }
 
 function createAppToolPermissionPolicy(): ToolPermissionPolicy {

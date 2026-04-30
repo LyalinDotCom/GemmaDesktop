@@ -40,6 +40,7 @@ import {
   listKnownReasoningControlModels,
 } from '@shared/reasoningSettings'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
+import { normalizeProviderRuntimeId } from '@shared/sessionModelDefaults'
 import {
   Button,
   MetaList,
@@ -343,12 +344,35 @@ function compareDefaultModelOptions(
   )
 }
 
+function normalizeDefaultModelOption(option: DefaultModelOption): DefaultModelOption {
+  const runtimeId = normalizeProviderRuntimeId(option.runtimeId)
+  return {
+    ...option,
+    runtimeId,
+    providerLabel: providerLabelForRuntime(runtimeId, option.providerLabel),
+    apiTypeLabel: apiTypeLabelForRuntime(runtimeId),
+  }
+}
+
 export function groupDefaultModelOptions(options: DefaultModelOption[]): Array<{
   providerLabel: string
   options: DefaultModelOption[]
 }> {
   const byProvider = new Map<string, DefaultModelOption[]>()
+  const byValue = new Map<string, DefaultModelOption>()
   for (const option of options) {
+    const normalizedOption = normalizeDefaultModelOption(option)
+    const value = modelTargetValue(normalizedOption)
+    const existing = byValue.get(value)
+    if (
+      !existing
+      || option.runtimeId === normalizedOption.runtimeId
+    ) {
+      byValue.set(value, normalizedOption)
+    }
+  }
+
+  for (const option of byValue.values()) {
     const providerOptions = byProvider.get(option.providerLabel) ?? []
     providerOptions.push(option)
     byProvider.set(option.providerLabel, providerOptions)
@@ -717,19 +741,23 @@ export function SettingsModal({
     const addTarget = (
       target: { modelId: string; runtimeId: string },
     ) => {
-      const value = modelTargetValue(target)
+      const normalizedTarget = {
+        ...target,
+        runtimeId: normalizeProviderRuntimeId(target.runtimeId),
+      }
+      const value = modelTargetValue(normalizedTarget)
       if (byValue.has(value)) {
         return
       }
-      const targetModel = findTargetModel(target)
+      const targetModel = findTargetModel(normalizedTarget) ?? findTargetModel(target)
       byValue.set(value, {
-        ...target,
+        ...normalizedTarget,
         label: targetModel?.name ?? target.modelId,
         providerLabel: providerLabelForRuntime(
-          target.runtimeId,
+          normalizedTarget.runtimeId,
           targetModel?.runtimeName,
         ),
-        apiTypeLabel: apiTypeLabelForRuntime(target.runtimeId),
+        apiTypeLabel: apiTypeLabelForRuntime(normalizedTarget.runtimeId),
         optimizationTags: targetModel?.optimizationTags,
       })
     }
@@ -751,9 +779,13 @@ export function SettingsModal({
     key: 'mainModel' | 'helperModel',
     target: { modelId: string; runtimeId: string },
   ) => {
+    const normalizedTarget = {
+      ...target,
+      runtimeId: normalizeProviderRuntimeId(target.runtimeId),
+    }
     const modelSelection = {
       ...local.modelSelection,
-      [key]: target,
+      [key]: normalizedTarget,
     }
     setLocal({ ...local, modelSelection })
     commitUpdate({ modelSelection })
@@ -909,7 +941,10 @@ export function SettingsModal({
                       >
                         <DefaultModelTargetPicker
                           ariaLabel="Default main model"
-                          value={local.modelSelection.mainModel}
+                          value={{
+                            ...local.modelSelection.mainModel,
+                            runtimeId: normalizeProviderRuntimeId(local.modelSelection.mainModel.runtimeId),
+                          }}
                           groups={defaultModelOptionGroups}
                           onSelect={(target) =>
                             updateModelSelectionTarget('mainModel', target)}
@@ -928,7 +963,10 @@ export function SettingsModal({
                       >
                         <DefaultModelTargetPicker
                           ariaLabel="Default helper model"
-                          value={local.modelSelection.helperModel}
+                          value={{
+                            ...local.modelSelection.helperModel,
+                            runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
+                          }}
                           groups={defaultModelOptionGroups}
                           onSelect={(target) =>
                             updateModelSelectionTarget('helperModel', target)}

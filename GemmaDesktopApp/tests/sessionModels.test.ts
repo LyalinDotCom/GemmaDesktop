@@ -83,4 +83,38 @@ describe('buildSelectableModels', () => {
       }),
     )
   })
+
+  it('exposes canonical provider runtimes in selectable rows', () => {
+    const models: ModelSummary[] = [
+      makeModel({
+        id: 'gemma4:31b',
+        runtimeId: 'ollama-openai',
+      }),
+      makeModel({
+        id: 'gemma4:31b',
+        runtimeId: 'ollama-native',
+      }),
+      makeModel({
+        id: 'gemma-4-31b-it-mlx',
+        runtimeId: 'lmstudio-native',
+      }),
+      makeModel({
+        id: 'gemma-4-31b-it-mlx',
+        runtimeId: 'lmstudio-openai',
+      }),
+    ]
+
+    expect(buildSelectableModels(models, 'build')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'gemma4:31b',
+          preferredRuntimeId: 'ollama-native',
+        }),
+        expect.objectContaining({
+          id: 'gemma-4-31b-it-mlx',
+          preferredRuntimeId: 'lmstudio-openai',
+        }),
+      ]),
+    )
+  })
 })

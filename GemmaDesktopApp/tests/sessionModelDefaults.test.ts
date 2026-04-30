@@ -4,6 +4,8 @@ import {
   DEFAULT_PRIMARY_MODEL_MEMORY_THRESHOLD_BYTES,
   createDefaultModelSelectionSettings,
   normalizeAppModelSelectionSettings,
+  normalizeProviderRuntimeId,
+  normalizeSessionPrimaryModelTarget,
   resolveDefaultPrimaryModelIdForMemory,
   resolveConfiguredHelperModelTarget,
   resolveConfiguredSessionPrimaryTarget,
@@ -113,6 +115,48 @@ describe('session model defaults', () => {
         modelId: 'gemma4:e4b',
         runtimeId: 'ollama-native',
       },
+    })
+  })
+
+  it('normalizes saved provider defaults onto each provider canonical API', () => {
+    expect(normalizeProviderRuntimeId('lmstudio-native')).toBe('lmstudio-openai')
+    expect(normalizeProviderRuntimeId('ollama-openai')).toBe('ollama-native')
+    expect(normalizeProviderRuntimeId('ollama-native')).toBe('ollama-native')
+
+    expect(
+      normalizeSessionPrimaryModelTarget({
+        modelId: 'gemma-4-31b-it-mlx',
+        runtimeId: 'lmstudio-native',
+      }),
+    ).toEqual({
+      modelId: 'gemma-4-31b-it-mlx',
+      runtimeId: 'lmstudio-openai',
+    })
+
+    expect(
+      normalizeAppModelSelectionSettings({
+        mainModel: {
+          modelId: 'gemma-4-31b-it-mlx',
+          runtimeId: 'lmstudio-native',
+        },
+        helperModel: {
+          modelId: 'gemma4:e4b',
+          runtimeId: 'ollama-native',
+        },
+      }).mainModel,
+    ).toEqual({
+      modelId: 'gemma-4-31b-it-mlx',
+      runtimeId: 'lmstudio-openai',
+    })
+
+    expect(
+      normalizeSessionPrimaryModelTarget({
+        modelId: 'gemma4:31b',
+        runtimeId: 'ollama-openai',
+      }),
+    ).toEqual({
+      modelId: 'gemma4:31b',
+      runtimeId: 'ollama-native',
     })
   })
 

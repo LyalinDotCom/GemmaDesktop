@@ -1,4 +1,5 @@
 import type { ModelSummary, SessionMode } from '@/types'
+import { normalizeProviderRuntimeId } from '@shared/sessionModelDefaults'
 
 export interface SelectableModel {
   key: string
@@ -220,7 +221,7 @@ export function buildSelectableModels(
         name: displayModel.name,
         family,
         runtimeLabel: runtimeLabelForFamily(family, displayModel.runtimeName),
-        preferredRuntimeId: preferredRuntime.runtimeId,
+        preferredRuntimeId: normalizeProviderRuntimeId(preferredRuntime.runtimeId),
         status: mergeStatus(candidates),
         parameterCount: pickMetadata(
           candidates,

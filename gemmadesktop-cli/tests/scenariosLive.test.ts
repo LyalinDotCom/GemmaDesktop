@@ -237,6 +237,14 @@ function scenarioDiagnosticFileName(input: {
   ].join("__");
 }
 
+function scenarioTargetKey(input: {
+  scenarioId: ScenarioId;
+  runtimeId: string;
+  modelId: string;
+}): string {
+  return `${input.runtimeId}\0${input.modelId}\0${input.scenarioId}`;
+}
+
 function shouldUseYolo(scenarioId: ScenarioId): boolean {
   return scenarioId.startsWith("act-") || scenarioId === "pdf-attention-authors" || scenarioId === "research-gemma4-availability";
 }
@@ -403,6 +411,39 @@ function failureReasonForDiagnostic(diagnostic: ScenarioDiagnostic): string | un
   return "Scenario did not report success.";
 }
 
+function formatUnknownError(error: unknown): string {
+  if (error instanceof AggregateError) {
+    return error.errors
+      .map((entry) => formatUnknownError(entry))
+      .filter(Boolean)
+      .join("; ") || error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function targetSetupFailureDiagnostic(input: {
+  scenarioId: ScenarioId;
+  runtimeId: string;
+  modelId: string;
+  error: unknown;
+}): ScenarioDiagnostic {
+  const message = formatUnknownError(input.error);
+  return {
+    scenarioId: input.scenarioId,
+    runtimeId: input.runtimeId,
+    modelId: input.modelId,
+    status: "error",
+    startedAt: currentIsoTime(),
+    completedAt: currentIsoTime(),
+    durationMs: 0,
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+    performance: { wallClockDurationMs: 0 },
+    failureReason: `Live runtime setup failed before scenario execution: ${message}`,
+  };
+}
+
 function diagnosticSummary(diagnostic: ScenarioDiagnostic): LiveRunSummary["diagnostics"][number] {
   const failureReason = failureReasonForDiagnostic(diagnostic);
   return {
@@ -419,6 +460,17 @@ function diagnosticSummary(diagnostic: ScenarioDiagnostic): LiveRunSummary["diag
 
 function summarizeDiagnostics(diagnostics: ScenarioDiagnostic[]): LiveRunSummary["diagnostics"] {
   return diagnostics.map(diagnosticSummary);
+}
+
+async function writeScenarioDiagnostic(input: {
+  diagnostic: ScenarioDiagnostic;
+  logRoot: string;
+  resultsDirectory: string;
+}): Promise<void> {
+  const diagnosticFileName = `${scenarioDiagnosticFileName(input.diagnostic)}.json`;
+  const diagnosticJson = `${JSON.stringify(input.diagnostic, null, 2)}\n`;
+  await writeFile(path.join(input.resultsDirectory, diagnosticFileName), diagnosticJson, "utf8");
+  await writeFile(path.join(input.logRoot, diagnosticFileName), diagnosticJson, "utf8");
 }
 
 async function writeRunSummary(input: {
@@ -629,6 +681,20 @@ describe("CLI live scenario logging", () => {
       outputCharacters: 34,
     });
   });
+
+  it("records runtime setup failures as per-scenario diagnostics", () => {
+    const diagnostic = targetSetupFailureDiagnostic({
+      scenarioId: "web-hacker-news-frontpage",
+      runtimeId: "lmstudio-openai",
+      modelId: "gemma-4-26b-a4b-it-nvfp4",
+      error: new Error("Failed to load model."),
+    });
+
+    expect(diagnostic.status).toBe("error");
+    expect(diagnostic.exitCode).toBeNull();
+    expect(diagnostic.failureReason).toContain("Live runtime setup failed");
+    expect(diagnostic.failureReason).toContain("Failed to load model.");
+  });
 });
 
 describe.sequential("CLI live headless scenarios", () => {
@@ -643,6 +709,7 @@ describe.sequential("CLI live headless scenarios", () => {
       const resultsDirectory = path.join(harnessRoot, "results");
       await mkdir(resultsDirectory, { recursive: true });
       const diagnostics: ScenarioDiagnostic[] = [];
+      const targetFailures: string[] = [];
       const startedAt = currentIsoTime();
 
       expect(scenarios.length).toBeGreaterThan(0);
@@ -665,57 +732,104 @@ describe.sequential("CLI live headless scenarios", () => {
       });
 
       for (const target of targets) {
-        await withLiveRuntimeModel({ runtimeId: target.runtimeId, modelId: target.modelId }, async () => {
+        try {
+          await withLiveRuntimeModel({ runtimeId: target.runtimeId, modelId: target.modelId }, async () => {
+            for (const scenarioId of target.scenarioIds) {
+              console.log(
+                `[cli-live-scenarios] starting ${scenarioId} with ${target.runtimeId}/${target.modelId}`,
+              );
+              const runningDiagnostic: ScenarioDiagnostic = {
+                scenarioId,
+                runtimeId: target.runtimeId,
+                modelId: target.modelId,
+                status: "running",
+                startedAt: currentIsoTime(),
+                completedAt: "",
+                durationMs: 0,
+                exitCode: null,
+                stdout: "",
+                stderr: "",
+              };
+              diagnostics.push(runningDiagnostic);
+              await appendRunEvent(logRoot, "scenario_started", {
+                scenarioId,
+                runtimeId: target.runtimeId,
+                modelId: target.modelId,
+              });
+              await writeRunSummary({
+                logRoot,
+                runtimeId,
+                targets,
+                harnessRoot,
+                resultsDirectory,
+                scenarios,
+                diagnostics,
+                startedAt,
+              });
+              const diagnostic = await runScenario({
+                scenarioId,
+                runtimeId: target.runtimeId,
+                modelId: target.modelId,
+                harnessRoot,
+              });
+              diagnostics.splice(diagnostics.indexOf(runningDiagnostic), 1, diagnostic);
+              await writeScenarioDiagnostic({ diagnostic, logRoot, resultsDirectory });
+              await appendRunEvent(logRoot, "scenario_completed", {
+                scenarioId,
+                runtimeId: target.runtimeId,
+                modelId: target.modelId,
+                status: diagnostic.status,
+                durationMs: diagnostic.durationMs,
+                performance: diagnostic.performance,
+                exitCode: diagnostic.exitCode,
+                failureReason: failureReasonForDiagnostic(diagnostic),
+              });
+              await writeRunSummary({
+                logRoot,
+                runtimeId,
+                targets,
+                harnessRoot,
+                resultsDirectory,
+                scenarios,
+                diagnostics,
+                startedAt,
+              });
+              console.log(
+                [
+                  `[cli-live-scenarios] completed ${scenarioId}`,
+                  `with ${diagnostic.runtimeId}/${diagnostic.modelId}`,
+                  `in ${diagnostic.durationMs}ms`,
+                  `status ${diagnostic.status}`,
+                  `exit ${diagnostic.exitCode}${formatPerformanceSummary(diagnostic.performance)}`,
+                ].join(" "),
+              );
+            }
+          });
+        } catch (error) {
+          const failureReason = formatUnknownError(error);
+          targetFailures.push(`${target.runtimeId}/${target.modelId}: ${failureReason}`);
+          console.error(
+            `[cli-live-scenarios] target setup failed for ${target.runtimeId}/${target.modelId}: ${failureReason}`,
+          );
+          await appendRunEvent(logRoot, "target_setup_failed", {
+            runtimeId: target.runtimeId,
+            modelId: target.modelId,
+            failureReason,
+          });
+          const existingDiagnostics = new Set(diagnostics.map(scenarioTargetKey));
           for (const scenarioId of target.scenarioIds) {
-            console.log(
-              `[cli-live-scenarios] starting ${scenarioId} with ${target.runtimeId}/${target.modelId}`,
-            );
-            const runningDiagnostic: ScenarioDiagnostic = {
+            const diagnostic = targetSetupFailureDiagnostic({
               scenarioId,
               runtimeId: target.runtimeId,
               modelId: target.modelId,
-              status: "running",
-              startedAt: currentIsoTime(),
-              completedAt: "",
-              durationMs: 0,
-              exitCode: null,
-              stdout: "",
-              stderr: "",
-            };
-            diagnostics.push(runningDiagnostic);
-            await appendRunEvent(logRoot, "scenario_started", {
-              scenarioId,
-              runtimeId: target.runtimeId,
-              modelId: target.modelId,
+              error,
             });
-            await writeRunSummary({
-              logRoot,
-              runtimeId,
-              targets,
-              harnessRoot,
-              resultsDirectory,
-              scenarios,
-              diagnostics,
-              startedAt,
-            });
-            const diagnostic = await runScenario({
-              scenarioId,
-              runtimeId: target.runtimeId,
-              modelId: target.modelId,
-              harnessRoot,
-            });
-            diagnostics.splice(diagnostics.indexOf(runningDiagnostic), 1, diagnostic);
-            const diagnosticFileName = `${scenarioDiagnosticFileName(diagnostic)}.json`;
-            await writeFile(
-              path.join(resultsDirectory, diagnosticFileName),
-              `${JSON.stringify(diagnostic, null, 2)}\n`,
-              "utf8",
-            );
-            await writeFile(
-              path.join(logRoot, diagnosticFileName),
-              `${JSON.stringify(diagnostic, null, 2)}\n`,
-              "utf8",
-            );
+            if (existingDiagnostics.has(scenarioTargetKey(diagnostic))) {
+              continue;
+            }
+            diagnostics.push(diagnostic);
+            existingDiagnostics.add(scenarioTargetKey(diagnostic));
+            await writeScenarioDiagnostic({ diagnostic, logRoot, resultsDirectory });
             await appendRunEvent(logRoot, "scenario_completed", {
               scenarioId,
               runtimeId: target.runtimeId,
@@ -736,17 +850,8 @@ describe.sequential("CLI live headless scenarios", () => {
               diagnostics,
               startedAt,
             });
-            console.log(
-              [
-                `[cli-live-scenarios] completed ${scenarioId}`,
-                `with ${diagnostic.runtimeId}/${diagnostic.modelId}`,
-                `in ${diagnostic.durationMs}ms`,
-                `status ${diagnostic.status}`,
-                `exit ${diagnostic.exitCode}${formatPerformanceSummary(diagnostic.performance)}`,
-              ].join(" "),
-            );
           }
-        });
+        }
       }
 
       await appendRunEvent(logRoot, "run_completed", {
@@ -781,6 +886,7 @@ describe.sequential("CLI live headless scenarios", () => {
         expect(diagnostic.exitCode).toBe(0);
         expect(diagnostic.stdout).toContain('"success": true');
       }
+      expect(targetFailures).toEqual([]);
       expect(diagnostics.filter((entry) => entry.status !== "passed").map(diagnosticSummary)).toEqual([]);
     },
     90 * 60_000,

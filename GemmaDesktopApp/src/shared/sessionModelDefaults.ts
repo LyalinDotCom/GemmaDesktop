@@ -22,6 +22,17 @@ export const DEFAULT_PRIMARY_MODEL_MEMORY_THRESHOLD_BYTES = 32 * 1024 ** 3
 export const DEFAULT_PRIMARY_MODEL_ID = LOW_MEMORY_DEFAULT_PRIMARY_MODEL_ID
 export const DEFAULT_HELPER_MODEL_ID = DEFAULT_HELPER_GEMMA_TAG
 
+export function normalizeProviderRuntimeId(runtimeId: string): string {
+  switch (runtimeId) {
+    case 'lmstudio-native':
+      return 'lmstudio-openai'
+    case 'ollama-openai':
+      return 'ollama-native'
+    default:
+      return runtimeId
+  }
+}
+
 export function resolveDefaultPrimaryModelIdForMemory(
   totalMemoryBytes: number,
 ): string {
@@ -72,7 +83,7 @@ export function normalizeSessionPrimaryModelTarget(
 
   return {
     modelId,
-    runtimeId,
+    runtimeId: normalizeProviderRuntimeId(runtimeId),
   }
 }
 
