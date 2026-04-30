@@ -107,7 +107,7 @@ export function AssistantHome({
         >
           <div className="assistant-home-chat-pane flex h-full min-h-0 min-w-0 flex-col items-center justify-center">
             <div
-              className={`assistant-home-stage flex max-h-full w-full min-h-0 flex-col items-center ${
+              className={`assistant-home-stage flex max-h-full w-full max-w-3xl min-h-0 flex-col items-center ${
                 hasConversation ? 'assistant-home-stage-with-conversation' : 'assistant-home-stage-empty'
               } ${hasConversation ? 'assistant-home-stage-expanded' : ''}`}
             >

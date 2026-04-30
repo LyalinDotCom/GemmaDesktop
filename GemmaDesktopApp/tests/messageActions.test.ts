@@ -95,4 +95,24 @@ describe('message actions', () => {
 
     expect(html).toContain('data-sentence-key')
   })
+
+  it('keeps runtime error messages shrink-safe', () => {
+    const html = renderToStaticMarkup(
+      createElement(Message, {
+        message: {
+          ...buildAssistantMessage(),
+          content: [
+            {
+              type: 'error',
+              message:
+                'LM Studio could not load gemma-4-26b-a4b-it-nvfp4. Chats using lmstudio-openai / gemma-4-26b-a4b-it-nvfp4 are paused.',
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(html).toContain('min-w-0 break-words')
+    expect(html).toContain('gemma-4-26b-a4b-it-nvfp4')
+  })
 })

@@ -220,7 +220,7 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    expect(markup).toContain('assistant-home-stage flex max-h-full')
+    expect(markup).toContain('assistant-home-stage flex max-h-full w-full max-w-3xl')
     expect(markup).toContain('assistant-home-stage-with-conversation')
     expect(markup).toContain('w-full max-w-3xl flex-none')
     expect(rendererCss).toContain('.assistant-home-stage-expanded {\n    height: 100%;')

@@ -223,7 +223,7 @@ function ContentBlock({
       return <ResearchProgressPanel panel={content.panel} isActive={isActive} />
     case 'error':
       return (
-        <div className="my-1.5 text-sm text-red-600 dark:text-red-400">
+        <div className="my-1.5 min-w-0 break-words text-sm text-red-600 dark:text-red-400">
           <span className="font-medium">{content.message}</span>
           {content.details && (
             <span className="ml-1 text-red-500/70 dark:text-red-400/60">
