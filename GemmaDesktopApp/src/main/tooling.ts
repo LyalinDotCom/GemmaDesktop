@@ -1,4 +1,5 @@
 import type { ModeSelection } from '@gemma-desktop/sdk-core'
+import path from 'path'
 import { parseToolCallInput } from '@gemma-desktop/sdk-core'
 import {
   GET_PROJECT_BROWSER_ERRORS_TOOL,
@@ -7,6 +8,11 @@ import {
   RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
   SEARCH_PROJECT_BROWSER_DOM_TOOL,
 } from '../shared/projectBrowser'
+import {
+  PEEK_BACKGROUND_PROCESS_TOOL,
+  START_BACKGROUND_PROCESS_TOOL,
+  TERMINATE_BACKGROUND_PROCESS_TOOL,
+} from '../shared/backgroundProcesses'
 
 export type BaseSessionMode = 'explore' | 'build'
 export type AppSessionMode = BaseSessionMode
@@ -356,6 +362,46 @@ export function buildCoBrowseToolInstructions(): string {
     `If the visible page shows a CAPTCHA, bot block, login challenge, 2FA prompt, payment gate, or permission prompt, call ${RELEASE_PROJECT_BROWSER_TO_USER_TOOL} with a short reason and ask the user to complete it in the visible browser.`,
     'After control is released to the user, browser/search/DOM/error tools are blocked until the user clicks Release control.',
     'If a Project Browser tool reports that control is held by the user, stop and wait for the user to release control before using browser tools again.',
+  ].join('\n')
+}
+
+function workspaceRelativePath(workingDirectory: string, absolutePath: string): string | null {
+  const relative = path.relative(workingDirectory, absolutePath)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+    ? relative
+    : null
+}
+
+export function resolveBackgroundProcessWorkingDirectory(input: {
+  workingDirectory: string
+  cwd?: unknown
+}): string {
+  const workingDirectory = path.resolve(input.workingDirectory)
+  const cwd = typeof input.cwd === 'string' ? input.cwd.trim() : ''
+
+  if (cwd.length === 0 || cwd === '.') {
+    return workingDirectory
+  }
+
+  const resolved = path.resolve(workingDirectory, cwd)
+  if (workspaceRelativePath(workingDirectory, resolved) === null) {
+    throw new Error(
+      `Refusing to start background process outside the working directory: ${resolved}`,
+    )
+  }
+
+  return resolved
+}
+
+export function buildBackgroundProcessInstructions(): string {
+  return [
+    'Background process tools are available in Build conversations for long-running local tasks such as dev servers, watchers, and downloads.',
+    `- Use ${START_BACKGROUND_PROCESS_TOOL} to start one conversation-scoped process with a command like "npm run dev".`,
+    `- If the command must run from a subdirectory, pass cwd as a path relative to the session workspace, for example { "command": "npm run dev", "cwd": "blackhole02" }. Prefer cwd over shell directory changes like "cd blackhole02 && npm run dev".`,
+    `- Use ${PEEK_BACKGROUND_PROCESS_TOOL} with the returned processId to check whether it is still running and inspect a bounded output tail without flooding context.`,
+    '- When you start a dev server or watcher for the user to inspect, leave it running after verification and tell the user the process is still active.',
+    `- Use ${TERMINATE_BACKGROUND_PROCESS_TOOL} only when the user asks you to stop it, the process is harmful/stuck, or you must stop it before switching tasks.`,
+    '- Treat peek output as a tail, not a full transcript. If the tool says output was truncated, poll again only when you need a fresher snapshot.',
   ].join('\n')
 }
 

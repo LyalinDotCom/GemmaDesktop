@@ -92,6 +92,7 @@ import {
   type AppToolPolicyConfig,
   type BaseSessionMode,
   applyCoBrowseToolRoutingToModeSelection,
+  buildBackgroundProcessInstructions,
   applyToolPolicyToModeSelection,
   buildCoBrowseToolInstructions,
   buildPlanOverlayModeSelection,
@@ -106,6 +107,7 @@ import {
   normalizePlanQuestionInput,
   normalizeSkillActivationInput,
   normalizeToolPolicySettings,
+  resolveBackgroundProcessWorkingDirectory,
   resolveToolPolicyMode,
   SEARCH_WEB_TOOL,
   sessionModeToConfig,
@@ -5232,17 +5234,6 @@ function buildSearchWebTool(): RegisteredTool {
       return await GROUNDED_SEARCH_WEB_TOOL.execute(input, context)
     },
   }
-}
-
-function buildBackgroundProcessInstructions(): string {
-  return [
-    'Background process tools are available in Build conversations for long-running local tasks such as dev servers, watchers, and downloads.',
-    `- Use ${START_BACKGROUND_PROCESS_TOOL} to start one conversation-scoped process with a command like "npm run dev".`,
-    `- Use ${PEEK_BACKGROUND_PROCESS_TOOL} with the returned processId to check whether it is still running and inspect a bounded output tail without flooding context.`,
-    '- When you start a dev server or watcher for the user to inspect, leave it running after verification and tell the user the process is still active.',
-    `- Use ${TERMINATE_BACKGROUND_PROCESS_TOOL} only when the user asks you to stop it, the process is harmful/stuck, or you must stop it before switching tasks.`,
-    '- Treat peek output as a tail, not a full transcript. If the tool says output was truncated, poll again only when you need a fresher snapshot.',
-  ].join('\n')
 }
 
 function summarizeChromeDevtoolsArguments(input: unknown): string {
@@ -12326,28 +12317,40 @@ function createAppTools(): RegisteredTool[] {
     },
   }
 
-  const startBackgroundProcessTool: RegisteredTool = {
+  const startBackgroundProcessTool: RegisteredTool<{
+    command: string
+    cwd?: string
+  }> = {
     name: START_BACKGROUND_PROCESS_TOOL,
     description:
-      'Start one conversation-scoped background process for a long-running local command such as a dev server, watcher, or download.',
+      'Start one conversation-scoped background process for a long-running local command such as a dev server, watcher, or download. Use cwd for subdirectories instead of prefixing the command with cd.',
     inputSchema: {
       type: 'object',
       properties: {
-        command: { type: 'string' },
+        command: {
+          type: 'string',
+          description:
+            'Command to run from the selected working directory, for example "npm run dev". Do not include shell background operators.',
+        },
+        cwd: {
+          type: 'string',
+          description:
+            'Optional path relative to the session workspace where the command should run, for example "blackhole02". Defaults to the session workspace.',
+        },
       },
       required: ['command'],
       additionalProperties: false,
     },
-    async execute(input: unknown, context) {
-      const record =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as { command?: unknown }
-          : {}
+    async execute(input, context) {
       const command =
-        typeof record.command === 'string' ? record.command.trim() : ''
+        typeof input.command === 'string' ? input.command.trim() : ''
+      const workingDirectory = resolveBackgroundProcessWorkingDirectory({
+        workingDirectory: context.workingDirectory,
+        cwd: input.cwd,
+      })
       const state = await startBackgroundProcessInternal(context.sessionId, {
         command,
-        workingDirectory: context.workingDirectory,
+        workingDirectory,
       })
 
       return {

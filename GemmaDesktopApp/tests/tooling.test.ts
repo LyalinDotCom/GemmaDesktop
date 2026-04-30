@@ -8,6 +8,7 @@ import {
   LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
   PLAN_BUILD_ONLY_TOOL_NAMES,
   applyCoBrowseToolRoutingToModeSelection,
+  buildBackgroundProcessInstructions,
   applyToolPolicyToModeSelection,
   buildCoBrowseToolInstructions,
   buildPlanOverlayModeSelection,
@@ -22,6 +23,7 @@ import {
   normalizePlanQuestionInput,
   normalizeSkillActivationInput,
   normalizeToolPolicySettings,
+  resolveBackgroundProcessWorkingDirectory,
   resolveAppSessionMode,
   sessionModeToConfig,
   withCoBrowseSessionMetadata,
@@ -217,6 +219,32 @@ describe('app tool helpers', () => {
     expect(isCoBrowseSessionMetadata(metadata)).toBe(true)
     expect(isCoBrowseSessionMetadata({ existing: true })).toBe(false)
     expect(withoutCoBrowseSessionMetadata(metadata)).toEqual({ existing: true })
+  })
+
+  it('documents background process cwd usage for subdirectory commands', () => {
+    const instructions = buildBackgroundProcessInstructions()
+
+    expect(instructions).toContain('start_background_process')
+    expect(instructions).toContain('"cwd": "blackhole02"')
+    expect(instructions).toContain('Prefer cwd over shell directory changes')
+  })
+
+  it('resolves background process cwd inside the session workspace', () => {
+    expect(resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+    })).toBe('/tmp/gemma-project')
+    expect(resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+      cwd: 'blackhole02',
+    })).toBe('/tmp/gemma-project/blackhole02')
+    expect(resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+      cwd: '/tmp/gemma-project/blackhole02',
+    })).toBe('/tmp/gemma-project/blackhole02')
+    expect(() => resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+      cwd: '../elsewhere',
+    })).toThrow('outside the working directory')
   })
 
   it('builds plan overlay mode as read-only plus plan interaction tools', () => {
