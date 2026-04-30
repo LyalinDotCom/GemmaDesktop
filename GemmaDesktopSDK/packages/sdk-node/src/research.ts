@@ -42,12 +42,12 @@ const NEWS_DOSSIER_FINDING_PREVIEW_CHARS = 360;
 const MAX_TOPIC_WORKER_ATTEMPTS = 2;
 const DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_RESEARCH_TOPIC_TIMEOUT_MS = 2 * 60_000;
-const DEFAULT_RESEARCH_SYNTHESIS_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_RESEARCH_SYNTHESIS_IDLE_TIMEOUT_MS = 3 * 60_000;
 const MAX_PLANNING_ASSISTANT_CHARS = 12_000;
 const MAX_DEPTH_SCOUT_ASSISTANT_CHARS = 12_000;
 const MAX_TOPIC_ASSISTANT_CHARS = 16_000;
 const MAX_SYNTHESIS_ASSISTANT_CHARS = 24_000;
-const STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN = /structured-output budget|time budget|timed out|timeout/i;
+const STRUCTURED_OUTPUT_BUDGET_FAILURE_PATTERN = /structured-output budget|structured-output progress|time budget|idle-progress budget|timed out|timeout/i;
 const TOPIC_EVIDENCE_CARD_LIMIT = 10;
 const SYNTHESIS_EVIDENCE_CARD_LIMIT = 18;
 const TOPIC_EVIDENCE_EXCERPT_CHARS = 700;
@@ -165,6 +165,8 @@ export interface ResearchRunResult {
   runId: string;
   profile: ResearchProfile;
   artifactDirectory: string;
+  runtimeId: string;
+  modelId: string;
   plan: ResearchPlan;
   sources: ResearchSourceRecord[];
   dossiers: ResearchDossier[];
@@ -178,6 +180,7 @@ export interface ResearchRunResult {
   coverage?: ResearchCoverageSnapshot;
   gapsRemaining?: string[];
   sourceFamilies?: ResearchSourceFamily[];
+  warnings?: string[];
 }
 
 interface ResearchRunnerOptions {
@@ -320,6 +323,7 @@ export interface ResearchRunStatus {
     worker?: ResearchWorkerSnapshot;
   }>;
   activities?: RunActivityRecord[];
+  warnings?: string[];
   error?: string;
 }
 
@@ -1247,6 +1251,20 @@ function normalizeInlineText(value: string): string {
   return value
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripUserFacingResearchScaffoldSections(reportMarkdown: string): string {
+  const scaffoldSectionPattern =
+    /(?:^|\n{2,})#{2,6}\s+(?:Open Questions|Source Context|Evidence Context|Internal Notes)\s*\n[\s\S]*?(?=\n{2,}#{2,6}\s+|\s*$)/gi;
+  return reportMarkdown
+    .replace(scaffoldSectionPattern, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function formatCriticalResearchWarning(message: string): string {
+  const cleaned = normalizeInlineText(message).replace(/[.]+$/g, "");
+  return `Final model synthesis did not complete: ${cleaned}. A source-backed fallback report was generated from fetched sources instead.`;
 }
 
 function normalizePlanText(value: string): string {
@@ -2354,13 +2372,14 @@ function normalizeFinalSynthesisRecord(raw: Record<string, unknown>): FinalSynth
   if (!summary || !reportMarkdown) {
     return undefined;
   }
-  if (containsSuspiciousOutputArtifacts(summary) || containsSuspiciousOutputArtifacts(reportMarkdown)) {
+  const cleanedReportMarkdown = stripUserFacingResearchScaffoldSections(reportMarkdown);
+  if (containsSuspiciousOutputArtifacts(summary) || containsSuspiciousOutputArtifacts(cleanedReportMarkdown)) {
     return undefined;
   }
 
   return {
     summary: normalizeInlineText(summary),
-    reportMarkdown,
+    reportMarkdown: cleanedReportMarkdown,
     openQuestions: normalizeStringArray(raw.openQuestions),
     sourceIds: normalizeStringArray(raw.sourceIds),
     confidence: clampConfidence(raw.confidence),
@@ -4214,6 +4233,101 @@ function cleanFallbackReportEntry(value: string): string | undefined {
   return truncateInlineText(normalized, 520);
 }
 
+function reportEntrySimilarityTokens(value: string): Set<string> {
+  const normalized = value
+    .toLowerCase()
+    .replace(/['’]s\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ");
+  const genericWords = new Set([
+    ...RESEARCH_FOCUS_STOPWORDS,
+    "actual",
+    "considered",
+    "content",
+    "details",
+    "regarding",
+    "specific",
+    "whether",
+    "which",
+    "will",
+  ]);
+  return new Set(
+    normalized
+      .split(/\s+/)
+      .map((token) => token.replace(/(?:ing|ed|s)$/i, ""))
+      .filter((token) => token.length >= 4 && !genericWords.has(token)),
+  );
+}
+
+function reportEntriesAreSimilar(left: string, right: string): boolean {
+  const leftTokens = reportEntrySimilarityTokens(left);
+  const rightTokens = reportEntrySimilarityTokens(right);
+  const smallerSize = Math.min(leftTokens.size, rightTokens.size);
+  if (smallerSize < 4) {
+    return false;
+  }
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      overlap += 1;
+    }
+  }
+  return overlap / smallerSize >= 0.7;
+}
+
+function fallbackOpenQuestionSemanticKey(value: string): string | undefined {
+  const normalized = value.toLowerCase();
+  const mentionsCeasefire = /\b(?:ceasefire|truce)\b/.test(normalized);
+  const mentionsMay9 = /\b(?:may\s*9|victory day)\b/.test(normalized);
+  if (
+    mentionsCeasefire
+    && mentionsMay9
+    && /\b(?:term|timing|expiration|detail|guarantee|proposal|viable)\b/.test(normalized)
+  ) {
+    return "may-9-ceasefire-terms";
+  }
+  if (
+    mentionsCeasefire
+    && /\b(?:phone call|trump|putin)\b/.test(normalized)
+    && /\b(?:content|outcome|discussed|specific)\b/.test(normalized)
+  ) {
+    return "trump-putin-ceasefire-call-content";
+  }
+  if (
+    mentionsCeasefire
+    && /\b(?:accept|counter|respond)\b/.test(normalized)
+    && /\b(?:zelensky|long-term|temporary)\b/.test(normalized)
+  ) {
+    return "russia-response-to-zelensky-ceasefire";
+  }
+  return undefined;
+}
+
+function cleanFallbackOpenQuestions(values: string[], limit = 6): string[] {
+  const result: string[] = [];
+  const semanticKeys = new Set<string>();
+  for (const value of values) {
+    const cleaned = cleanFallbackReportEntry(value);
+    if (!cleaned) {
+      continue;
+    }
+    const semanticKey = fallbackOpenQuestionSemanticKey(cleaned);
+    if (semanticKey && semanticKeys.has(semanticKey)) {
+      continue;
+    }
+    if (result.some((entry) => entry === cleaned || reportEntriesAreSimilar(entry, cleaned))) {
+      continue;
+    }
+    result.push(cleaned);
+    if (semanticKey) {
+      semanticKeys.add(semanticKey);
+    }
+    if (result.length >= limit) {
+      break;
+    }
+  }
+  return result;
+}
+
 function buildSourceBackedFinalSynthesis(
   brief: ResearchBrief,
   plan: ResearchPlan,
@@ -4240,11 +4354,12 @@ function buildSourceBackedFinalSynthesis(
   const selectedSourceSet = new Set(selectedSourceIds);
   const fallbackIssues = options.fallbackIssues?.filter(Boolean) ?? [];
   const formattedFallbackIssues = fallbackIssues.map((issue) => issue.replace(/[.]+$/g, ""));
+  const criticalWarnings = formattedFallbackIssues.map((issue) => formatCriticalResearchWarning(issue));
   const gapsRemaining = options.gapsRemaining?.filter(Boolean) ?? [];
-  const openQuestions = dedupeStrings([...dossiers.flatMap((dossier) => dossier.openQuestions), ...gapsRemaining])
-    .map((entry) => cleanFallbackReportEntry(entry))
-    .filter((entry): entry is string => Boolean(entry))
-    .slice(0, 12);
+  const openQuestions = cleanFallbackOpenQuestions([
+    ...dossiers.flatMap((dossier) => dossier.openQuestions),
+    ...gapsRemaining,
+  ]);
   const sections = dossiers.map((dossier) => {
     const sectionSourceIds = dossier.sourceIds.filter((sourceId) => selectedSourceSet.has(sourceId));
     const sectionCitation = compactSourceMarker(sectionSourceIds, 3);
@@ -4280,13 +4395,6 @@ function buildSourceBackedFinalSynthesis(
       ? `Model synthesis fallback was used because the coordinator did not return a bounded structured report: ${formattedFallbackIssues.join(" | ")}.`
       : "",
   ].filter(Boolean);
-  const sourceContextLines = buildSynthesisEvidenceCards(brief, plan, dossiers, sources)
-    .slice(0, 8)
-    .map((card) => {
-      const marker = formatSourceMarker([card.sourceId]).trim();
-      return `- ${marker || card.title}: ${card.excerpt}`;
-    })
-    .filter(Boolean);
   const reportSummary =
     [plan.scopeSummary, brief.scopeSummary, plan.objective, brief.objective]
       .map((entry) => normalizeInlineText(entry ?? ""))
@@ -4298,15 +4406,12 @@ function buildSourceBackedFinalSynthesis(
     `## Summary`,
     "",
     reportSummary,
+    criticalWarnings.length > 0
+      ? ["", "## Critical Research Warnings", "", ...criticalWarnings.map((entry) => `- ${entry}`)].join("\n")
+      : "",
     "",
     ...sections,
     coverageNotes.length > 0 ? ["", "## Coverage Notes", "", ...coverageNotes.map((entry) => `- ${entry}`)].join("\n") : "",
-    sourceContextLines.length > 0
-      ? ["", "## Source Context", "", ...sourceContextLines].join("\n")
-      : "",
-    openQuestions.length > 0
-      ? ["", "## Open Questions", "", ...openQuestions.map((entry) => `- ${entry}`)].join("\n")
-      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -4366,7 +4471,8 @@ function buildSynthesisPrompt(
     "Write a clear final research report in markdown.",
     "Prefer a compact, evidence-dense report over a long narrative. Cover the requested dimensions, but do not restate every source card.",
     "Keep reportMarkdown under 1,400 words and do not include a bibliography; inline citations are enough.",
-    "Preserve disagreements and unresolved questions instead of flattening them away.",
+    "Preserve disagreements in the report when they affect the answer; keep unresolved questions as metadata in openQuestions, not as a report section.",
+    "Do not include `Open Questions`, `Source Context`, `Evidence Context`, or internal-notes sections in reportMarkdown.",
     "Use only the topic dossiers and cited evidence cards as authoritative evidence for this synthesis.",
     "Do not inject outside knowledge to correct or overwrite the gathered evidence set.",
     [
@@ -4460,6 +4566,7 @@ function _buildTopicWorkerMode(allowWorkspaceReads: boolean): ModeSelection {
 
 interface ResearchSubsessionBudget {
   timeoutMs: number;
+  timeoutMode: "wall" | "idle";
   maxAssistantChars: number;
 }
 
@@ -4470,22 +4577,26 @@ function resolveResearchSubsessionBudget(
     case "planning":
       return {
         timeoutMs: DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS,
+        timeoutMode: "wall",
         maxAssistantChars: MAX_PLANNING_ASSISTANT_CHARS,
       };
     case "depth":
       return {
         timeoutMs: DEFAULT_RESEARCH_PLANNING_TIMEOUT_MS,
+        timeoutMode: "wall",
         maxAssistantChars: MAX_DEPTH_SCOUT_ASSISTANT_CHARS,
       };
     case "synthesis":
       return {
-        timeoutMs: DEFAULT_RESEARCH_SYNTHESIS_TIMEOUT_MS,
+        timeoutMs: DEFAULT_RESEARCH_SYNTHESIS_IDLE_TIMEOUT_MS,
+        timeoutMode: "idle",
         maxAssistantChars: MAX_SYNTHESIS_ASSISTANT_CHARS,
       };
     case "topic":
     default:
       return {
         timeoutMs: DEFAULT_RESEARCH_TOPIC_TIMEOUT_MS,
+        timeoutMode: "wall",
         maxAssistantChars: MAX_TOPIC_ASSISTANT_CHARS,
       };
   }
@@ -4526,11 +4637,29 @@ export function createResearchSubsessionBudgetGuard(
   let assistantChars = 0;
   let budgetFailureMessage: string | undefined;
 
-  const timeoutHandle = setTimeout(() => {
-    budgetFailureMessage =
-      `${label} exceeded the ${Math.ceil(budget.timeoutMs / 60_000)} minute time budget while generating structured output.`;
-    budgetController.abort();
-  }, budget.timeoutMs);
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const armTimeout = (): void => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    timeoutHandle = setTimeout(() => {
+      const timeoutKind = budget.timeoutMode === "idle" ? "idle-progress" : "time";
+      const action = budget.timeoutMode === "idle"
+        ? `made no structured-output progress for ${Math.ceil(budget.timeoutMs / 60_000)} minute${budget.timeoutMs === 60_000 ? "" : "s"}`
+        : `exceeded the ${Math.ceil(budget.timeoutMs / 60_000)} minute time budget`;
+      budgetFailureMessage =
+        `${label} ${action} while generating structured output (${timeoutKind} budget).`;
+      budgetController.abort();
+    }, budget.timeoutMs);
+  };
+
+  armTimeout();
+
+  const refreshProgressTimeout = (): void => {
+    if (budget.timeoutMode === "idle" && !budgetFailureMessage) {
+      armTimeout();
+    }
+  };
 
   const signals = options.parentSignal
     ? [options.parentSignal, budgetController.signal]
@@ -4544,6 +4673,9 @@ export function createResearchSubsessionBudgetGuard(
       }
       const channel = typeof event.payload.channel === "string" ? event.payload.channel : undefined;
       const delta = typeof event.payload.delta === "string" ? event.payload.delta : "";
+      if ((channel === "assistant" || channel === "reasoning") && delta.length > 0) {
+        refreshProgressTimeout();
+      }
       if (channel !== "assistant" || delta.length === 0) {
         return;
       }
@@ -4558,7 +4690,9 @@ export function createResearchSubsessionBudgetGuard(
       budgetController.abort();
     },
     cleanup(): void {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     },
     wrapError(error: unknown): unknown {
       if (!budgetFailureMessage) {
@@ -4960,6 +5094,9 @@ export const __testOnly = {
   buildSourceBackedFinalSynthesis,
   formatEvidenceCard,
   cleanFallbackReportEntry,
+  cleanFallbackOpenQuestions,
+  formatCriticalResearchWarning,
+  stripUserFacingResearchScaffoldSections,
   normalizeDepthScoutRecord,
   recoverDepthScoutRecord,
   inferResearchSubject,
@@ -5031,6 +5168,7 @@ export class ResearchRunner {
         },
       },
       topicStatuses: [],
+      warnings: [],
     };
 
     await mkdir(runDirectory, { recursive: true });
@@ -5303,10 +5441,6 @@ export class ResearchRunner {
           ...(parentOllamaOptions ?? {}),
           temperature: 0.2,
         };
-        const parentNumCtx = parentOllamaOptions?.num_ctx;
-        if (typeof parentNumCtx === "number" && Number.isFinite(parentNumCtx)) {
-          ollamaOptions.num_ctx = Math.min(parentNumCtx, 65_536);
-        }
         requestPreferences.ollamaOptions = ollamaOptions;
       }
 
@@ -7057,6 +7191,8 @@ export class ResearchRunner {
       if (!synthesisResult || !finalSynthesis) {
         const fallbackIssue =
           synthesisFailureMessage ?? "Synthesis did not produce a valid final report after retry.";
+        const warning = formatCriticalResearchWarning(fallbackIssue);
+        runState.warnings = dedupeStrings([...(runState.warnings ?? []), warning]);
         finalSynthesis = buildSourceBackedFinalSynthesis(brief, plan, dossiers, [...sourceRegistry.values()], {
           fallbackIssues: [fallbackIssue],
           gapsRemaining: runState.gapsRemaining,
@@ -7075,14 +7211,14 @@ export class ResearchRunner {
         };
         if (runState.stages.synthesis.worker) {
           runState.stages.synthesis.worker.currentAction = "Source-backed synthesis used";
-          runState.stages.synthesis.worker.resultSummary = fallbackIssue;
+          runState.stages.synthesis.worker.resultSummary = warning;
           runState.stages.synthesis.worker.sourceCount = finalSynthesis.sourceIds.length;
           runState.stages.synthesis.worker.timeline = upsertResearchWorkerTimelineEntry(
             runState.stages.synthesis.worker.timeline,
             {
               id: "source-backed-synthesis-fallback",
               label: "Source-backed synthesis used",
-              detail: fallbackIssue,
+              detail: warning,
               timestamp: new Date().toISOString(),
               tone: "warning",
             },
@@ -7154,6 +7290,8 @@ export class ResearchRunner {
         runId,
         profile: normalizedOptions.profile,
         artifactDirectory: runDirectory,
+        runtimeId: this.snapshot.runtimeId,
+        modelId: this.snapshot.modelId,
         plan,
         sources: [...sourceRegistry.values()],
         dossiers,
@@ -7167,6 +7305,7 @@ export class ResearchRunner {
         coverage: runState.coverage,
         gapsRemaining: runState.gapsRemaining,
         sourceFamilies: runState.sourceFamilies,
+        warnings: runState.warnings,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

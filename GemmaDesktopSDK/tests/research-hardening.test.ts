@@ -14,6 +14,11 @@ describe("research content-quality hardening", () => {
           "Topic worker \"Gemma Sources\" exceeded the 2 minute time budget while generating structured output.",
         ),
       ).toBe(true);
+      expect(
+        __testOnly.isStructuredOutputBudgetFailure(
+          "Research synthesis made no structured-output progress for 3 minutes while generating structured output (idle-progress budget).",
+        ),
+      ).toBe(true);
       expect(__testOnly.isStructuredOutputBudgetFailure("Stream timed out while waiting for model output.")).toBe(true);
     });
 
@@ -388,11 +393,37 @@ describe("research content-quality hardening", () => {
 
       expect(synthesis.reportMarkdown).not.toContain("runtime_catalog:");
       expect(synthesis.reportMarkdown).toContain("- Ollama lists Gemma 4 26B and 31B runtime variants. [source-1]");
-      expect(synthesis.reportMarkdown).toContain("- [source-1]: Ollama lists gemma4:26b");
+      expect(synthesis.reportMarkdown).not.toContain("## Source Context");
       expect(synthesis.reportMarkdown).not.toContain("## Open Questions\n\n- The model synthesis coordinator");
+      expect(synthesis.reportMarkdown).toContain("## Critical Research Warnings");
       expect(synthesis.reportMarkdown).toContain("Model synthesis fallback was used");
       expect(synthesis.reportMarkdown).not.toContain("exceeded..");
       expect(synthesis.openQuestions).toEqual(["Which quantization is best for each machine?"]);
+    });
+
+    it("dedupes repeated worker open questions and keeps them out of user-facing fallback reports", () => {
+      expect(__testOnly.cleanFallbackOpenQuestions([
+        "What were the specific terms of the May 9 ceasefire proposal?",
+        "What are the specific terms of the 'Victory Day' truce regarding its exact timing and expiration?",
+        "Will the U.S. administration provide clarification to Kyiv?",
+      ])).toEqual([
+        "What were the specific terms of the May 9 ceasefire proposal?",
+        "Will the U.S. administration provide clarification to Kyiv?",
+      ]);
+
+      expect(__testOnly.stripUserFacingResearchScaffoldSections([
+        "# Report",
+        "",
+        "Useful report.",
+        "",
+        "## Source Context",
+        "",
+        "- internal evidence card",
+        "",
+        "## Open Questions",
+        "",
+        "- internal uncertainty",
+      ].join("\n"))).toBe("# Report\n\nUseful report.");
     });
   });
 

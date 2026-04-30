@@ -119,6 +119,17 @@ function hasSameMessageReferences(
   return a.every((message, index) => message === b[index])
 }
 
+function isCompletedResearchReportMessage(message: ChatMessage | null): boolean {
+  if (!message || message.role !== 'assistant') {
+    return false
+  }
+  const hasArtifactLink = message.content.some((block) =>
+    block.type === 'folder_link'
+    && block.label === 'Open research artifacts')
+  const hasLiveResearchPanel = message.content.some((block) => block.type === 'research_panel')
+  return hasArtifactLink && !hasLiveResearchPanel
+}
+
 function isNodeWithin(
   container: HTMLElement,
   node: Node | null,
@@ -230,6 +241,7 @@ export function ChatCanvas({
   const contentPaddingClass = contentLayout === 'expanded' ? 'px-4' : 'px-6'
   const previousUserTailRef = useRef<string | null>(null)
   const previousQueuedTailRef = useRef<string | null>(null)
+  const previousResearchReportTailRef = useRef<string | null>(null)
   const pointerSelectingRef = useRef(false)
   const [selectedTextBubble, setSelectedTextBubble] =
     useState<SelectedTextBubble | null>(null)
@@ -253,6 +265,8 @@ export function ChatCanvas({
     [messages],
   )
   const latestMessage = visibleMessages.at(-1) ?? null
+  const latestResearchReportMessageId =
+    isCompletedResearchReportMessage(latestMessage) ? latestMessage?.id ?? null : null
   const latestQueuedMessageId = queuedMessages.at(-1)?.id ?? null
   const fallbackControlLock = useMemo(
     () => buildConversationUiControlLock({
@@ -389,10 +403,27 @@ export function ChatCanvas({
   ])
 
   useLayoutEffect(() => {
+    if (
+      latestResearchReportMessageId
+      && latestResearchReportMessageId !== previousResearchReportTailRef.current
+    ) {
+      previousResearchReportTailRef.current = latestResearchReportMessageId
+      shouldAutoFollowRef.current = false
+      window.requestAnimationFrame(() => {
+        const container = containerRef.current
+        const reportNode = Array.from(
+          container?.querySelectorAll<HTMLElement>('[data-research-report-id]') ?? [],
+        ).find((node) => node.dataset.researchReportId === latestResearchReportMessageId)
+        reportNode?.scrollIntoView({ block: 'start', behavior: 'auto' })
+      })
+      return
+    }
+
     scrollToBottom(isGenerating || isCompacting ? 'auto' : 'smooth')
   }, [
     isCompacting,
     isGenerating,
+    latestResearchReportMessageId,
     queuedMessages,
     streamingContent,
     visibleMessages,
@@ -586,59 +617,68 @@ export function ChatCanvas({
     [latestAssistantFallbackPrimaryModelId, visibleMessages],
   )
 
-  const renderMessage = (message: ChatMessage) => (
-    <Message
-      key={message.id}
-      sessionId={sessionId}
-      message={message}
-      autoExpandActiveBlocks={autoExpandActiveBlocks}
-      showThinkingBlocks={showThinkingBlocks}
-      showCopyAction={message.role === 'assistant'}
-      isLatestAssistantTurn={
-        message.role === 'assistant' && message.id === latestAssistantMessageId
-      }
-      fallbackPrimaryModelId={
-        message.role === 'assistant' && message.id === latestAssistantMessageId
-          ? latestAssistantFallbackPrimaryModelId
-          : null
-      }
-      onCopyTurn={
-        message.role === 'assistant'
-          ? async () => {
-              await copyText(
-                serializeAssistantTurn(messagesWithPrimaryModelFallback, message.id),
-              )
-            }
-          : undefined
-      }
-      readAloudAction={
-        message.role === 'assistant'
-          ? disableReadAloudActionWhileBusy(
-              getReadAloudButtonState?.(message),
-              assistantActionLock,
-            )
-          : undefined
-      }
-      selectionMode={
-        message.role === 'assistant' && message.id === selectionModeMessageId
-      }
-      pinnedSentenceKeys={
-        message.role === 'assistant'
-          ? pinnedSentenceKeysByMessageId?.get(message.id)
-          : undefined
-      }
-      showSelectionAction={
-        message.role === 'assistant' && Boolean(onToggleSelectionMode)
-      }
-      onToggleSelectionMode={
-        message.role === 'assistant' ? onToggleSelectionMode : undefined
-      }
-      onToggleSentence={
-        message.role === 'assistant' ? onToggleSentence : undefined
-      }
-      assistantActionLock={assistantActionLock}
-    />
-  )
+  const renderMessage = (message: ChatMessage) => {
+    const researchReportId = isCompletedResearchReportMessage(message)
+      ? message.id
+      : undefined
+    return (
+      <div
+        key={message.id}
+        data-research-report-id={researchReportId}
+      >
+        <Message
+          sessionId={sessionId}
+          message={message}
+          autoExpandActiveBlocks={autoExpandActiveBlocks}
+          showThinkingBlocks={showThinkingBlocks}
+          showCopyAction={message.role === 'assistant'}
+          isLatestAssistantTurn={
+            message.role === 'assistant' && message.id === latestAssistantMessageId
+          }
+          fallbackPrimaryModelId={
+            message.role === 'assistant' && message.id === latestAssistantMessageId
+              ? latestAssistantFallbackPrimaryModelId
+              : null
+          }
+          onCopyTurn={
+            message.role === 'assistant'
+              ? async () => {
+                  await copyText(
+                    serializeAssistantTurn(messagesWithPrimaryModelFallback, message.id),
+                  )
+                }
+              : undefined
+          }
+          readAloudAction={
+            message.role === 'assistant'
+              ? disableReadAloudActionWhileBusy(
+                  getReadAloudButtonState?.(message),
+                  assistantActionLock,
+                )
+              : undefined
+          }
+          selectionMode={
+            message.role === 'assistant' && message.id === selectionModeMessageId
+          }
+          pinnedSentenceKeys={
+            message.role === 'assistant'
+              ? pinnedSentenceKeysByMessageId?.get(message.id)
+              : undefined
+          }
+          showSelectionAction={
+            message.role === 'assistant' && Boolean(onToggleSelectionMode)
+          }
+          onToggleSelectionMode={
+            message.role === 'assistant' ? onToggleSelectionMode : undefined
+          }
+          onToggleSentence={
+            message.role === 'assistant' ? onToggleSentence : undefined
+          }
+          assistantActionLock={assistantActionLock}
+        />
+      </div>
+    )
+  }
 
   const renderDebugCard = (card: InlineDebugCard) => (
     <InlineDebugPanel

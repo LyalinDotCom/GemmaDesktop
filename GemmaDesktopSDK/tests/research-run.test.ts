@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createGemmaDesktop, type ResearchRunStatus } from "@gemma-desktop/sdk-node";
 import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
@@ -549,6 +549,45 @@ describe("research runs", { timeout: 120000 }, () => {
       );
     } finally {
       guard.cleanup();
+    }
+  });
+
+  it("keeps synthesis running while structured output is still making progress", () => {
+    vi.useFakeTimers();
+    const guard = createResearchSubsessionBudgetGuard("synthesis", {});
+
+    try {
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(guard.signal.aborted).toBe(false);
+
+      guard.onEvent({
+        type: "content.delta",
+        payload: {
+          channel: "reasoning",
+          delta: "still organizing the report",
+        },
+      });
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(guard.signal.aborted).toBe(false);
+
+      guard.onEvent({
+        type: "content.delta",
+        payload: {
+          channel: "assistant",
+          delta: "{\"summary\":\"working\"",
+        },
+      });
+      vi.advanceTimersByTime((3 * 60_000) - 1);
+      expect(guard.signal.aborted).toBe(false);
+
+      vi.advanceTimersByTime(1);
+      expect(guard.signal.aborted).toBe(true);
+      const wrapped = guard.wrapError(new Error("aborted"));
+      expect(wrapped).toBeInstanceOf(Error);
+      expect((wrapped as Error).message).toContain("Research synthesis made no structured-output progress");
+    } finally {
+      guard.cleanup();
+      vi.useRealTimers();
     }
   });
 

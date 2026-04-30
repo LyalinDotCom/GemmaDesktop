@@ -322,6 +322,12 @@ export function ResearchProgressPanel({
           )}
           <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-zinc-500 dark:text-zinc-400">
             <span>Deep research</span>
+            {panel.modelLabel && (
+              <>
+                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                <span className="truncate">{panel.modelLabel}</span>
+              </>
+            )}
             {headerElapsed && (
               <>
                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
@@ -425,6 +431,20 @@ export function ResearchProgressPanel({
       {panel.errorMessage && (
         <div className="mt-3 rounded-lg bg-red-50 px-3 py-1.5 text-[11.5px] text-red-600 dark:bg-red-900/30 dark:text-red-300">
           {panel.errorMessage}
+        </div>
+      )}
+
+      {panel.warningMessages && panel.warningMessages.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {panel.warningMessages.map((warning) => (
+            <div
+              key={warning}
+              className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-200"
+            >
+              <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+              <span>{warning}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

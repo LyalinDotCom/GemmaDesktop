@@ -687,6 +687,8 @@ describe("headless CLI", () => {
               runId: "research-run-1",
               profile: "deep",
               artifactDirectory: path.join(tempDirectory, ".gemma-headless", "gemma4-research", "research-run-1"),
+              runtimeId: snapshot.runtimeId,
+              modelId: snapshot.modelId,
               plan: {
                 objective: "Research Gemma 4 availability",
                 scopeSummary: "Official and runtime catalog coverage.",

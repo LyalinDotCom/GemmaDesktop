@@ -13,6 +13,7 @@ function buildPanel(): ResearchPanelViewModel {
     runStatus: 'running',
     stage: 'discovery',
     title: 'Open model runtimes',
+    modelLabel: 'gemma4:31b-mlx-bf16 via ollama-native',
     startedAt: Date.now() - 10_000,
     plan: {
       status: 'completed',
@@ -64,5 +65,23 @@ describe('ResearchProgressPanel', () => {
     expect(markup).toContain('src="https://ai.google.dev/favicon.ico"')
     expect(markup).toContain('AG')
     expect(markup).toContain('ai.google.dev')
+    expect(markup).toContain('gemma4:31b-mlx-bf16 via ollama-native')
+  })
+
+  it('renders critical research warnings prominently', () => {
+    const panel = {
+      ...buildPanel(),
+      runStatus: 'completed' as const,
+      warningMessages: ['Final model synthesis did not complete.'],
+    }
+    const markup = renderToStaticMarkup(
+      createElement(ResearchProgressPanel, {
+        panel,
+        isActive: false,
+      }),
+    )
+
+    expect(markup).toContain('Final model synthesis did not complete.')
+    expect(markup).toContain('amber')
   })
 })

@@ -324,6 +324,7 @@ export function buildResearchPanelViewModel(
 
   const topicCount = status.topicStatuses.length
   const coverage = status.coverage
+  const warningMessages = status.warnings?.filter((warning) => warning.trim().length > 0) ?? []
   const totalSources = coverage?.sourcesGathered ?? 0
   const distinctDomains = coverage?.distinctDomains ?? 0
   const targetSources = coverage?.targetSources ?? 0
@@ -364,6 +365,7 @@ export function buildResearchPanelViewModel(
     runStatus: status.status,
     stage: status.stage,
     title: title || undefined,
+    modelLabel: `${status.modelId} via ${status.runtimeId}`,
     startedAt: runStartedAt,
     completedAt,
     elapsedLabel,
@@ -392,10 +394,14 @@ export function buildResearchPanelViewModel(
     topics: buildTopicSteps(status),
     synthesis: {
       status: normalizedSynthesisStatus,
-      label: buildSynthesisLabel(normalizedSynthesisStatus),
+      label:
+        warningMessages.length > 0 && normalizedSynthesisStatus === 'completed'
+          ? 'Final report ready with warnings'
+          : buildSynthesisLabel(normalizedSynthesisStatus),
     },
     liveHint,
     errorMessage: status.error,
+    warningMessages,
     artifactDirectory: status.artifactDirectory,
   }
 }
@@ -535,8 +541,12 @@ export function buildResearchAssistantMessage(
 ): ResearchAppMessage {
   const topicLabel = `${result.plan.topics.length} topic${result.plan.topics.length === 1 ? '' : 's'}`
   const sourceLabel = `${result.sources.length} source${result.sources.length === 1 ? '' : 's'}`
+  const modelLabel = result.modelId?.trim()
+    ? ` using ${result.modelId}${result.runtimeId ? ` via ${result.runtimeId}` : ''}`
+    : ''
+  const warningMessages = result.warnings?.filter((warning) => warning.trim().length > 0) ?? []
   const sections = [
-    `Deep research completed across ${topicLabel} and ${sourceLabel}${typeof result.passCount === 'number' ? ` in ${result.passCount} pass${result.passCount === 1 ? '' : 'es'}` : ''}.`,
+    `Deep research completed across ${topicLabel} and ${sourceLabel}${typeof result.passCount === 'number' ? ` in ${result.passCount} pass${result.passCount === 1 ? '' : 'es'}` : ''}${modelLabel}.`,
     result.summary,
     result.finalReport,
   ].filter((entry) => entry.trim().length > 0)
@@ -545,6 +555,10 @@ export function buildResearchAssistantMessage(
     id: `research-${result.runId}`,
     role: 'assistant',
     content: [
+      ...warningMessages.map((message) => ({
+        type: 'warning',
+        message,
+      })),
       {
         type: 'text',
         text: sections.join('\n\n'),

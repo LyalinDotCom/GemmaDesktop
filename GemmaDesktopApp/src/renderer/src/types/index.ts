@@ -330,6 +330,7 @@ export interface ResearchPanelViewModel {
   runStatus: 'running' | 'completed' | 'failed' | 'cancelled'
   stage: 'planning' | 'discovery' | 'depth' | 'workers' | 'synthesis' | 'completed' | 'failed' | 'cancelled'
   title?: string
+  modelLabel?: string
   startedAt?: number
   completedAt?: number
   elapsedLabel?: string
@@ -362,6 +363,7 @@ export interface ResearchPanelViewModel {
   }
   liveHint?: string
   errorMessage?: string
+  warningMessages?: string[]
   artifactDirectory?: string
 }
 

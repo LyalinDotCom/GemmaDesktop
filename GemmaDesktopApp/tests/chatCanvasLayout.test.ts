@@ -256,4 +256,41 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('gemma4:26b')
     expect(markup).not.toContain('Background process')
   })
+
+  it('marks completed research reports as top-scroll anchors', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Research Kyiv news' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'research-1',
+            role: 'assistant',
+            content: [
+              { type: 'text', text: '# Research Report\n\nLong report body.' },
+              {
+                type: 'folder_link',
+                path: '/tmp/research-artifacts',
+                label: 'Open research artifacts',
+              },
+            ],
+            timestamp: 2000,
+            durationMs: 20_000,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('data-research-report-id="research-1"')
+  })
 })

@@ -368,6 +368,32 @@ describe('research presentation', () => {
     })
   })
 
+  it('shows selected research model and critical warnings in the progress panel model', () => {
+    const status = buildStatus({
+      status: 'completed',
+      stage: 'completed',
+      modelId: 'gemma4:31b-mlx-bf16',
+      runtimeId: 'ollama-native',
+      completedAt: new Date(12_000).toISOString(),
+      stages: {
+        planning: { status: 'completed' },
+        discovery: { status: 'completed' },
+        depth: { status: 'completed' },
+        workers: { status: 'completed' },
+        synthesis: { status: 'completed' },
+      },
+      warnings: ['Final model synthesis did not complete: synthesis made no progress.'],
+    })
+
+    const panel = buildResearchPanelViewModel(status)
+
+    expect(panel.modelLabel).toBe('gemma4:31b-mlx-bf16 via ollama-native')
+    expect(panel.warningMessages).toEqual([
+      'Final model synthesis did not complete: synthesis made no progress.',
+    ])
+    expect(panel.synthesis.label).toBe('Final report ready with warnings')
+  })
+
   it('normalizes cancelled runs so unfinished steps stop looking active', () => {
     const status = buildStatus({
       status: 'cancelled',
@@ -446,6 +472,8 @@ describe('research presentation', () => {
       runId: 'run-1',
       profile: 'deep',
       artifactDirectory: '/tmp/research-artifacts',
+      runtimeId: 'ollama-native',
+      modelId: 'gemma4:31b-mlx-bf16',
       plan: {
         objective: 'Research Artemis mission coverage.',
         topics: [
@@ -487,12 +515,46 @@ describe('research presentation', () => {
     expect(message.durationMs).toBe(42_000)
     expect(message.content[0]).toMatchObject({ type: 'text' })
     expect((message.content[0] as { text: string }).text).toContain(
-      'Deep research completed across 1 topic and 1 source.',
+      'Deep research completed across 1 topic and 1 source using gemma4:31b-mlx-bf16 via ollama-native.',
     )
     expect(message.content[1]).toEqual({
       type: 'folder_link',
       path: '/tmp/research-artifacts',
       label: 'Open research artifacts',
     })
+  })
+
+  it('surfaces completed research warnings before the report body', () => {
+    const result = {
+      runId: 'run-1',
+      profile: 'deep',
+      artifactDirectory: '/tmp/research-artifacts',
+      runtimeId: 'ollama-native',
+      modelId: 'gemma4:31b-mlx-bf16',
+      plan: {
+        objective: 'Research Kyiv news.',
+        topics: [],
+        risks: [],
+        stopConditions: [],
+      },
+      sources: [],
+      dossiers: [],
+      finalReport: '# Report\n\n## Critical Research Warnings\n\n- Final model synthesis did not complete.',
+      summary: 'Source-backed fallback synthesized the report.',
+      sourceIds: [],
+      confidence: 0.5,
+      completedAt: new Date().toISOString(),
+      warnings: ['Final model synthesis did not complete: synthesis made no progress.'],
+    } satisfies ResearchRunResult
+
+    const message = buildResearchAssistantMessage(result, 42_000)
+
+    expect(message.content[0]).toEqual({
+      type: 'warning',
+      message: 'Final model synthesis did not complete: synthesis made no progress.',
+    })
+    expect((message.content[1] as { text: string }).text).toContain(
+      'Source-backed fallback synthesized the report.',
+    )
   })
 })
