@@ -26,6 +26,25 @@ const shellMessage: ChatMessage = {
   ],
 }
 
+const backgroundProcessNotice: ChatMessage = {
+  id: 'process-1',
+  role: 'assistant',
+  timestamp: 1_500,
+  content: [
+    {
+      type: 'shell_session',
+      terminalId: 'terminal-2',
+      command: 'npm run dev',
+      workingDirectory: '/tmp/project',
+      status: 'running',
+      startedAt: 1_500,
+      transcript: 'ready\n',
+      collapsed: false,
+      displayMode: 'sidebar',
+    },
+  ],
+}
+
 describe('shell cards in history helpers', () => {
   it('includes shell transcripts in exported chat history', () => {
     const serialized = serializeChatMessage(shellMessage)
@@ -48,6 +67,34 @@ describe('shell cards in history helpers', () => {
       serialized.startsWith('Conversation: Build Notes\nLocal directory: /Users/me/project'),
     ).toBe(true)
     expect(serialized).toContain('\n\n---\n\nGemma')
+  })
+
+  it('excludes background process notices from copied chat history', () => {
+    const serialized = serializeSessionHistory({
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user',
+          timestamp: 1_000,
+          content: [{ type: 'text', text: 'Start the app' }],
+        },
+        backgroundProcessNotice,
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          timestamp: 2_000,
+          content: [{ type: 'text', text: 'The app is running.' }],
+        },
+      ],
+      debugEnabled: false,
+      debugLogs: [],
+      debugSession: null,
+    })
+
+    expect(serialized).toContain('Start the app')
+    expect(serialized).toContain('The app is running.')
+    expect(serialized).not.toContain('npm run dev')
+    expect(serialized).not.toContain('[Shell:')
   })
 
   it('excludes shell cards from visible-chat context estimates', () => {

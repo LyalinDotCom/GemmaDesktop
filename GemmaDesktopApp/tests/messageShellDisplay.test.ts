@@ -33,7 +33,7 @@ describe('Message shell display modes', () => {
     expect(markup).toContain('Shell summary')
   })
 
-  it('renders sidebar shell sessions as compact process breadcrumbs', () => {
+  it('does not render sidebar shell sessions as chat transcript rows', () => {
     const markup = renderToStaticMarkup(
       createElement(Message, {
         sessionId: 'session-1',
@@ -58,9 +58,9 @@ describe('Message shell display modes', () => {
       }),
     )
 
-    expect(markup).toContain('Background process')
-    expect(markup).toContain('npm start')
-    expect(markup).toContain('Running')
+    expect(markup).not.toContain('Background process')
+    expect(markup).not.toContain('npm start')
+    expect(markup).not.toContain('Running')
     expect(markup).not.toContain('App listening at http://localhost:3000')
     expect(markup).not.toContain('Terminate process')
     expect(markup).not.toContain('Shell summary')

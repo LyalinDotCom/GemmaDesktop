@@ -3,6 +3,7 @@ import {
   splitInlineDebugLogs,
   type InlineDebugCard,
 } from '@/lib/debugTimeline'
+import { getRenderableChatMessages } from '@/lib/messageState'
 import { buildTurnDurationLabel } from '@/lib/turnStatus'
 import type {
   ChatMessage,
@@ -204,7 +205,9 @@ export function serializeChatMessage(message: ChatMessage): string {
 }
 
 export function serializeChatHistory(messages: ChatMessage[]): string {
-  return messages.map((message) => serializeChatMessage(message)).join('\n\n---\n\n')
+  return getRenderableChatMessages(messages)
+    .map((message) => serializeChatMessage(message))
+    .join('\n\n---\n\n')
 }
 
 function serializeSessionMetadata(args: {
@@ -225,7 +228,8 @@ export function serializeAssistantTurn(
   messages: ChatMessage[],
   assistantMessageId: string,
 ): string {
-  const assistantIndex = messages.findIndex(
+  const renderableMessages = getRenderableChatMessages(messages)
+  const assistantIndex = renderableMessages.findIndex(
     (message) => message.id === assistantMessageId && message.role === 'assistant',
   )
 
@@ -233,11 +237,11 @@ export function serializeAssistantTurn(
     return ''
   }
 
-  const assistantMessage = messages[assistantIndex]
+  const assistantMessage = renderableMessages[assistantIndex]
   if (!assistantMessage) {
     return ''
   }
-  const previousUserMessage = [...messages.slice(0, assistantIndex)]
+  const previousUserMessage = [...renderableMessages.slice(0, assistantIndex)]
     .reverse()
     .find((message) => message.role === 'user')
 
@@ -289,13 +293,14 @@ export function serializeSessionHistory(args: {
   workingDirectory?: string
 }): string {
   const {
-    messages,
+    messages: rawMessages,
     debugEnabled,
     debugLogs,
     debugSession,
     sessionTitle,
     workingDirectory,
   } = args
+  const messages = getRenderableChatMessages(rawMessages)
   const metadata = serializeSessionMetadata({ sessionTitle, workingDirectory })
 
   if (!debugEnabled) {

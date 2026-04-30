@@ -160,7 +160,7 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('15s')
   })
 
-  it('keeps the streaming assistant row visible when a background process starts', () => {
+  it('keeps the streaming assistant row visible without rendering background process notices', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatCanvas, {
         messages: [
@@ -202,9 +202,58 @@ describe('ChatCanvas layout', () => {
     )
 
     expect(markup).toContain('I have the simulation running and I am verifying it now.')
-    expect(markup).toContain('Background process')
-    expect(markup.indexOf('I have the simulation running')).toBeLessThan(
-      markup.indexOf('Background process'),
+    expect(markup).not.toContain('Background process')
+    expect(markup).not.toContain('cd blackhole-sim &amp;&amp; npm run dev')
+  })
+
+  it('ignores hidden background process notices when choosing latest assistant metadata', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Start the dev server' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'The dev server is starting.' }],
+            timestamp: 2000,
+            durationMs: 10_000,
+          },
+          {
+            id: 'process-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'shell_session',
+                terminalId: 'terminal-1',
+                command: 'npm run dev',
+                workingDirectory: '/tmp/project',
+                status: 'running',
+                startedAt: 2500,
+                transcript: '',
+                collapsed: false,
+                displayMode: 'sidebar',
+              },
+            ],
+            timestamp: 2500,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        latestAssistantFallbackPrimaryModelId: 'gemma4:26b',
+      }),
     )
+
+    expect(markup).toContain('The dev server is starting.')
+    expect(markup).toContain('gemma4:26b')
+    expect(markup).not.toContain('Background process')
   })
 })

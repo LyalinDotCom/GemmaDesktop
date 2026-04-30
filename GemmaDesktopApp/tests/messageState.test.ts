@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   appendChatMessage,
-  demoteBackgroundProcessNotices,
+  getRenderableChatMessages,
   updateChatMessage,
 } from '../src/renderer/src/lib/messageState'
 import type { ChatMessage } from '../src/renderer/src/types'
@@ -119,54 +119,50 @@ describe('message state helpers', () => {
   })
 })
 
-describe('demoteBackgroundProcessNotices', () => {
+describe('getRenderableChatMessages', () => {
   it('returns the input untouched when there are no background notices', () => {
     const messages = [
       buildUserMessage('user-1', 1_000),
       buildAssistantTextMessage('assistant-1', 'reply', 2_000),
     ]
-    expect(demoteBackgroundProcessNotices(messages)).toBe(messages)
+    expect(getRenderableChatMessages(messages)).toBe(messages)
   })
 
-  it('moves a background-process notice to the end of its turn responses', () => {
+  it('removes a background-process notice from chat rendering', () => {
     const user = buildUserMessage('user-1', 1_000)
     const notice = buildBackgroundProcessNotice('process-1', 'npm run dev', 1_500)
     const assistant = buildAssistantTextMessage('assistant-1', 'started server', 5_000)
 
-    const reordered = demoteBackgroundProcessNotices([user, notice, assistant])
+    const renderable = getRenderableChatMessages([user, notice, assistant])
 
-    expect(reordered.map((m) => m.id)).toEqual([
+    expect(renderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
-      'process-1',
     ])
   })
 
-  it('keeps notice ordering deterministic when its status changes (no row teleport)', () => {
+  it('keeps status-only process updates out of chat rendering', () => {
     const user = buildUserMessage('user-1', 1_000)
     const noticeRunning = buildBackgroundProcessNotice('process-1', 'npm run dev', 1_500, 'running')
     const assistant = buildAssistantTextMessage('assistant-1', 'started server', 5_000)
     const initialOrder = [user, noticeRunning, assistant]
-    const initialReordered = demoteBackgroundProcessNotices(initialOrder)
+    const initialRenderable = getRenderableChatMessages(initialOrder)
 
     const noticeExited = buildBackgroundProcessNotice('process-1', 'npm run dev', 1_500, 'exited', 1)
     const updatedOrder = [user, noticeExited, assistant]
-    const updatedReordered = demoteBackgroundProcessNotices(updatedOrder)
+    const updatedRenderable = getRenderableChatMessages(updatedOrder)
 
-    // Notice still lands at the end of the turn after status change — no jump.
-    expect(initialReordered.map((m) => m.id)).toEqual([
+    expect(initialRenderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
-      'process-1',
     ])
-    expect(updatedReordered.map((m) => m.id)).toEqual([
+    expect(updatedRenderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
-      'process-1',
     ])
   })
 
-  it('demotes notices per turn when multiple turns are present', () => {
+  it('removes notices per turn when multiple turns are present', () => {
     const messages = [
       buildUserMessage('user-1', 1_000),
       buildBackgroundProcessNotice('process-1', 'npm run dev', 1_200),
@@ -176,32 +172,29 @@ describe('demoteBackgroundProcessNotices', () => {
       buildAssistantTextMessage('assistant-2', 'tests passing', 5_400),
     ]
 
-    const reordered = demoteBackgroundProcessNotices(messages)
+    const renderable = getRenderableChatMessages(messages)
 
-    expect(reordered.map((m) => m.id)).toEqual([
+    expect(renderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
-      'process-1',
       'user-2',
       'assistant-2',
-      'process-2',
     ])
   })
 
-  it('preserves intro-section notices that have no parent user turn yet', () => {
+  it('removes intro-section notices too', () => {
     const intro = buildBackgroundProcessNotice('process-1', 'npm run dev', 100)
     const user = buildUserMessage('user-1', 1_000)
     const assistant = buildAssistantTextMessage('assistant-1', 'reply', 2_000)
 
-    const reordered = demoteBackgroundProcessNotices([intro, user, assistant])
-    expect(reordered.map((m) => m.id)).toEqual([
-      'process-1',
+    const renderable = getRenderableChatMessages([intro, user, assistant])
+    expect(renderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
     ])
   })
 
-  it('keeps relative order of multiple notices and non-notices within one turn', () => {
+  it('keeps relative order of non-notice messages within one turn', () => {
     const messages = [
       buildUserMessage('user-1', 1_000),
       buildBackgroundProcessNotice('process-a', 'npm run dev', 1_100),
@@ -210,18 +203,16 @@ describe('demoteBackgroundProcessNotices', () => {
       buildAssistantTextMessage('assistant-2', 'second reply', 1_400),
     ]
 
-    const reordered = demoteBackgroundProcessNotices(messages)
+    const renderable = getRenderableChatMessages(messages)
 
-    expect(reordered.map((m) => m.id)).toEqual([
+    expect(renderable.map((m) => m.id)).toEqual([
       'user-1',
       'assistant-1',
       'assistant-2',
-      'process-a',
-      'process-b',
     ])
   })
 
-  it('does not demote shell_session blocks without sidebar displayMode (chat shells)', () => {
+  it('does not remove shell_session blocks without sidebar displayMode (chat shells)', () => {
     const user = buildUserMessage('user-1', 1_000)
     const chatShell: ChatMessage = {
       id: 'shell-chat-1',
@@ -245,8 +236,8 @@ describe('demoteBackgroundProcessNotices', () => {
     }
     const assistant = buildAssistantTextMessage('assistant-1', 'reply', 2_000)
 
-    const reordered = demoteBackgroundProcessNotices([user, chatShell, assistant])
-    expect(reordered.map((m) => m.id)).toEqual([
+    const renderable = getRenderableChatMessages([user, chatShell, assistant])
+    expect(renderable.map((m) => m.id)).toEqual([
       'user-1',
       'shell-chat-1',
       'assistant-1',

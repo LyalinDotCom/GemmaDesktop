@@ -256,7 +256,7 @@ function ContentBlock({
       )
     case 'shell_session':
       if (content.displayMode === 'sidebar') {
-        return <BackgroundProcessNotice content={content} />
+        return null
       }
 
       return (
@@ -269,48 +269,6 @@ function ContentBlock({
       return null
   }
 }
-
-function getBackgroundProcessStatusLabel(
-  content: Extract<MessageContent, { type: 'shell_session' }>,
-): string {
-  switch (content.status) {
-    case 'running':
-      return 'Running'
-    case 'exited':
-      return content.exitCode == null ? 'Exited' : `Exited ${content.exitCode}`
-    case 'killed':
-      return 'Stopped'
-    case 'error':
-      return 'Error'
-    case 'interrupted':
-      return 'Interrupted'
-  }
-}
-
-function BackgroundProcessNotice({
-  content,
-}: {
-  content: Extract<MessageContent, { type: 'shell_session' }>
-}) {
-  const statusLabel = getBackgroundProcessStatusLabel(content)
-
-  return (
-    <div className="my-1.5 rounded-lg border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-[12px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/45 dark:text-zinc-300">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="font-medium text-zinc-800 dark:text-zinc-100">
-          Background process
-        </span>
-        <span className="text-zinc-400 dark:text-zinc-500">·</span>
-        <span>{statusLabel}</span>
-        <span className="text-zinc-400 dark:text-zinc-500">·</span>
-        <code className="min-w-0 truncate font-mono text-[11px] text-zinc-700 dark:text-zinc-200">
-          {content.command}
-        </code>
-      </div>
-    </div>
-  )
-}
-
 
 function AudioBlock({
   content,

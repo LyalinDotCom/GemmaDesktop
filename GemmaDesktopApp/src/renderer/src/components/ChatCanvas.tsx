@@ -17,10 +17,7 @@ import {
   type InlineDebugCard,
   splitInlineDebugLogs,
 } from '@/lib/debugTimeline'
-import {
-  demoteBackgroundProcessNotices,
-  isBackgroundProcessNoticeMessage,
-} from '@/lib/messageState'
+import { getRenderableChatMessages } from '@/lib/messageState'
 import { normalizeSelectedReadAloudText } from '@/lib/readAloudText'
 import {
   applyLatestAssistantPrimaryModelFallback,
@@ -112,6 +109,14 @@ function disableReadAloudActionWhileBusy(
     title: getConversationUiActionLockedTitle(lock, 'read_aloud'),
     ariaLabel: 'Read aloud is unavailable while the session run is active',
   }
+}
+
+function hasSameMessageReferences(
+  a: ChatMessage[],
+  b: ChatMessage[],
+): boolean {
+  if (a.length !== b.length) return false
+  return a.every((message, index) => message === b[index])
 }
 
 function isNodeWithin(
@@ -218,6 +223,7 @@ export function ChatCanvas({
   const lastScrollTopRef = useRef(0)
   const scrollFrameRef = useRef<number | null>(null)
   const forceScrollUntilRef = useRef(0)
+  const visibleMessagesRef = useRef<ChatMessage[] | null>(null)
   const contentWidthClass = contentLayout === 'expanded'
     ? 'w-full'
     : 'mx-auto w-full max-w-chat'
@@ -230,7 +236,23 @@ export function ChatCanvas({
   const [statusNow, setStatusNow] = useState(() => Date.now())
   const visibleDebugLogs = debugEnabled ? debugLogs : EMPTY_DEBUG_LOGS
   const visibleDebugSession = debugEnabled ? debugSession : null
-  const latestMessage = messages.at(-1) ?? null
+  const visibleMessages = useMemo(
+    () => {
+      const nextVisibleMessages = getRenderableChatMessages(messages)
+      const previousVisibleMessages = visibleMessagesRef.current
+      if (
+        previousVisibleMessages
+        && hasSameMessageReferences(previousVisibleMessages, nextVisibleMessages)
+      ) {
+        return previousVisibleMessages
+      }
+
+      visibleMessagesRef.current = nextVisibleMessages
+      return nextVisibleMessages
+    },
+    [messages],
+  )
+  const latestMessage = visibleMessages.at(-1) ?? null
   const latestQueuedMessageId = queuedMessages.at(-1)?.id ?? null
   const fallbackControlLock = useMemo(
     () => buildConversationUiControlLock({
@@ -371,9 +393,9 @@ export function ChatCanvas({
   }, [
     isCompacting,
     isGenerating,
-    messages,
     queuedMessages,
     streamingContent,
+    visibleMessages,
     visibleDebugLogs,
     visibleDebugSession,
   ])
@@ -476,10 +498,10 @@ export function ChatCanvas({
   useEffect(() => {
     refreshSelectedTextBubble()
   }, [
-    messages,
     refreshSelectedTextBubble,
     sessionId,
     streamingContent,
+    visibleMessages,
   ])
 
   const debugTimeline = useMemo(
@@ -496,11 +518,10 @@ export function ChatCanvas({
   )
 
   const conversation = useMemo(() => {
-    const orderedMessages = demoteBackgroundProcessNotices(messages)
     const introMessages: ChatMessage[] = []
     const turns: Array<{ user: ChatMessage; responses: ChatMessage[] }> = []
 
-    for (const message of orderedMessages) {
+    for (const message of visibleMessages) {
       if (message.role === 'user') {
         turns.push({ user: message, responses: [] })
         continue
@@ -515,7 +536,7 @@ export function ChatCanvas({
     }
 
     return { introMessages, turns }
-  }, [messages])
+  }, [visibleMessages])
 
   const selectedTextReadAloudAction =
     selectedTextBubble && getSelectedTextReadAloudButtonState
@@ -548,21 +569,21 @@ export function ChatCanvas({
   // duration label and buttons permanently visible; older assistant rows
   // hide their duration and reveal buttons on hover.
   const latestAssistantMessageId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (messages[i]?.role === 'assistant') {
-        return messages[i]!.id
+    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+      if (visibleMessages[i]?.role === 'assistant') {
+        return visibleMessages[i]!.id
       }
     }
     return null
-  }, [messages])
+  }, [visibleMessages])
 
   const messagesWithPrimaryModelFallback = useMemo(
     () =>
       applyLatestAssistantPrimaryModelFallback(
-        messages,
+        visibleMessages,
         latestAssistantFallbackPrimaryModelId,
       ),
-    [latestAssistantFallbackPrimaryModelId, messages],
+    [latestAssistantFallbackPrimaryModelId, visibleMessages],
   )
 
   const renderMessage = (message: ChatMessage) => (
@@ -650,15 +671,9 @@ export function ChatCanvas({
           {conversation.turns.map((turn, turnIndex) => {
             const turnLogs = debugTimeline.turnLogs[turnIndex]
             const betweenTurnLogs = debugTimeline.interstitialLogs[turnIndex + 1] ?? []
-            const regularResponses = turn.responses.filter(
-              (message) => !isBackgroundProcessNoticeMessage(message),
-            )
-            const backgroundProcessNotices = turn.responses.filter(
-              isBackgroundProcessNoticeMessage,
-            )
             const isPendingTurn =
               (isGenerating || isCompacting)
-              && regularResponses.length === 0
+              && turn.responses.length === 0
               && turnIndex === conversation.turns.length - 1
 
             return (
@@ -668,7 +683,7 @@ export function ChatCanvas({
                 {debugEnabled &&
                   turnLogs?.beforeResult.map((card) => renderDebugCard(card))}
 
-                {regularResponses.map((message) => renderMessage(message))}
+                {turn.responses.map((message) => renderMessage(message))}
 
                 {isPendingTurn && (
                   <Message
@@ -704,8 +719,6 @@ export function ChatCanvas({
                     assistantActionLock={assistantActionLock}
                   />
                 )}
-
-                {backgroundProcessNotices.map((message) => renderMessage(message))}
 
                 {debugEnabled &&
                   turnLogs?.afterResult.map((card) => renderDebugCard(card))}

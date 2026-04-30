@@ -38,14 +38,11 @@ export function isBackgroundProcessNoticeMessage(message: ChatMessage): boolean 
   )
 }
 
-// A background-process notice is appended to the messages array the moment
-// `start_background_process` runs — well before the assistant turn that issued
-// the call has finished streaming. After `turn_complete` the SDK assistant
-// message lands and gets pushed to the array end, so the notice ends up
-// rendered ABOVE the actual assistant response. This helper rewrites each turn
-// group so notices always render after the model's reply content. Notices that
-// appear before the first user message (intro section) are left in place.
-export function demoteBackgroundProcessNotices(
+// Background-process notices are persisted in app messages so the main process
+// can update status, support peek/terminate lookup, and feed the sidebar. The
+// chat transcript already has the tool call and the left-panel process row, so
+// these bookkeeping messages should not render as assistant history entries.
+export function getRenderableChatMessages(
   messages: ChatMessage[],
 ): ChatMessage[] {
   if (messages.length === 0) return messages
@@ -59,32 +56,5 @@ export function demoteBackgroundProcessNotices(
   }
   if (!hasNotice) return messages
 
-  const result: ChatMessage[] = []
-  let pendingNotices: ChatMessage[] = []
-  let inTurnGroup = false
-
-  for (const message of messages) {
-    if (message.role === 'user') {
-      result.push(...pendingNotices)
-      pendingNotices = []
-      result.push(message)
-      inTurnGroup = true
-      continue
-    }
-
-    if (!inTurnGroup) {
-      result.push(message)
-      continue
-    }
-
-    if (isBackgroundProcessNoticeMessage(message)) {
-      pendingNotices.push(message)
-    } else {
-      result.push(message)
-    }
-  }
-
-  result.push(...pendingNotices)
-
-  return result
+  return messages.filter((message) => !isBackgroundProcessNoticeMessage(message))
 }
