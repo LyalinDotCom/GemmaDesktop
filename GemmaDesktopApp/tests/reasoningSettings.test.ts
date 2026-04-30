@@ -37,6 +37,9 @@ describe('reasoning settings helpers', () => {
       supportsReasoningControlForModel('gemma4:31b', 'ollama-native'),
     ).toBe(true)
     expect(
+      supportsReasoningControlForModel('gemma4:31b-mlx-bf16', 'ollama-native'),
+    ).toBe(true)
+    expect(
       supportsReasoningControlForModel('gemma4:31b', 'lmstudio-native'),
     ).toBe(false)
     expect(

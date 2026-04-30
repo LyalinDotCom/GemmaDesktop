@@ -76,8 +76,18 @@ describe('guided Gemma model helpers', () => {
         name: 'Gemma 4 E4B',
       }),
       makeModel({
+        id: 'gemma4:e4b-mlx-bf16',
+        name: 'Gemma 4 E4B MLX BF16',
+      }),
+      makeModel({
         id: 'gemma4:31b-cloud',
         name: 'Gemma 4 31B Cloud',
+      }),
+      makeModel({
+        id: 'google/gemma-4-27b-it-qat',
+        name: 'Gemma 4 27B IT QAT',
+        runtimeId: 'lmstudio-openai',
+        runtimeName: 'LM Studio',
       }),
       makeModel({
         id: 'qwen3:8b',
@@ -88,6 +98,7 @@ describe('guided Gemma model helpers', () => {
     const otherModels = buildOtherSelectableModels(models, 'explore')
 
     expect(otherModels.map((model) => model.id)).toEqual([
+      'google/gemma-4-27b-it-qat',
       'gemma4:31b-cloud',
       'qwen3:8b',
     ])
@@ -120,6 +131,37 @@ describe('guided Gemma model helpers', () => {
     expect(emptySelection.gemma?.tag).toBe('gemma4:26b')
     expect(otherSelection.family).toBe('other')
     expect(otherSelection.otherModel?.id).toBe('qwen3:8b')
+  })
+
+  it('maps Ollama Gemma variants onto the guided size ladder', () => {
+    const models = [
+      makeModel({
+        id: 'gemma4:e4b-mlx-bf16',
+        name: 'Gemma 4 E4B MLX BF16',
+        status: 'loaded',
+      }),
+      makeModel({
+        id: 'gemma4:31b-mlx-bf16',
+        name: 'Gemma 4 31B MLX BF16',
+        status: 'available',
+      }),
+    ]
+
+    const guided = buildGuidedGemmaModels(models)
+    const medium = guided.find((entry) => entry.tier === 'medium')
+    const extraHighSelection = resolveGuidedModelSelectionState(
+      models,
+      'explore',
+      {
+        modelId: 'gemma4:31b-mlx-bf16',
+        runtimeId: 'ollama-native',
+      },
+    )
+
+    expect(medium?.availability).toBe('loaded')
+    expect(medium?.model?.id).toBe('gemma4:e4b-mlx-bf16')
+    expect(extraHighSelection.family).toBe('gemma')
+    expect(extraHighSelection.gemma?.tier).toBe('extra-high')
   })
 
   it('defaults sessions by mode and lets saved settings override the built-in policy', () => {

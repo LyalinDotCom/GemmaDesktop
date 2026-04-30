@@ -1,6 +1,6 @@
 import {
   GEMMA_CATALOG,
-  isGuidedGemmaTag,
+  resolveGemmaCatalogEntryForModel,
   type GemmaCatalogEntry,
 } from './gemmaCatalog'
 
@@ -46,7 +46,7 @@ export function supportsReasoningControlForModel(
   modelId: string,
   runtimeId: string,
 ): boolean {
-  return runtimeId === 'ollama-native' && isGuidedGemmaTag(modelId)
+  return runtimeId === 'ollama-native' && Boolean(resolveGemmaCatalogEntryForModel(modelId))
 }
 
 export function listKnownReasoningControlModels(): readonly GemmaCatalogEntry[] {

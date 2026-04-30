@@ -40,9 +40,20 @@ describe('ollama runtime config', () => {
   it('builds max-context Ollama load options for guided Gemma tags', () => {
     const settings = getDefaultOllamaSettings()
     const profile = resolveManagedOllamaProfile(settings, 'gemma4:31b', 'ollama-native')
+    const variantProfile = resolveManagedOllamaProfile(
+      settings,
+      'gemma4:31b-mlx-bf16',
+      'ollama-native',
+    )
     const openAiProfile = resolveManagedOllamaProfile(settings, 'gemma4:31b', 'ollama-openai')
 
     expect(buildOllamaOptionsRecord(profile)).toEqual(expect.objectContaining({
+      num_ctx: 262_144,
+      temperature: 1,
+      top_p: 0.95,
+      top_k: 64,
+    }))
+    expect(buildOllamaOptionsRecord(variantProfile)).toEqual(expect.objectContaining({
       num_ctx: 262_144,
       temperature: 1,
       top_p: 0.95,

@@ -4,10 +4,11 @@ import { ModelPickerList } from '@/components/ModelPickerList'
 import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
+  resolveGuidedGemmaModelTarget,
+  resolveGuidedModelSelectionState,
   sortGuidedGemmaModelsHighestFirst,
 } from '@/lib/guidedModels'
 import type { GemmaInstallState, ModelSummary, SessionMode } from '@/types'
-import { findGemmaCatalogEntryByTag } from '@shared/gemmaCatalog'
 
 interface GemmaSizeSelectorProps {
   models: ModelSummary[]
@@ -16,6 +17,7 @@ interface GemmaSizeSelectorProps {
   selectedRuntimeId: string
   mode: SessionMode
   hasMessages?: boolean
+  usesTemporaryModelOverride?: boolean
   disabled?: boolean
   onSelect?: (selection: {
     modelId: string
@@ -64,6 +66,7 @@ export function GemmaSizeSelector({
   selectedRuntimeId,
   mode,
   hasMessages = false,
+  usesTemporaryModelOverride = true,
   disabled = false,
   onSelect,
 }: GemmaSizeSelectorProps) {
@@ -77,6 +80,15 @@ export function GemmaSizeSelector({
       buildGuidedGemmaModels(models, gemmaInstallStates),
     ),
     [gemmaInstallStates, models],
+  )
+  const selection = resolveGuidedModelSelectionState(
+    models,
+    mode,
+    {
+      modelId: selectedModelId,
+      runtimeId: selectedRuntimeId,
+    },
+    gemmaInstallStates,
   )
 
   useEffect(() => {
@@ -96,33 +108,23 @@ export function GemmaSizeSelector({
     }
   }, [disabled])
 
-  const selectedGemma =
-    guidedGemma.find(
-      (entry) =>
-        entry.tag === selectedModelId
-        && entry.runtimeId === selectedRuntimeId,
-    )
-    ?? (selectedRuntimeId === 'ollama-native'
-      ? guidedGemma.find((entry) => entry.tag === selectedModelId)
-      : undefined)
-  const selectedCustomModel = !selectedGemma
-    ? models.find(
-      (model) =>
-        model.id === selectedModelId
-        && model.runtimeId === selectedRuntimeId,
-    )
-    : undefined
+  const selectedGemma = selection.family === 'gemma' ? selection.gemma : undefined
+  const selectedCustomModel = selection.family === 'other' ? selection.otherModel : undefined
   const selectedFamily = selectedGemma ? 'gemma' : 'other'
   const buttonLabel = selectedGemma
     ? displayTierLabel(selectedGemma)
-    : 'Custom'
+    : usesTemporaryModelOverride
+      ? 'Custom'
+      : 'Main'
   const selectedCustomOptimizationTags = selectedCustomModel?.optimizationTags ?? []
   const selectedCustomOptimizationLabel = selectedCustomOptimizationTags.length > 0
     ? ` · ${selectedCustomOptimizationTags.map((tag) => `${tag} optimized`).join(' · ')}`
     : ''
   const buttonTitle = selectedGemma
     ? `Session model size: ${displayTierLabel(selectedGemma)}`
-    : `Session model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
+    : usesTemporaryModelOverride
+      ? `Custom conversation model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
+      : `Saved main model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
 
   useEffect(() => {
     if (!open) {
@@ -185,8 +187,7 @@ export function GemmaSizeSelector({
             <div className="px-2 py-2">
               {guidedGemma.map((entry, index) => {
                 const isSelected =
-                  entry.tag === selectedModelId
-                  && entry.runtimeId === selectedRuntimeId
+                  selectedGemma?.sizeId === entry.sizeId
 
                 return (
                   <button
@@ -195,9 +196,10 @@ export function GemmaSizeSelector({
                     disabled={disabled}
                     onClick={() => {
                       setOpen(false)
+                      const target = resolveGuidedGemmaModelTarget(entry)
                       void onSelect?.({
-                        modelId: entry.tag,
-                        runtimeId: entry.runtimeId,
+                        modelId: target.modelId,
+                        runtimeId: target.runtimeId,
                       })
                     }}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
@@ -251,7 +253,7 @@ export function GemmaSizeSelector({
                   </button>
                 )
               })}
-              {selectedCustomModel && !findGemmaCatalogEntryByTag(selectedModelId) && (
+              {selectedCustomModel && usesTemporaryModelOverride && (
                 <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
                   Current conversation is using a custom model. Picking a size here switches back to the pinned Gemma ladder.
                 </div>

@@ -2296,6 +2296,7 @@ export function App() {
       models={state.models}
       selectedModelId={state.activeSession.modelId}
       selectedRuntimeId={state.activeSession.runtimeId}
+      usesTemporaryModelOverride={state.activeSession.usesTemporaryModelOverride}
       selectedMode={activeMode}
       conversationKind={state.activeSession.conversationKind}
       planMode={activePlanMode}
@@ -2419,6 +2420,7 @@ export function App() {
       models={state.models}
       selectedModelId={globalChatDetail.modelId}
       selectedRuntimeId={globalChatDetail.runtimeId}
+      usesTemporaryModelOverride={globalChatDetail.usesTemporaryModelOverride}
       selectedMode={globalChatMode}
       conversationKind={globalChatDetail.conversationKind}
       planMode={globalChatPlanMode}

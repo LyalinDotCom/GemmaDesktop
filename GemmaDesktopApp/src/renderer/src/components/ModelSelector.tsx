@@ -11,6 +11,7 @@ import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
   describeGuidedGemmaMeta,
+  resolveGuidedGemmaModelTarget,
   resolveGuidedModelSelectionState,
 } from '@/lib/guidedModels'
 
@@ -276,9 +277,10 @@ export function ModelSelector({
                     disabled={disabled}
                     onClick={() => {
                       setOpen(false)
+                      const target = resolveGuidedGemmaModelTarget(entry)
                       void onSelect?.({
-                        modelId: entry.tag,
-                        runtimeId: entry.runtimeId,
+                        modelId: target.modelId,
+                        runtimeId: target.runtimeId,
                       })
                     }}
                     className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors ${

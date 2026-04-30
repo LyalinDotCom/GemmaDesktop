@@ -123,6 +123,7 @@ export interface InputBarProps {
   models: ModelSummary[]
   selectedModelId: string
   selectedRuntimeId: string
+  usesTemporaryModelOverride?: boolean
   selectedMode: SessionMode
   conversationKind: ConversationKind
   planMode: boolean
@@ -298,6 +299,7 @@ export function InputBar({
   models,
   selectedModelId,
   selectedRuntimeId,
+  usesTemporaryModelOverride = true,
   selectedMode,
   conversationKind,
   planMode,
@@ -2138,6 +2140,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           gemmaInstallStates={gemmaInstallStates}
           selectedModelId={selectedModelId}
           selectedRuntimeId={selectedRuntimeId}
+          usesTemporaryModelOverride={usesTemporaryModelOverride}
           mode={selectedMode}
           hasMessages={messages.length > 0}
           disabled={modelSelectionControlDisabled}

@@ -1,7 +1,6 @@
 import {
-  findGemmaCatalogEntryByTag,
-  isGuidedGemmaTag,
   parseGemmaContextBadge,
+  resolveGemmaCatalogEntryForModel,
   type GemmaSizeId,
 } from './gemmaCatalog'
 
@@ -204,8 +203,9 @@ export function resolveManagedOllamaProfile(
     return profile
   }
 
-  return isGuidedGemmaTag(modelId)
-    ? getDefaultOllamaSettings().modelProfiles[modelId]
+  const catalogEntry = resolveGemmaCatalogEntryForModel(modelId)
+  return catalogEntry
+    ? getDefaultOllamaSettings().modelProfiles[catalogEntry.tag]
     : undefined
 }
 
@@ -228,7 +228,7 @@ function getManagedGemmaMaxContext(
   modelId: string,
   fallback: AppOllamaSettings,
 ): number | undefined {
-  const catalogEntry = findGemmaCatalogEntryByTag(modelId)
+  const catalogEntry = resolveGemmaCatalogEntryForModel(modelId)
   return catalogEntry
     ? parseGemmaContextBadge(catalogEntry.contextBadge)
       ?? fallback.modelProfiles[modelId]?.num_ctx

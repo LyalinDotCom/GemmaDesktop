@@ -1,10 +1,11 @@
 import {
   DEFAULT_GEMMA_TAG,
   GEMMA_CATALOG,
-  findGemmaCatalogEntryByTag,
+  resolveGemmaCatalogEntryForModel,
   type GemmaCatalogEntry,
 } from '@shared/gemmaCatalog'
 import {
+  normalizeProviderRuntimeId,
   resolveSavedDefaultSessionPrimaryTarget,
   resolveConfiguredSessionPrimaryTarget,
   type AppModelSelectionSettings,
@@ -44,11 +45,12 @@ export interface GuidedModelSelectionState {
 
 function gemmaCandidateModels(
   models: ModelSummary[],
-  tag: string,
+  entry: GemmaCatalogEntry,
 ): ModelSummary[] {
   return models.filter(
     (model) =>
-      model.id === tag && runtimeFamilyFromId(model.runtimeId) === 'ollama',
+      runtimeFamilyFromId(model.runtimeId) === 'ollama'
+      && resolveGemmaCatalogEntryForModel(model.id, model.name)?.sizeId === entry.sizeId,
   )
 }
 
@@ -66,7 +68,7 @@ export function buildGuidedGemmaModels(
   installs: GemmaInstallState[] = [],
 ): GuidedGemmaModel[] {
   return GEMMA_CATALOG.map((entry) => {
-    const candidates = gemmaCandidateModels(models, entry.tag)
+    const candidates = gemmaCandidateModels(models, entry)
     const latestInstall = resolveLatestInstallState(installs, entry.tag)
     const loadedModel = candidates.find((model) => model.status === 'loaded')
     const loadingModel = candidates.find((model) => model.status === 'loading')
@@ -101,10 +103,15 @@ export function sortGuidedGemmaModelsHighestFirst(
 
 export function findGuidedGemmaModel(
   models: ModelSummary[],
-  tag: string,
+  modelId: string,
   installs: GemmaInstallState[] = [],
 ): GuidedGemmaModel | undefined {
-  return buildGuidedGemmaModels(models, installs).find((entry) => entry.tag === tag)
+  const catalogEntry = resolveGemmaCatalogEntryForModel(modelId)
+  return buildGuidedGemmaModels(models, installs).find((entry) =>
+    catalogEntry
+      ? entry.sizeId === catalogEntry.sizeId
+      : entry.tag === modelId,
+  )
 }
 
 export function isGuidedGemmaTarget(
@@ -112,9 +119,21 @@ export function isGuidedGemmaTarget(
 ): boolean {
   return Boolean(
     target.modelId
-    && target.runtimeId === 'ollama-native'
-    && findGemmaCatalogEntryByTag(target.modelId),
+    && target.runtimeId
+    && runtimeFamilyFromId(target.runtimeId) === 'ollama'
+    && resolveGemmaCatalogEntryForModel(target.modelId),
   )
+}
+
+export function resolveGuidedGemmaModelTarget(
+  entry: GuidedGemmaModel,
+): { modelId: string; runtimeId: string } {
+  return {
+    modelId: entry.model?.id ?? entry.tag,
+    runtimeId: entry.model
+      ? normalizeProviderRuntimeId(entry.model.runtimeId)
+      : entry.runtimeId,
+  }
 }
 
 export function resolveDefaultGemmaTarget(
@@ -252,7 +271,7 @@ export function resolveGuidedModelSummary(
 export function guidedFamilyFromModelId(
   modelId?: string,
 ): GuidedModelFamily {
-  return modelId && findGemmaCatalogEntryByTag(modelId) ? 'gemma' : 'other'
+  return modelId && resolveGemmaCatalogEntryForModel(modelId) ? 'gemma' : 'other'
 }
 
 export function buildOtherSelectableModels(
@@ -260,7 +279,9 @@ export function buildOtherSelectableModels(
   mode: SessionMode,
 ): SelectableModel[] {
   return buildSelectableModels(models, mode).filter(
-    (model) => !findGemmaCatalogEntryByTag(model.id),
+    (model) =>
+      model.family !== 'ollama'
+      || !resolveGemmaCatalogEntryForModel(model.id, model.name),
   )
 }
 

@@ -101,6 +101,9 @@ export const GEMMA_CATALOG: readonly GemmaCatalogEntry[] = [
 const GEMMA_CATALOG_BY_TAG = new Map(
   GEMMA_CATALOG.map((entry) => [entry.tag, entry]),
 )
+const GEMMA_CATALOG_BY_SIZE_ID = new Map(
+  GEMMA_CATALOG.map((entry) => [entry.sizeId, entry]),
+)
 
 export const DEFAULT_GEMMA_TAG = 'gemma4:26b'
 export const DEFAULT_HELPER_GEMMA_TAG = 'gemma4:e2b'
@@ -111,8 +114,58 @@ export function findGemmaCatalogEntryByTag(
   return GEMMA_CATALOG_BY_TAG.get(modelId)
 }
 
+export function findGemmaCatalogEntryBySizeId(
+  sizeId: GemmaSizeId,
+): GemmaCatalogEntry | undefined {
+  return GEMMA_CATALOG_BY_SIZE_ID.get(sizeId)
+}
+
+export function inferGemmaSizeFromModelText(
+  modelId: string,
+  displayName?: string,
+): GemmaSizeId | undefined {
+  if (isGemmaCloudTag(modelId)) {
+    return undefined
+  }
+
+  const explicitCatalogEntry = findGemmaCatalogEntryByTag(modelId)
+  if (explicitCatalogEntry) {
+    return explicitCatalogEntry.sizeId
+  }
+
+  const signature = [modelId, displayName]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+
+  if (!signature.includes('gemma')) {
+    return undefined
+  }
+
+  if (signature.includes('31b')) return '31b'
+  if (signature.includes('27b') || signature.includes('26b')) return '26b'
+  if (signature.includes('4b') || signature.includes('e4b')) return 'e4b'
+  if (signature.includes('2b') || signature.includes('e2b')) return 'e2b'
+
+  return undefined
+}
+
+export function resolveGemmaCatalogEntryForModel(
+  modelId: string,
+  displayName?: string,
+): GemmaCatalogEntry | undefined {
+  const exact = findGemmaCatalogEntryByTag(modelId)
+  if (exact) {
+    return exact
+  }
+
+  const sizeId = inferGemmaSizeFromModelText(modelId, displayName)
+  return sizeId ? findGemmaCatalogEntryBySizeId(sizeId) : undefined
+}
+
 export function isGuidedGemmaTag(modelId: string): boolean {
-  return GEMMA_CATALOG_BY_TAG.has(modelId)
+  return Boolean(resolveGemmaCatalogEntryForModel(modelId))
 }
 
 export function isGemmaCloudTag(modelId: string): boolean {
@@ -142,6 +195,6 @@ export function parseGemmaContextBadge(contextBadge: string): number | undefined
 export function getExpectedGemmaContextLength(
   modelId: string,
 ): number | undefined {
-  const entry = findGemmaCatalogEntryByTag(modelId)
+  const entry = resolveGemmaCatalogEntryForModel(modelId)
   return entry ? parseGemmaContextBadge(entry.contextBadge) : undefined
 }

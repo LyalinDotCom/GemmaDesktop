@@ -474,4 +474,39 @@ describe('InputBar mode rendering', () => {
     expect(markup.match(/<button[^>]*disabled=""[^>]*title="oMLX could not load[^"]*"[^>]*>/)?.[0] ?? '')
       .toMatch(/\sdisabled(?=[\s=>])/)
   })
+
+  it('maps saved Gemma variant defaults to the size ladder instead of Custom', () => {
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        models: [{
+          ...model,
+          id: 'gemma4:31b-mlx-bf16',
+          name: 'Gemma 4 31B MLX BF16',
+          optimizationTags: ['MLX'],
+        }],
+        selectedModelId: 'gemma4:31b-mlx-bf16',
+        selectedRuntimeId: 'ollama-native',
+        usesTemporaryModelOverride: false,
+      })),
+    )
+
+    expect(markup).toContain('X-High')
+    expect(markup).not.toContain('>Custom<')
+
+    const savedOtherDefaultMarkup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        models: [{
+          ...model,
+          id: 'qwen3:8b',
+          name: 'Qwen3 8B',
+        }],
+        selectedModelId: 'qwen3:8b',
+        selectedRuntimeId: 'ollama-native',
+        usesTemporaryModelOverride: false,
+      })),
+    )
+
+    expect(savedOtherDefaultMarkup).toContain('>Main<')
+    expect(savedOtherDefaultMarkup).not.toContain('>Custom<')
+  })
 })

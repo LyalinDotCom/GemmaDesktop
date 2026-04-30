@@ -1,6 +1,6 @@
 import {
-  findGemmaCatalogEntryByTag,
   parseGemmaContextBadge,
+  resolveGemmaCatalogEntryForModel,
   type GemmaSizeId,
 } from './gemmaCatalog'
 
@@ -224,35 +224,11 @@ function getManagedGemmaMaxContext(
   modelId: string,
   fallback: AppLmStudioSettings,
 ): number | undefined {
-  const catalogEntry = findGemmaCatalogEntryByTag(modelId)
+  const catalogEntry = resolveGemmaCatalogEntryForModel(modelId)
   return catalogEntry
     ? parseGemmaContextBadge(catalogEntry.contextBadge)
       ?? fallback.modelProfiles[modelId]?.context_length
     : undefined
-}
-
-function inferGemmaSizeFromModelText(modelId: string, displayName?: string): GemmaSizeId | undefined {
-  const explicitCatalogEntry = findGemmaCatalogEntryByTag(modelId)
-  if (explicitCatalogEntry) {
-    return explicitCatalogEntry.sizeId
-  }
-
-  const signature = [modelId, displayName]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .join(' ')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
-
-  if (!signature.includes('gemma')) {
-    return undefined
-  }
-
-  if (signature.includes('31b')) return '31b'
-  if (signature.includes('27b') || signature.includes('26b')) return '26b'
-  if (signature.includes('4b') || signature.includes('e4b')) return 'e4b'
-  if (signature.includes('2b') || signature.includes('e2b')) return 'e2b'
-
-  return undefined
 }
 
 export function resolveManagedLmStudioProfile(
@@ -271,8 +247,8 @@ export function resolveManagedLmStudioProfile(
     return profile
   }
 
-  const sizeId = inferGemmaSizeFromModelText(modelId, displayName)
-  return sizeId ? buildDefaultGemmaProfile(sizeId, totalMemoryBytes) : undefined
+  const catalogEntry = resolveGemmaCatalogEntryForModel(modelId, displayName)
+  return catalogEntry ? buildDefaultGemmaProfile(catalogEntry.sizeId, totalMemoryBytes) : undefined
 }
 
 function buildNumericOptionsRecord(
