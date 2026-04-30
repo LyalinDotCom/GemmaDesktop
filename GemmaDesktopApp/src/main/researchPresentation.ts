@@ -2,6 +2,7 @@ import type {
   ResearchRunResult,
   ResearchRunStatus,
 } from '@gemma-desktop/sdk-node'
+import path from 'path'
 import type {
   ResearchPanelProgressBlock,
   ResearchPanelStepStatus,
@@ -19,6 +20,7 @@ export interface ResearchAppMessage {
 }
 
 const TOP_DOMAIN_LIMIT = 6
+const FOLLOW_UP_SOURCE_PREVIEW_LIMIT = 8
 
 function formatElapsedSeconds(ms: number): string {
   const totalSeconds = Math.max(1, Math.round(ms / 1000))
@@ -572,4 +574,116 @@ export function buildResearchAssistantMessage(
     timestamp: Date.now(),
     durationMs,
   }
+}
+
+function formatResearchReferencePath(
+  filePath: string,
+  workingDirectory?: string,
+): string {
+  const absolutePath = path.resolve(filePath)
+  if (!workingDirectory?.trim()) {
+    return absolutePath
+  }
+
+  const relativePath = path.relative(path.resolve(workingDirectory), absolutePath)
+  return relativePath.length > 0
+    && !relativePath.startsWith('..')
+    && !path.isAbsolute(relativePath)
+    ? relativePath
+    : absolutePath
+}
+
+function buildResearchReferenceList(
+  result: ResearchRunResult,
+  workingDirectory?: string,
+): string[] {
+  const artifactDirectory = result.artifactDirectory
+  const references = [
+    ['Run metadata', path.join(artifactDirectory, 'run.json')],
+    ['Research plan', path.join(artifactDirectory, 'plan.json')],
+    ['Final report markdown', path.join(artifactDirectory, 'final', 'report.md')],
+    ['Final report JSON', path.join(artifactDirectory, 'final', 'report.json')],
+    ['Source index', path.join(artifactDirectory, 'sources', 'index.json')],
+    ['Evidence card index', path.join(artifactDirectory, 'evidence-cards', 'index.json')],
+    ...result.plan.topics.map((topic) => [
+      `Dossier for ${topic.title}`,
+      path.join(artifactDirectory, 'dossiers', `${topic.id}.json`),
+    ] as const),
+  ] as const
+
+  return references.map(([label, referencePath]) =>
+    `- ${label}: ${formatResearchReferencePath(referencePath, workingDirectory)}`,
+  )
+}
+
+function buildResearchSourcePreviewList(
+  result: ResearchRunResult,
+  workingDirectory?: string,
+): string[] {
+  const sources = result.sources.slice(0, FOLLOW_UP_SOURCE_PREVIEW_LIMIT)
+  return sources.map((source) => {
+    const title = source.title?.trim() || source.resolvedUrl
+    const sourcePath = path.join(result.artifactDirectory, 'sources', `${source.id}.json`)
+    return [
+      `- ${source.id}: ${title}`,
+      source.resolvedUrl,
+      `file: ${formatResearchReferencePath(sourcePath, workingDirectory)}`,
+    ].join(' | ')
+  })
+}
+
+export function buildResearchFollowUpContextText(input: {
+  promptText: string
+  result: ResearchRunResult
+  workingDirectory?: string
+}): string {
+  const { promptText, result, workingDirectory } = input
+  const referenceLines = buildResearchReferenceList(result, workingDirectory)
+  const sourcePreviewLines = buildResearchSourcePreviewList(result, workingDirectory)
+  const artifactDirectory = formatResearchReferencePath(
+    result.artifactDirectory,
+    workingDirectory,
+  )
+  const sourcePattern = formatResearchReferencePath(
+    path.join(result.artifactDirectory, 'sources', '<source-id>.json'),
+    workingDirectory,
+  )
+  const warningLines =
+    result.warnings && result.warnings.length > 0
+      ? [
+          'Research warnings:',
+          ...result.warnings.map((warning) => `- ${warning}`),
+        ]
+      : []
+  const sourcePreviewTail =
+    result.sources.length > FOLLOW_UP_SOURCE_PREVIEW_LIMIT
+      ? [`- ${result.sources.length - FOLLOW_UP_SOURCE_PREVIEW_LIMIT} more source record(s) are listed in the source index.`]
+      : []
+
+  return [
+    'Deep research follow-up context',
+    '',
+    'This session has already completed a deep research report and is now a normal Explore conversation. Answer follow-up questions from the report and referenced artifacts. When the user asks for details, evidence, citations, contradictions, or anything beyond the summary, inspect the referenced files before answering.',
+    '',
+    'If the user asks to run another deep research report, tell them to start a new run from the Research panel.',
+    '',
+    `Original research prompt:\n${promptText.trim()}`,
+    '',
+    `Artifact directory: ${artifactDirectory}`,
+    `Source record pattern: ${sourcePattern}`,
+    '',
+    'Reference files:',
+    ...referenceLines,
+    '',
+    'Source previews:',
+    ...(sourcePreviewLines.length > 0
+      ? [...sourcePreviewLines, ...sourcePreviewTail]
+      : ['- No source records were collected.']),
+    '',
+    ...warningLines,
+    warningLines.length > 0 ? '' : undefined,
+    `Report summary:\n${result.summary.trim()}`,
+    '',
+    `Final report shown to the user:\n${result.finalReport.trim()}`,
+  ].filter((line): line is string => typeof line === 'string').join('\n')
 }

@@ -37,6 +37,7 @@ import {
 import type {
   GemmaDesktop,
   GemmaDesktopSession,
+  ResearchRunResult,
   ResearchRunStatus,
   SessionDebugSnapshot,
 } from '@gemma-desktop/sdk-node'
@@ -49,6 +50,7 @@ import type {
   ToolResult,
   ModeSelection,
   SessionInput,
+  SessionMessage,
   StructuredOutputSpec,
 } from '@gemma-desktop/sdk-core'
 import {
@@ -376,6 +378,7 @@ import {
 } from './interruptedTurns'
 import {
   buildResearchAssistantMessage,
+  buildResearchFollowUpContextText,
   buildResearchLiveActivity,
   buildResearchPanelContent,
 } from './researchPresentation'
@@ -14150,6 +14153,19 @@ function mapModels(
   return models
 }
 
+function isHiddenSdkHistoryMessage(message: SessionMessage): boolean {
+  if (message.metadata?.appHidden === true) {
+    return true
+  }
+
+  const researchContext = message.metadata?.researchFollowUpContext
+  return Boolean(
+    researchContext
+    && typeof researchContext === 'object'
+    && !Array.isArray(researchContext),
+  )
+}
+
 function buildSessionDetailMessages(
   snapshot: SessionSnapshot,
   appMessages?: AppMessage[],
@@ -14170,6 +14186,10 @@ function buildSessionDetailMessages(
   // Build messages from SDK history
   const sdkMessages: SessionDetailMessage[] = snapshot.history
     .filter((m) => {
+      if (isHiddenSdkHistoryMessage(m)) {
+        return false
+      }
+
       if (m.role === 'user') {
         return true
       }
@@ -16169,6 +16189,117 @@ async function sendSessionMessageInternal(
   }
 }
 
+function buildCompletedResearchHistoryMessages(input: {
+  promptText: string
+  result: ResearchRunResult
+  workingDirectory: string
+  requestedAt: number
+  completedAt: number
+}): SessionMessage[] {
+  return [
+    {
+      id: `research-user-${input.result.runId}`,
+      role: 'user',
+      content: [{ type: 'text', text: input.promptText }],
+      createdAt: new Date(input.requestedAt).toISOString(),
+      metadata: {
+        researchRunId: input.result.runId,
+        researchRole: 'original_request',
+      },
+    },
+    {
+      id: `research-follow-up-context-${input.result.runId}`,
+      role: 'assistant',
+      content: [{
+        type: 'text',
+        text: buildResearchFollowUpContextText({
+          promptText: input.promptText,
+          result: input.result,
+          workingDirectory: input.workingDirectory,
+        }),
+      }],
+      createdAt: new Date(input.completedAt).toISOString(),
+      metadata: {
+        appHidden: true,
+        researchFollowUpContext: {
+          kind: 'reference',
+          runId: input.result.runId,
+          artifactDirectory: input.result.artifactDirectory,
+        },
+      },
+    },
+  ]
+}
+
+async function handOffCompletedResearchSessionToExplore(input: {
+  sessionId: string
+  session: GemmaDesktopSession
+  promptText: string
+  result: ResearchRunResult
+  requestedAt: number
+  completedAt: number
+}): Promise<{
+  session: GemmaDesktopSession
+  snapshot: SessionSnapshot
+}> {
+  if (!gemmaDesktop) {
+    throw new Error('Gemma Desktop runtime is not initialized.')
+  }
+
+  const currentSnapshot = input.session.snapshot()
+  const currentConfig = getSessionConfig(currentSnapshot)
+  const runtimeSelection = normalizeRuntimeForSessionMode(
+    currentSnapshot.runtimeId,
+    'explore',
+  )
+  const composition = await resolveSessionComposition({
+    snapshot: currentSnapshot,
+    conversationKind: 'normal',
+    sessionMode: 'explore',
+    planMode: false,
+    modelId: currentSnapshot.modelId,
+    runtimeId: runtimeSelection.runtimeId,
+    preferredRuntimeId: currentConfig.preferredRuntimeId,
+    selectedSkillIds: currentConfig.selectedSkillIds,
+    selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
+    surface: currentConfig.surface,
+    visibility: currentConfig.visibility,
+    storageScope: currentConfig.storageScope,
+  })
+  const additions = buildCompletedResearchHistoryMessages({
+    promptText: input.promptText,
+    result: input.result,
+    workingDirectory: currentSnapshot.workingDirectory,
+    requestedAt: input.requestedAt,
+    completedAt: input.completedAt,
+  })
+  const existingHistoryIds = new Set(currentSnapshot.history.map((message) => message.id))
+  const nextHistory = [
+    ...currentSnapshot.history,
+    ...additions.filter((message) => !existingHistoryIds.has(message.id)),
+  ]
+  const nextSnapshot: SessionSnapshot = {
+    ...currentSnapshot,
+    runtimeId: runtimeSelection.runtimeId,
+    mode: composition.mode,
+    systemInstructions: composition.systemInstructions,
+    metadata: composition.metadata,
+    history: nextHistory,
+    started: true,
+    savedAt: new Date(input.completedAt).toISOString(),
+  }
+  const nextSession = await gemmaDesktop.sessions.resume({
+    snapshot: nextSnapshot,
+  })
+
+  liveSessions.set(input.sessionId, nextSession)
+  return {
+    session: nextSession,
+    snapshot: nextSnapshot,
+  }
+}
+
 async function runSessionResearchInternal(
   sessionId: string,
   message: { text: string },
@@ -16198,6 +16329,10 @@ async function runSessionResearchInternal(
     releaseExecutionGate()
     throw error
   })
+  if (getSessionConfig(session.snapshot()).conversationKind !== 'research') {
+    releaseExecutionGate()
+    throw new Error('Start a new deep research run from the Research panel.')
+  }
   let abortController: AbortController | null = null
   let latestResearchStatus: ResearchRunStatus | undefined
   let releasePrimaryLease: (() => void) | null = null
@@ -16301,12 +16436,58 @@ async function runSessionResearchInternal(
         })
       },
     })
-    const durationMs = Math.max(Date.now() - requestStartedAt, 1)
+    const completedAt = Date.now()
+    const durationMs = Math.max(completedAt - requestStartedAt, 1)
     const assistantMessage = attachPrimaryModelMetadataToAppMessage(
       buildResearchAssistantMessage(result, durationMs),
       primaryTarget,
       { enabled: shouldPersistPrimaryModelMetadata },
     )
+    let snapshotToPersist = session.snapshot()
+    try {
+      const handoff = await handOffCompletedResearchSessionToExplore({
+        sessionId,
+        session,
+        promptText: message.text,
+        result,
+        requestedAt: requestStartedAt,
+        completedAt,
+      })
+      session = handoff.session
+      snapshotToPersist = handoff.snapshot
+      appendDebugLog(sessionId, {
+        layer: 'ipc',
+        direction: 'main->renderer',
+        event: 'sessions.run-research.follow-up-ready',
+        summary: 'Converted completed research conversation to normal Explore follow-up',
+        data: {
+          runId: result.runId,
+          artifactDirectory: result.artifactDirectory,
+          historyMessageCount: snapshotToPersist.history.length,
+        },
+      })
+    } catch (handoffError) {
+      console.warn(
+        `[gemma-desktop] Session ${sessionId} research follow-up handoff failed:`,
+        handoffError,
+      )
+      appendDebugLog(sessionId, {
+        layer: 'ipc',
+        direction: 'main->renderer',
+        event: 'sessions.run-research.follow-up-error',
+        summary:
+          handoffError instanceof Error
+            ? handoffError.message
+            : 'Research follow-up handoff failed',
+        data: {
+          runId: result.runId,
+          error:
+            handoffError instanceof Error
+              ? handoffError.message
+              : String(handoffError),
+        },
+      })
+    }
 
     store.clearPendingTurn(sessionId)
     store.upsertAppMessage(sessionId, assistantMessage)
@@ -16316,7 +16497,7 @@ async function runSessionResearchInternal(
       message: assistantMessage,
     })
     notifySessionCompleted(sessionId, assistantMessage)
-    await store.save(sessionId, session.snapshot(), {
+    await store.save(sessionId, snapshotToPersist, {
       lastMessage: result.summary.trim().slice(0, 120) || userMessagePreview,
     })
     appendDebugLog(sessionId, {

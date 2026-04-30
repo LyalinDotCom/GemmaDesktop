@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildResearchAssistantMessage,
+  buildResearchFollowUpContextText,
   buildResearchLiveActivity,
   buildResearchPanelContent,
   buildResearchPanelViewModel,
@@ -522,6 +523,65 @@ describe('research presentation', () => {
       path: '/tmp/research-artifacts',
       label: 'Open research artifacts',
     })
+  })
+
+  it('builds hidden Explore follow-up context with report and artifact references', () => {
+    const result = {
+      runId: 'run-1',
+      profile: 'deep',
+      artifactDirectory: '/tmp/project/.gemma/research/run-1',
+      runtimeId: 'ollama-native',
+      modelId: 'gemma4:31b-mlx-bf16',
+      plan: {
+        objective: 'Research Artemis mission coverage.',
+        topics: [
+          {
+            id: 'official-artemis-updates-1',
+            title: 'Official Artemis Updates',
+            goal: 'Track official mission updates.',
+            priority: 1,
+            searchQueries: ['Artemis mission official updates'],
+          },
+        ],
+        risks: [],
+        stopConditions: [],
+      },
+      sources: [
+        {
+          id: 'source-1',
+          requestedUrl: 'https://www.nasa.gov/artemis/',
+          resolvedUrl: 'https://www.nasa.gov/artemis/',
+          title: 'Artemis',
+          kind: 'webpage',
+          extractedWith: 'fetch',
+          blockedLikely: false,
+          fetchedAt: new Date().toISOString(),
+          topicIds: ['official-artemis-updates-1'],
+          contentPreview: 'NASA Artemis update preview.',
+        },
+      ],
+      dossiers: [],
+      finalReport: '# Report\n\nArtemis remains on track.',
+      summary: 'NASA says the mission remains on track.',
+      sourceIds: ['source-1'],
+      confidence: 0.82,
+      completedAt: new Date().toISOString(),
+    } satisfies ResearchRunResult
+
+    const context = buildResearchFollowUpContextText({
+      promptText: 'Research Artemis mission coverage.',
+      result,
+      workingDirectory: '/tmp/project',
+    })
+
+    expect(context).toContain('normal Explore conversation')
+    expect(context).toContain('Research Artemis mission coverage.')
+    expect(context).toContain('.gemma/research/run-1/final/report.md')
+    expect(context).toContain('.gemma/research/run-1/sources/index.json')
+    expect(context).toContain('.gemma/research/run-1/sources/source-1.json')
+    expect(context).toContain('.gemma/research/run-1/dossiers/official-artemis-updates-1.json')
+    expect(context).toContain('Final report shown to the user:')
+    expect(context).toContain('Artemis remains on track.')
   })
 
   it('surfaces completed research warnings before the report body', () => {
