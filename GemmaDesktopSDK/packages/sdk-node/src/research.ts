@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   GemmaDesktopError,
   renderTrace,
-  type ModeSelection,
   type SessionInput,
   type SessionSnapshot,
   type StructuredOutputSpec,
@@ -2568,19 +2567,6 @@ function normalizeDossierRecord(raw: Record<string, unknown>): NormalizedDossier
   };
 }
 
-function _normalizeSynthesisSelfCheckRecord(
-  raw: Record<string, unknown>,
-): SynthesisSelfCheckRecord | undefined {
-  if (typeof raw.ok !== "boolean") {
-    return undefined;
-  }
-  return {
-    ok: raw.ok,
-    issues: normalizeStringArray(raw.issues),
-    needsRetry: raw.ok ? false : Boolean(raw.needsRetry ?? true),
-  };
-}
-
 function buildHeuristicSynthesisSelfCheckRecord(
   brief: ResearchBrief,
   finalSynthesis: FinalSynthesisRecord,
@@ -2670,48 +2656,6 @@ function shouldPreserveBlockedSearchSnippet(
       .test([candidate.url, candidate.siteName ?? "", candidate.title, candidate.snippet].join(" ")))
     || (topicRequestsOfficialCoverage(topic) && isOfficialSearchCandidate(candidate))
   );
-}
-
-function _rankDiscoveryCandidatesForTopic(
-  topic: ResearchTopicPlan,
-  query: string,
-  results: Array<{
-    title: string;
-    url: string;
-    snippet: string;
-    siteName?: string;
-  }>,
-): SearchSnippetSourceCandidate[] {
-  return results
-    .map((result, index) => ({
-      topicId: topic.id,
-      query,
-      title: result.title,
-      url: result.url,
-      snippet: result.snippet,
-      siteName: result.siteName,
-      index,
-    }))
-    .sort((left, right) => {
-      const score = (candidate: SearchSnippetSourceCandidate): number => {
-        let value = 0;
-        if (topicRequestsOfficialCoverage(topic) && isOfficialSearchCandidate(candidate)) {
-          value += 100;
-        }
-        if (topicRequestsCommunityCoverage(topic) && isCommunitySearchCandidate(candidate)) {
-          value += 80;
-        }
-        if (topicRequestsReviewCoverage(topic) && isReviewSearchCandidate(candidate)) {
-          value += 40;
-        }
-        if (/wikipedia\.org/i.test(candidate.url)) {
-          value -= 20;
-        }
-        return value;
-      };
-      return score(right) - score(left) || left.index - right.index;
-    })
-    .map(({ index: _index, ...candidate }) => candidate);
 }
 
 function buildCommunityFallbackQuery(plan: ResearchPlan, topic: ResearchTopicPlan): string | undefined {
@@ -3467,7 +3411,6 @@ function buildNewsQueries(
 }
 
 function buildCoverageGroupsForNews(
-  plan: ResearchPlan,
   brief: ResearchBrief,
   profile: ResearchProfile,
 ): CoverageQueryGroup[] {
@@ -3580,7 +3523,6 @@ function buildCoverageGroupsForNews(
 }
 
 function buildCoveragePlan(
-  requestText: string,
   plan: ResearchPlan,
   brief: ResearchBrief,
   profile: ResearchProfile,
@@ -3590,7 +3532,7 @@ function buildCoveragePlan(
   let queryGroups: CoverageQueryGroup[];
 
   if (brief.taskType === "news-sweep") {
-    queryGroups = buildCoverageGroupsForNews(plan, brief, profile);
+    queryGroups = buildCoverageGroupsForNews(brief, profile);
   } else {
     queryGroups = plan.topics.map((topic) => {
       const sourceFamily = inferSourceFamilyForTopic(brief, topic);
@@ -4686,62 +4628,6 @@ function buildSynthesisPrompt(
     .join("\n\n");
 }
 
-function _buildSynthesisSelfCheckPrompt(
-  plan: ResearchPlan,
-  finalSynthesis: FinalSynthesisRecord,
-  sources: ResearchSourceRecord[],
-): string {
-  const sourceCards = sources
-    .filter((source) => finalSynthesis.sourceIds.includes(source.id))
-    .slice(0, SYNTHESIS_EVIDENCE_CARD_LIMIT)
-    .map((source) =>
-      buildResearchEvidenceCardFromKeywords(
-        source,
-        extractRelevanceKeywords([plan.objective, plan.scopeSummary, ...plan.topics.flatMap((topic) => [topic.title, topic.goal])], 24),
-        SYNTHESIS_EVIDENCE_EXCERPT_CHARS,
-      ),
-    );
-  return [
-    `Research objective: ${plan.objective}`,
-    plan.scopeSummary ? `Scope summary: ${plan.scopeSummary}` : "",
-    `Draft summary: ${finalSynthesis.summary}`,
-    "Draft report:",
-    finalSynthesis.reportMarkdown,
-    [
-      "Available source cards:",
-      ...sourceCards.map((card) => formatEvidenceCard(card)),
-    ].join("\n\n"),
-    "Check whether the report follows instructions, stays grounded in the gathered evidence, and cites enough support.",
-    "If the report is good enough, set ok to true and leave issues empty.",
-    "Use this exact shape:",
-    "{\"ok\":true,\"issues\":[],\"needsRetry\":false}",
-    "Allowed keys are only: ok, issues, needsRetry.",
-    "Return only a JSON object that matches the requested schema.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function _buildTopicWorkerMode(allowWorkspaceReads: boolean): ModeSelection {
-  const tools = ["fetch_url_safe"];
-  if (allowWorkspaceReads) {
-    tools.push(
-      "list_tree",
-      "search_paths",
-      "search_text",
-      "materialize_content",
-      "read_content",
-      "search_content",
-      "read_file",
-      "read_files",
-    );
-  }
-  return {
-    base: "tool-worker",
-    tools,
-  };
-}
-
 interface ResearchSubsessionBudget {
   timeoutMs: number;
   timeoutMode: "wall" | "idle";
@@ -5058,71 +4944,6 @@ function createSourcePreview(result: FetchExecutionResult): string {
       .replace(/\b(?:jsonset|thought:|reasoning:)\b/gi, ""),
     5000,
   );
-}
-
-function _extractFetchResultsFromEvents(events: ToolSubsessionResult["events"]): FetchExecutionResult[] {
-  const fetches: FetchExecutionResult[] = [];
-  for (const event of events) {
-    if (event.type !== "tool.result") {
-      continue;
-    }
-    const payload = event.payload as Record<string, unknown>;
-    if (payload.toolName !== "fetch_url" && payload.toolName !== "fetch_url_safe") {
-      continue;
-    }
-    const structuredOutput = payload.structuredOutput;
-    if (!structuredOutput || typeof structuredOutput !== "object") {
-      continue;
-    }
-    const record = structuredOutput as FetchExecutionResult["structuredOutput"] & { ok?: boolean };
-    if (record.ok === false) {
-      continue;
-    }
-    if (typeof record.requestedUrl !== "string" || typeof record.resolvedUrl !== "string") {
-      continue;
-    }
-    fetches.push({
-      output: typeof payload.output === "string" ? payload.output : "",
-      structuredOutput: record,
-      metadata:
-        payload.metadata && typeof payload.metadata === "object"
-          ? payload.metadata as Record<string, unknown>
-          : undefined,
-    });
-  }
-  return fetches;
-}
-
-function _extractFetchErrorsFromEvents(
-  events: ToolSubsessionResult["events"],
-): Array<{ url: string; error: string }> {
-  const fetchErrors: Array<{ url: string; error: string }> = [];
-  for (const event of events) {
-    if (event.type !== "tool.result") {
-      continue;
-    }
-    const payload = event.payload as Record<string, unknown>;
-    if (payload.toolName !== "fetch_url_safe") {
-      continue;
-    }
-    const structuredOutput = payload.structuredOutput;
-    if (!structuredOutput || typeof structuredOutput !== "object") {
-      continue;
-    }
-    const record = structuredOutput as {
-      ok?: boolean;
-      requestedUrl?: string;
-      error?: string;
-    };
-    if (record.ok !== false || typeof record.requestedUrl !== "string" || typeof record.error !== "string") {
-      continue;
-    }
-    fetchErrors.push({
-      url: record.requestedUrl,
-      error: record.error,
-    });
-  }
-  return fetchErrors;
 }
 
 function normalizeSourceRef(
@@ -5796,7 +5617,7 @@ export class ResearchRunner {
       }
 
       const brief = buildResearchBrief(requestText, plan);
-      const coveragePlanResult = buildCoveragePlan(requestText, plan, brief, normalizedOptions.profile);
+      const coveragePlanResult = buildCoveragePlan(plan, brief, normalizedOptions.profile);
       plan = coveragePlanResult.effectivePlan;
       const coveragePlan = coveragePlanResult.coveragePlan;
       const topicById = new Map(plan.topics.map((topic) => [topic.id, topic]));

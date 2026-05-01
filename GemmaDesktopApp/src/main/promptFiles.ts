@@ -3,8 +3,6 @@ import path from 'node:path'
 import {
   ASK_USER_TOOL,
   EXIT_PLAN_MODE_TOOL,
-  LEGACY_ASK_PLAN_QUESTION_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
   PLAN_BUILD_ONLY_TOOL_NAMES,
   type BaseSessionMode,
 } from './tooling'
@@ -219,8 +217,6 @@ export function getPlanningSystemInstructions(
       BASE_MODE_LABEL: renderBaseModeLabel(baseMode),
       ASK_USER_TOOL,
       EXIT_PLAN_MODE_TOOL,
-      LEGACY_ASK_PLAN_QUESTION_TOOL,
-      LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
       PLAN_BUILD_ONLY_TOOLS: PLAN_BUILD_ONLY_TOOL_NAMES.join(', '),
     },
   )

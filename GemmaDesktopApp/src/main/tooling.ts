@@ -28,8 +28,6 @@ export type AppToolPolicyConfig = {
 
 export const ASK_USER_TOOL = 'ask_user'
 export const EXIT_PLAN_MODE_TOOL = 'exit_plan_mode'
-export const LEGACY_ASK_PLAN_QUESTION_TOOL = 'ask_plan_question'
-export const LEGACY_PREPARE_PLAN_EXECUTION_TOOL = 'prepare_plan_execution'
 export const ACTIVATE_SKILL_TOOL = 'activate_skill'
 export const SEARCH_WEB_TOOL = 'search_web'
 export const PLAN_BUILD_ONLY_TOOL_NAMES = [
@@ -93,8 +91,6 @@ export const PLAN_OVERLAY_ALLOWED_TOOL_NAMES = [
   'browser',
   ASK_USER_TOOL,
   EXIT_PLAN_MODE_TOOL,
-  LEGACY_ASK_PLAN_QUESTION_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
 ] as const
 
 export const CONFIGURABLE_TOOL_NAME_SET = new Set<string>(CONFIGURABLE_TOOL_NAMES)
@@ -483,8 +479,6 @@ export function buildPlanOverlayModeSelection(
     tools: [
       ASK_USER_TOOL,
       EXIT_PLAN_MODE_TOOL,
-      LEGACY_ASK_PLAN_QUESTION_TOOL,
-      LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
     ],
   })
 }

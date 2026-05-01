@@ -508,7 +508,6 @@ describe("research content-quality hardening", () => {
 
     it("flags pools dominated by low-quality content", () => {
       const brief = buildBrief();
-      const request = brief.objective;
       const plan = {
         objective: brief.objective,
         scopeSummary: brief.scopeSummary,
@@ -524,7 +523,7 @@ describe("research content-quality hardening", () => {
         risks: [],
         stopConditions: [],
       };
-      const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+      const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
       const topicId = coveragePlan.queryGroups[0]!.topicId;
       const sources = Array.from({ length: 5 }, (_, idx) => ({
         id: `source-${idx + 1}`,
@@ -556,7 +555,6 @@ describe("research content-quality hardening", () => {
 
     it("does not mark exhausted low-quality coverage as sufficient just because passes ran out", () => {
       const brief = buildBrief();
-      const request = brief.objective;
       const plan = {
         objective: brief.objective,
         scopeSummary: brief.scopeSummary,
@@ -572,7 +570,7 @@ describe("research content-quality hardening", () => {
         risks: [],
         stopConditions: [],
       };
-      const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+      const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
       const topicId = coveragePlan.queryGroups[0]!.topicId;
       const sources = Array.from({ length: 5 }, (_, idx) => ({
         id: `source-${idx + 1}`,
@@ -784,7 +782,6 @@ describe("research content-quality hardening", () => {
         optionalSourceFamilies: ["official" as const],
         reportRequirements: [],
       };
-      const request = "What are all the announcements from Google DeepMind in March & April 2026";
       const plan = {
         objective: brief.objective,
         scopeSummary: brief.scopeSummary,
@@ -800,7 +797,7 @@ describe("research content-quality hardening", () => {
         risks: [],
         stopConditions: [],
       };
-      const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+      const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
       const topicId = coveragePlan.queryGroups[0]!.topicId;
       const sources = [
         {
@@ -848,7 +845,6 @@ describe("research content-quality hardening", () => {
 
     it("flags pools dominated by off-topic sources", () => {
       const brief = buildBrief();
-      const request = brief.objective;
       const plan = {
         objective: brief.objective,
         scopeSummary: brief.scopeSummary,
@@ -864,7 +860,7 @@ describe("research content-quality hardening", () => {
         risks: [],
         stopConditions: [],
       };
-      const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+      const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
       const topicId = coveragePlan.queryGroups[0]!.topicId;
       const offTopicBody =
         "Your Gemini horoscope predicts a calm day ahead. The zodiac sign of Gemini " +

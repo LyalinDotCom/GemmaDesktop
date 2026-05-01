@@ -78,7 +78,6 @@ describe("research scenario: Google DeepMind announcements", () => {
   describe("coverage plan expansion (deep profile)", () => {
     const brief = __testOnly.buildResearchBrief(CANONICAL_REQUEST, CANONICAL_PLAN);
     const { coveragePlan } = __testOnly.buildCoveragePlan(
-      CANONICAL_REQUEST,
       CANONICAL_PLAN,
       brief,
       "deep",
@@ -188,7 +187,6 @@ describe("research scenario: Google DeepMind announcements", () => {
     // schedule a site:deepmind.google follow-up.
     const brief = __testOnly.buildResearchBrief(CANONICAL_REQUEST, CANONICAL_PLAN);
     const { coveragePlan } = __testOnly.buildCoveragePlan(
-      CANONICAL_REQUEST,
       CANONICAL_PLAN,
       brief,
       "deep",

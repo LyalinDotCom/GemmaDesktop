@@ -14,8 +14,6 @@ import {
   ACTIVATE_SKILL_TOOL,
   ASK_USER_TOOL,
   EXIT_PLAN_MODE_TOOL,
-  LEGACY_ASK_PLAN_QUESTION_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
   normalizePlanExitInput,
   normalizePlanQuestionInput,
   normalizeSkillActivationInput,
@@ -84,7 +82,7 @@ interface PendingPlanExit {
   summary: string
   details?: string
   source?: 'model' | 'synthetic'
-  trigger?: 'exit_plan_mode' | 'legacy_prepare_plan_execution' | 'blocked_build_tool'
+  trigger?: 'exit_plan_mode'
   attentionToken?: number
 }
 
@@ -297,10 +295,6 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
   const askUserTool = buildAskUserTool(
     ASK_USER_TOOL,
     'Ask the user a direct planning question when you are blocked by a missing decision or requirement.',
-  )
-  const legacyAskPlanQuestionTool = buildAskUserTool(
-    LEGACY_ASK_PLAN_QUESTION_TOOL,
-    'Deprecated alias for ask_user. Ask the user a direct planning question when you are blocked.',
   )
 
   const activateSkillTool: RegisteredTool = {
@@ -1343,7 +1337,6 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
 
   const buildExitPlanModeTool = (
     name: string,
-    trigger: PendingPlanExit['trigger'],
     description: string,
   ): RegisteredTool => ({
     name,
@@ -1371,7 +1364,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         summary: normalizedInput.summary,
         details: normalizedInput.details,
         source: 'model',
-        trigger,
+        trigger: 'exit_plan_mode',
         attentionToken: Date.now(),
       }
 
@@ -1401,7 +1394,6 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
   return [
     buildSearchWebTool(),
     askUserTool,
-    legacyAskPlanQuestionTool,
     activateSkillTool,
     inspectFileTool,
     materializeContentTool,
@@ -1421,13 +1413,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
     ...chromeDevtoolsTools,
     buildExitPlanModeTool(
       EXIT_PLAN_MODE_TOOL,
-      'exit_plan_mode',
       'Prepare the current plan to exit plan mode and switch this session back to its underlying work mode.',
-    ),
-    buildExitPlanModeTool(
-      LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
-      'legacy_prepare_plan_execution',
-      'Deprecated alias for exit_plan_mode. Prepare the current plan to switch this session back to work mode.',
     ),
   ]
 }

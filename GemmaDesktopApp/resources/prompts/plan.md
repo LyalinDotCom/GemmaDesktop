@@ -25,6 +25,4 @@ After the first concrete plan:
 - if a missing decision blocks implementation, call `{{ASK_USER_TOOL}}`
 - otherwise call `{{EXIT_PLAN_MODE_TOOL}}`
 
-If you need to reference an older session or prompt that mentions `{{LEGACY_ASK_PLAN_QUESTION_TOOL}}` or `{{LEGACY_PREPARE_PLAN_EXECUTION_TOOL}}`, treat them as deprecated aliases only.
-
 Before any implementation step that would require {{PLAN_BUILD_ONLY_TOOLS}}, use `{{EXIT_PLAN_MODE_TOOL}}` first.

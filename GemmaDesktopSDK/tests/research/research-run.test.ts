@@ -644,7 +644,7 @@ describe("research runs", { timeout: 120000 }, () => {
     };
 
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
     const sourceFamilies = coveragePlan.queryGroups.map((group) => group.sourceFamily);
 
     expect(brief.taskType).toBe("news-sweep");
@@ -669,7 +669,7 @@ describe("research runs", { timeout: 120000 }, () => {
       "Research planner exceeded the 2 minute time budget while generating structured output.",
     );
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
 
     expect(plan.topics.map((topic) => topic.title)).toEqual([
       "Front Page Emphasis",
@@ -946,7 +946,7 @@ describe("research runs", { timeout: 120000 }, () => {
     };
 
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
     const articleGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "mainstream_article");
 
     expect(brief.taskType).toBe("news-sweep");
@@ -979,7 +979,7 @@ describe("research runs", { timeout: 120000 }, () => {
     };
 
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
     const wireGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "wire");
     const officialGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "official");
     const communityGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "community");
@@ -1061,7 +1061,7 @@ describe("research runs", { timeout: 120000 }, () => {
     };
 
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
     const officialGroup = coveragePlan.queryGroups.find((group) => group.topicId === "react-19-official-status-and-documentation-1");
     const frameworkGroup = coveragePlan.queryGroups.find((group) => group.topicId === "framework-and-tooling-integration-2");
     const githubGroup = coveragePlan.queryGroups.find((group) => group.topicId === "github-and-developer-ecosystem-updates-3");
@@ -1109,7 +1109,7 @@ describe("research runs", { timeout: 120000 }, () => {
     };
 
     const brief = __testOnly.buildResearchBrief(request, plan);
-    const { coveragePlan } = __testOnly.buildCoveragePlan(request, plan, brief, "deep");
+    const { coveragePlan } = __testOnly.buildCoveragePlan(plan, brief, "deep");
     const articleGroup = coveragePlan.queryGroups.find((group) => group.sourceFamily === "mainstream_article");
     const assessment = __testOnly.buildCoverageAssessment(
       brief,

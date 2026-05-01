@@ -2,14 +2,12 @@ import { randomUUID } from 'crypto'
 import type { SessionMessage } from '@gemma-desktop/sdk-core'
 import {
   EXIT_PLAN_MODE_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
   type AppSessionMode,
   type ConversationKind,
 } from './tooling'
 
 const PLAN_EXIT_TOOL_NAME_SET = new Set([
   EXIT_PLAN_MODE_TOOL,
-  LEGACY_PREPARE_PLAN_EXECUTION_TOOL,
 ])
 
 const PLACEHOLDER_SESSION_TITLE = 'New Conversation'
