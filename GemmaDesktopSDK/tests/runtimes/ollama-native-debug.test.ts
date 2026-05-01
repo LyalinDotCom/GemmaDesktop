@@ -263,4 +263,166 @@ describe("ollama native debug events", () => {
       ],
     });
   });
+
+  it("keeps Gemma 4 native chat requests structured instead of injecting raw turn or tool tokens", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        capturedBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            model: "gemma4:31b",
+            message: {
+              role: "assistant",
+              content: "Done.",
+            },
+            done: true,
+            done_reason: "stop",
+            prompt_eval_count: 8,
+            eval_count: 4,
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+    await adapter.generate({
+      model: "gemma4:31b",
+      messages: [
+        {
+          id: "msg_system",
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: [
+                "<gemma_desktop_system_prompt>",
+                "<system_prompt_section source=\"model\" id=\"gemma4-thinking\">",
+                "<|think|>",
+                "Thinking mode is enabled for this Gemma 4 conversation.",
+                "</system_prompt_section>",
+                "</gemma_desktop_system_prompt>",
+              ].join("\n"),
+            },
+          ],
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "msg_user",
+          role: "user",
+          content: [{ type: "text", text: "Read package.json." }],
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "msg_assistant",
+          role: "assistant",
+          content: [],
+          reasoning: "I should inspect the file before editing.",
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "read_file",
+              input: { path: "package.json" },
+            },
+          ],
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "msg_tool",
+          role: "tool",
+          name: "read_file",
+          toolCallId: "call_1",
+          content: [{ type: "text", text: "{\"name\":\"demo\"}" }],
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      tools: [
+        {
+          name: "read_file",
+          description: "Read a UTF-8 text file.",
+          inputSchema: {
+            type: "object",
+            required: ["path"],
+            properties: {
+              path: {
+                type: "string",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      ],
+      settings: {
+        reasoningMode: "auto",
+      },
+    });
+
+    expect(capturedBody).toMatchObject({
+      model: "gemma4:31b",
+      stream: false,
+      think: true,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "read_file",
+            description: "Read a UTF-8 text file.",
+            parameters: {
+              type: "object",
+              required: ["path"],
+            },
+          },
+        },
+      ],
+      messages: [
+        {
+          role: "system",
+          content: expect.stringContaining("<gemma_desktop_system_prompt>"),
+        },
+        {
+          role: "user",
+          content: "Read package.json.",
+        },
+        {
+          role: "assistant",
+          content: "",
+          thinking: "I should inspect the file before editing.",
+          tool_calls: [
+            {
+              function: {
+                name: "read_file",
+                arguments: {
+                  path: "package.json",
+                },
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: "{\"name\":\"demo\"}",
+          tool_name: "read_file",
+        },
+      ],
+    });
+
+    const messages = capturedBody?.messages as Array<Record<string, unknown>> | undefined;
+    const systemContent = String(messages?.[0]?.content ?? "");
+    expect(systemContent).toContain("<|think|>");
+    expect(systemContent).not.toContain("<|turn>system");
+    expect(systemContent).not.toContain("<turn|>");
+    expect(systemContent).not.toContain("<|tool>");
+    expect(systemContent).not.toContain("<tool|>");
+    expect(systemContent).not.toContain("declaration:read_file");
+
+    const serializedBody = JSON.stringify(capturedBody);
+    expect(serializedBody).not.toContain("<|turn>user");
+    expect(serializedBody).not.toContain("<|tool>");
+    expect(serializedBody).not.toContain("<tool|>");
+    expect(serializedBody).not.toContain("declaration:read_file");
+  });
 });
