@@ -39,8 +39,6 @@ describe('AutomationStore', () => {
       id: 'automation-1',
       name: 'Nightly build check',
       prompt: 'Run the nightly check.',
-      runtimeId: 'ollama-native',
-      modelId: 'gemma4:26b',
       mode: 'build',
       selectedSkillIds: [],
       selectedSkillNames: [],

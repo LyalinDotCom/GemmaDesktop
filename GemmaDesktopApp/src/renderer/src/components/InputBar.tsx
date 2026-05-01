@@ -54,7 +54,6 @@ import {
   mergeSpeechChunkBuffers,
 } from '@/lib/speechAudio'
 import { ToolSelector } from '@/components/ToolSelector'
-import { GemmaSizeSelector } from '@/components/GemmaSizeSelector'
 import { ApprovalModeToggle } from '@/components/ApprovalModeToggle'
 import {
   applyLatestAssistantPrimaryModelFallback,
@@ -81,7 +80,6 @@ import type {
   DebugLogEntry,
   DebugSessionSnapshot,
   FileAttachment,
-  GemmaInstallState,
   MessageContent,
   ModelSummary,
   PendingCompaction,
@@ -123,19 +121,13 @@ export interface InputBarProps {
   models: ModelSummary[]
   selectedModelId: string
   selectedRuntimeId: string
-  usesTemporaryModelOverride?: boolean
   selectedMode: SessionMode
   conversationKind: ConversationKind
   planMode: boolean
   approvalMode?: ConversationApprovalMode
   onSelectConversationMode?: (mode: ConversationRunMode) => void
   onSelectApprovalMode?: (mode: ConversationApprovalMode) => void
-  onSelectModel?: (selection: {
-    modelId: string
-    runtimeId: string
-  }) => void | Promise<void>
   modeChangeDisabled?: boolean
-  modelSelectionDisabled?: boolean
   conversationRunDisabledReason?: string | null
   busyQueueDisabledReason?: string | null
   messages: ChatMessage[]
@@ -161,7 +153,6 @@ export interface InputBarProps {
   onInstallSpeech: () => void | Promise<unknown>
   onRepairSpeech: () => void | Promise<unknown>
   onOpenSpeechSettings: () => void
-  gemmaInstallStates?: GemmaInstallState[]
   statusBarTarget?: HTMLElement | null
   /**
    * Sentences the user has pinned from previous assistant replies. Rendered
@@ -299,16 +290,13 @@ export function InputBar({
   models,
   selectedModelId,
   selectedRuntimeId,
-  usesTemporaryModelOverride = true,
   selectedMode,
   conversationKind,
   planMode,
   approvalMode,
   onSelectConversationMode,
   onSelectApprovalMode,
-  onSelectModel,
   modeChangeDisabled = false,
-  modelSelectionDisabled,
   conversationRunDisabledReason = null,
   busyQueueDisabledReason = null,
   messages,
@@ -334,7 +322,6 @@ export function InputBar({
   onInstallSpeech,
   onRepairSpeech,
   onOpenSpeechSettings,
-  gemmaInstallStates = [],
   statusBarTarget = null,
   pinnedQuotes,
   onRemovePinnedQuote,
@@ -484,10 +471,6 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
-  const modelSelectionControlDisabled =
-    modelSelectionDisabled == null
-      ? conversationModeControlDisabled
-      : modelSelectionDisabled || isCompacting || speechLocked || sessionBusy
 
   const attachmentAccept = useMemo(() => {
     const accepted = [
@@ -2135,17 +2118,6 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           />
         )}
 
-        <GemmaSizeSelector
-          models={models}
-          gemmaInstallStates={gemmaInstallStates}
-          selectedModelId={selectedModelId}
-          selectedRuntimeId={selectedRuntimeId}
-          usesTemporaryModelOverride={usesTemporaryModelOverride}
-          mode={selectedMode}
-          hasMessages={messages.length > 0}
-          disabled={modelSelectionControlDisabled}
-          onSelect={onSelectModel}
-        />
         {!isResearchConversation && (
           <ApprovalModeToggle
             mode={approvalMode}

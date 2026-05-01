@@ -36,6 +36,7 @@ import type {
   FileAttachment,
   MessageContent,
   ProjectBrowserState,
+  PrimaryModelAvailabilityIssue,
   QueuedUserMessage,
   SessionMode,
 } from '@/types'
@@ -43,7 +44,6 @@ import type { ConversationRunMode } from '@/components/ConversationModeToolbar'
 import { buildIdleAppTerminalState } from '@shared/appTerminal'
 import {
   isGuidedGemmaMissing,
-  resolveDefaultAutomationModelTarget,
   resolveDefaultResearchModelTarget,
   resolveDefaultSessionModelTarget,
 } from '@/lib/guidedModels'
@@ -105,7 +105,10 @@ import {
   stripConversationExecutionBlockedErrorCode,
   type ConversationExecutionRun,
 } from '@shared/conversationExecutionPolicy'
-import { createDefaultModelSelectionSettings } from '@shared/sessionModelDefaults'
+import {
+  createDefaultModelSelectionSettings,
+  normalizeProviderRuntimeId,
+} from '@shared/sessionModelDefaults'
 import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
 
 const DEFAULT_NOTIFICATION_PERMISSION_STATE: NotificationPermissionState = {
@@ -145,6 +148,17 @@ function summarizeNarrationAttachments(
     kind: attachment.kind,
     name: attachment.name,
   }))
+}
+
+function findModelAvailabilityIssue(
+  issues: PrimaryModelAvailabilityIssue[],
+  target: { runtimeId: string; modelId: string },
+): PrimaryModelAvailabilityIssue | null {
+  const normalizedRuntimeId = normalizeProviderRuntimeId(target.runtimeId)
+  return issues.find((issue) =>
+    issue.modelId === target.modelId
+    && normalizeProviderRuntimeId(issue.runtimeId) === normalizedRuntimeId
+  ) ?? null
 }
 
 function collectAssistantMessageIds(
@@ -451,9 +465,16 @@ export function App() {
     state.bootstrapState.status,
   ])
 
-  const newConversationRunDisabledReason = activeConversationRuns[0]
+  const primaryModelAvailabilityIssue = findModelAvailabilityIssue(
+    state.bootstrapState.modelAvailabilityIssues,
+    state.settings.modelSelection.mainModel,
+  )
+  const globalPrimaryModelDisabledReason = primaryModelAvailabilityIssue?.message ?? null
+
+  const newConversationRunDisabledReason = globalPrimaryModelDisabledReason
+    ?? (activeConversationRuns[0]
     ? formatConversationExecutionBlockedReason(activeConversationRuns[0])
-    : null
+      : null)
   const primaryConversationBlocker = state.activeSessionId
     ? findBlockingConversationExecution(
       activeConversationRuns,
@@ -480,12 +501,9 @@ export function App() {
       projectBrowserSessionId: projectBrowserState.sessionId,
       targetSessionId: state.activeSessionId,
     })
-  const primaryConversationRunDisabledReason = primaryCoBrowseUserControlDisabledReason
+  const primaryConversationRunDisabledReason = globalPrimaryModelDisabledReason
+    ?? primaryCoBrowseUserControlDisabledReason
     ?? primaryConversationBlockerReason
-  const primaryModelSelectionDisabled =
-    isBusy
-    || Boolean(primaryCoBrowseUserControlDisabledReason)
-    || Boolean(primaryConversationBlockerReason)
   const globalCoBrowseUserControlDisabledReason =
     getCoBrowseUserControlComposerLockReason({
       coBrowseActive,
@@ -494,12 +512,9 @@ export function App() {
       projectBrowserSessionId: projectBrowserState.sessionId,
       targetSessionId: globalChatSession.sessionId,
     })
-  const globalConversationRunDisabledReason = globalCoBrowseUserControlDisabledReason
+  const globalConversationRunDisabledReason = globalPrimaryModelDisabledReason
+    ?? globalCoBrowseUserControlDisabledReason
     ?? globalConversationBlockerReason
-  const globalModelSelectionDisabled =
-    globalChatBusy
-    || Boolean(globalCoBrowseUserControlDisabledReason)
-    || Boolean(globalConversationBlockerReason)
   const primaryCoBrowseBusyQueueDisabledReason =
     coBrowseActive
     && state.activeSessionId != null
@@ -550,19 +565,6 @@ export function App() {
     ],
   )
   useTheme(state.settings.theme)
-  const defaultAutomationModelTarget = useMemo(
-    () =>
-      resolveDefaultAutomationModelTarget(
-        state.models,
-        state.gemmaInstallStates,
-        state.settings.modelSelection,
-      ),
-    [
-      state.gemmaInstallStates,
-      state.models,
-      state.settings.modelSelection,
-    ],
-  )
   const pinnedSentenceKeysByMessageId = useMemo(
     () => buildPinnedSentenceKeysMap(activeSelection.pinnedQuotes),
     [activeSelection.pinnedQuotes],
@@ -655,8 +657,6 @@ export function App() {
       dispatch({ type: 'SET_VIEW', view: 'chat' })
       setAssistantHomeVisible(false)
       const detail = await createSession({
-        modelId: target.modelId,
-        runtimeId: target.runtimeId,
         conversationKind: 'research',
         workingDirectory,
         title: input.title.trim() || researchPanelDefaultTitle,
@@ -1103,46 +1103,6 @@ export function App() {
     refreshSessionSummaries,
   ])
 
-  const handleSelectGlobalChatModel = useCallback((selection: {
-    modelId: string
-    runtimeId: string
-  }) => {
-    const sessionId = globalChatSession.sessionId
-    if (
-      globalModelSelectionDisabled
-      || !sessionId
-      || !globalChatDetail
-      || globalChatDetail.conversationKind !== 'normal'
-    ) {
-      return
-    }
-
-    if (
-      selection.modelId === globalChatDetail.modelId
-      && selection.runtimeId === globalChatDetail.runtimeId
-    ) {
-      return
-    }
-
-    void (async () => {
-      const ready = await ensureTargetModelReady(selection)
-      if (!ready) {
-        return
-      }
-
-      await window.gemmaDesktopBridge.sessions.update(sessionId, selection)
-      await globalChatSession.retry()
-      await refreshSessionSummaries()
-    })().catch((error) => {
-      console.error('Failed to update Assistant Chat model:', error)
-    })
-  }, [
-    globalModelSelectionDisabled,
-    globalChatDetail,
-    globalChatSession,
-    refreshSessionSummaries,
-  ])
-
   const handleSelectGlobalChatApprovalMode = useCallback((approvalMode: ConversationApprovalMode) => {
     const sessionId = globalChatSession.sessionId
     if (
@@ -1227,35 +1187,6 @@ export function App() {
       planMode: nextPlanMode,
     }).catch((error) => {
       console.error('Failed to update conversation mode:', error)
-    })
-  }
-  const handleSelectConversationModel = (selection: {
-    modelId: string
-    runtimeId: string
-  }) => {
-    const sessionId = state.activeSessionId
-    const activeSession = state.activeSession
-
-    if (
-      primaryModelSelectionDisabled
-      || !sessionId
-      || !activeSession
-      || activeConversationKind !== 'normal'
-    ) {
-      return
-    }
-
-    if (
-      selection.modelId === activeSession.modelId
-      && selection.runtimeId === activeSession.runtimeId
-    ) {
-      return
-    }
-
-    void (async () => {
-      await switchActiveSessionModel(selection)
-    })().catch((error) => {
-      console.error('Failed to update conversation model:', error)
     })
   }
   const handleSelectConversationApprovalMode = (approvalMode: ConversationApprovalMode) => {
@@ -1691,13 +1622,10 @@ export function App() {
       return (
         <AutomationsPanel
           activeAutomation={state.activeAutomation}
-          models={state.models}
-          gemmaInstallStates={state.gemmaInstallStates}
           installedSkills={state.installedSkills}
           defaultWorkingDirectory={state.settings.defaultProjectDirectory}
-          defaultModelTarget={defaultAutomationModelTarget}
           newAutomationSeed={newAutomationSeed}
-          onEnsureGemmaModel={ensureGemmaModel}
+          disabledReason={globalPrimaryModelDisabledReason}
           onCreateAutomation={createAutomation}
           onUpdateAutomation={updateAutomation}
           onDeleteAutomation={deleteAutomation}
@@ -1936,30 +1864,6 @@ export function App() {
     return result.ok
   }
 
-  const switchActiveSessionModel = async (
-    selection: { modelId: string; runtimeId: string },
-  ): Promise<boolean> => {
-    const ready = await ensureTargetModelReady(selection)
-    if (!ready) {
-      return false
-    }
-
-    if (
-      state.activeSessionId
-      && state.activeSession
-      && !isBusy
-      && (
-        selection.modelId !== state.activeSession.modelId
-        || selection.runtimeId !== state.activeSession.runtimeId
-        || state.activeSession.usesTemporaryModelOverride
-      )
-    ) {
-      await updateSession(state.activeSessionId, selection)
-    }
-
-    return true
-  }
-
   const createConversationWithDefaults = async (workingDirectory: string) => {
     const normalizedWorkingDirectory = workingDirectory.trim()
     if (
@@ -1992,8 +1896,6 @@ export function App() {
       dispatch({ type: 'SET_VIEW', view: 'chat' })
       setAssistantHomeVisible(false)
       await createSession({
-        modelId: target.modelId,
-        runtimeId: target.runtimeId,
         conversationKind: 'normal',
         workMode: nextWorkMode,
         selectedToolIds: getDefaultSelectedSessionToolIds({
@@ -2185,16 +2087,13 @@ export function App() {
       models={state.models}
       selectedModelId={state.activeSession.modelId}
       selectedRuntimeId={state.activeSession.runtimeId}
-      usesTemporaryModelOverride={state.activeSession.usesTemporaryModelOverride}
       selectedMode={activeMode}
       conversationKind={state.activeSession.conversationKind}
       planMode={activePlanMode}
       approvalMode={state.activeSession.approvalMode}
       onSelectConversationMode={handleSelectConversationMode}
       onSelectApprovalMode={handleSelectConversationApprovalMode}
-      onSelectModel={handleSelectConversationModel}
       modeChangeDisabled={isBusy || !state.activeSessionId}
-      modelSelectionDisabled={primaryModelSelectionDisabled}
       conversationRunDisabledReason={primaryConversationRunDisabledReason}
       busyQueueDisabledReason={primaryCoBrowseBusyQueueDisabledReason}
       messages={state.activeSession.messages}
@@ -2238,7 +2137,6 @@ export function App() {
       onInstallSpeech={installSpeech}
       onRepairSpeech={repairSpeech}
       onOpenSpeechSettings={() => openSettings('speech')}
-      gemmaInstallStates={state.gemmaInstallStates}
       pinnedQuotes={activeSelection.pinnedQuotes}
       onRemovePinnedQuote={removePinnedQuote}
       onClearPinnedQuotes={clearPinnedQuotes}
@@ -2309,16 +2207,13 @@ export function App() {
       models={state.models}
       selectedModelId={globalChatDetail.modelId}
       selectedRuntimeId={globalChatDetail.runtimeId}
-      usesTemporaryModelOverride={globalChatDetail.usesTemporaryModelOverride}
       selectedMode={globalChatMode}
       conversationKind={globalChatDetail.conversationKind}
       planMode={globalChatPlanMode}
       approvalMode={globalChatDetail.approvalMode}
       onSelectConversationMode={handleSelectGlobalChatMode}
       onSelectApprovalMode={handleSelectGlobalChatApprovalMode}
-      onSelectModel={handleSelectGlobalChatModel}
       modeChangeDisabled={globalChatBusy || !globalChatSession.sessionId}
-      modelSelectionDisabled={globalModelSelectionDisabled}
       conversationRunDisabledReason={globalConversationRunDisabledReason}
       busyQueueDisabledReason={globalCoBrowseBusyQueueDisabledReason}
       messages={globalChatDetail.messages}
@@ -2345,7 +2240,6 @@ export function App() {
       onInstallSpeech={installSpeech}
       onRepairSpeech={repairSpeech}
       onOpenSpeechSettings={() => openSettings('speech')}
-      gemmaInstallStates={state.gemmaInstallStates}
       pinnedQuotes={globalChatPinnedQuotes}
       onRemovePinnedQuote={handleRemoveGlobalPinnedQuote}
       onClearPinnedQuotes={handleClearGlobalPinnedQuotes}
@@ -2623,12 +2517,58 @@ export function App() {
           onCollapse={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
           systemStats={state.systemStats}
           models={state.models}
+          modelSelection={state.settings.modelSelection}
+          defaultModelSelection={ramAwareDefaultModelSelection}
+          modelAvailabilityIssues={state.bootstrapState.modelAvailabilityIssues}
           modelTokenUsage={state.modelTokenUsage}
           activeModelId={state.activeSession?.modelId ?? null}
           activeRuntimeId={state.activeSession?.runtimeId ?? null}
           helperModelId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperModelId : null}
           helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
           reloadModelsDisabledReason={modelReloadDisabledReason}
+          onUpdateModelSelection={async (modelSelection) => {
+            const updated = await window.gemmaDesktopBridge.settings.update({
+              modelSelection,
+            })
+            dispatch({ type: 'SET_SETTINGS', settings: updated })
+          }}
+          onLoadModelSelection={async (modelSelection) => {
+            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
+              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
+            }
+
+            const result = await window.gemmaDesktopBridge.settings.update({
+              modelSelection,
+              [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
+            } as unknown as Partial<typeof state.settings>) as unknown
+            const updatedSettings = await window.gemmaDesktopBridge.settings.get()
+            dispatch({ type: 'SET_SETTINGS', settings: updatedSettings })
+
+            if (
+              result
+              && typeof result === 'object'
+              && typeof (result as Partial<LoadDefaultModelsResult>).ok === 'boolean'
+              && typeof (result as Partial<LoadDefaultModelsResult>).message === 'string'
+              && Array.isArray((result as Partial<LoadDefaultModelsResult>).targets)
+            ) {
+              return result as LoadDefaultModelsResult
+            }
+
+            return {
+              ok: false,
+              message: 'Gemma Desktop needs an app restart before the model loader can run.',
+              selection: modelSelection,
+              targets: [],
+              unloaded: [],
+              loaded: [],
+              skipped: [],
+              errors: [{
+                action: 'prepare',
+                ok: false,
+                error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Selected Models again.',
+              }],
+            }
+          }}
           onReloadModels={async () => {
             if (window.gemmaDesktopBridge.environment.reloadModels) {
               return await window.gemmaDesktopBridge.environment.reloadModels({
@@ -2636,23 +2576,7 @@ export function App() {
               })
             }
 
-            const activeMainModel = state.activeSession
-              ? {
-                  modelId: state.activeSession.modelId,
-                  runtimeId: state.activeSession.runtimeId,
-                }
-              : state.settings.modelSelection.mainModel
-            const usesSessionMainOverride = state.activeSession
-              ? activeMainModel.modelId !== state.settings.modelSelection.mainModel.modelId
-                || activeMainModel.runtimeId !== state.settings.modelSelection.mainModel.runtimeId
-              : false
-            const modelSelection = {
-              mainModel: usesSessionMainOverride
-                ? activeMainModel
-                : state.settings.modelSelection.mainModel,
-              helperModel: state.settings.modelSelection.helperModel,
-              helperModelEnabled: state.settings.modelSelection.helperModelEnabled,
-            }
+            const modelSelection = state.settings.modelSelection
 
             if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
               return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
@@ -2847,15 +2771,11 @@ export function App() {
       {state.settingsOpen && (
         <SettingsModal
           settings={state.settings}
-          defaultModelSelection={ramAwareDefaultModelSelection}
           models={state.models}
-          gemmaInstallStates={state.gemmaInstallStates}
-          bootstrapState={state.bootstrapState}
           initialTab={settingsInitialTab}
           speechStatus={state.speechStatus}
           readAloudStatus={state.readAloudStatus}
           notificationPermission={notificationPermission}
-          onEnsureGemmaModel={ensureGemmaModel}
           onInstallSpeech={installSpeech}
           onRepairSpeech={repairSpeech}
           onRemoveSpeech={removeSpeech}
@@ -2863,43 +2783,6 @@ export function App() {
           onRequestNotificationPermission={requestNotificationPermission}
           onSendTestNotification={sendTestNotification}
           onClose={() => dispatch({ type: 'SET_SETTINGS_OPEN', open: false })}
-          onLoadDefaultModels={async (modelSelection) => {
-            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
-              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
-            }
-
-            const result = await window.gemmaDesktopBridge.settings.update({
-              modelSelection,
-              [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
-            } as unknown as Partial<typeof state.settings>) as unknown
-            const updatedSettings = await window.gemmaDesktopBridge.settings.get()
-            dispatch({ type: 'SET_SETTINGS', settings: updatedSettings })
-
-            if (
-              result
-              && typeof result === 'object'
-              && typeof (result as Partial<LoadDefaultModelsResult>).ok === 'boolean'
-              && typeof (result as Partial<LoadDefaultModelsResult>).message === 'string'
-              && Array.isArray((result as Partial<LoadDefaultModelsResult>).targets)
-            ) {
-              return result as LoadDefaultModelsResult
-            }
-
-            return {
-              ok: false,
-              message: 'Gemma Desktop needs an app restart before this model loader can run from Settings.',
-              selection: modelSelection,
-              targets: [],
-              unloaded: [],
-              loaded: [],
-              skipped: [],
-              errors: [{
-                action: 'prepare',
-                ok: false,
-                error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Models again.',
-              }],
-            }
-          }}
           onUpdate={async (patch) => {
             const updated = await window.gemmaDesktopBridge.settings.update(patch)
             dispatch({ type: 'SET_SETTINGS', settings: updated })

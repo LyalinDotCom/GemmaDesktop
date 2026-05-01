@@ -5,9 +5,10 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../../src/renderer/src/components/Sidebar'
-import type { ModelSummary, SessionSummary, SystemStats } from '../../src/renderer/src/types'
+import type { AppSettings, ModelSummary, PrimaryModelAvailabilityIssue, SessionSummary, SystemStats } from '../../src/renderer/src/types'
 import type { LoadDefaultModelsResult } from '../../src/shared/modelLifecycle'
 import { EMPTY_SIDEBAR_STATE, type SidebarState } from '../../src/shared/sidebar'
+import { DEFAULT_MODEL_SELECTION_SETTINGS } from '../../src/shared/sessionModelDefaults'
 
 const SYSTEM_STATS: SystemStats = {
   memoryUsedGB: 8,
@@ -24,6 +25,14 @@ const MODEL: ModelSummary = {
   status: 'loaded',
   parameterCount: '26B',
   quantization: 'Q4_K_M',
+}
+
+const SECONDARY_MODEL: ModelSummary = {
+  id: 'qwen3:8b',
+  name: 'Qwen3 8B',
+  runtimeId: 'lmstudio-openai',
+  runtimeName: 'LM Studio',
+  status: 'available',
 }
 
 const LOAD_RESULT: LoadDefaultModelsResult = {
@@ -48,7 +57,6 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     titleSource: 'user',
     modelId: 'gemma4:26b',
     runtimeId: 'ollama-native',
-    usesTemporaryModelOverride: false,
     conversationKind: 'normal',
     workMode: 'explore',
     planMode: false,
@@ -70,6 +78,10 @@ function sidebarProps(input?: {
   sessions?: SessionSummary[]
   sidebarState?: SidebarState
   onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
+  modelSelection?: AppSettings['modelSelection']
+  modelAvailabilityIssues?: PrimaryModelAvailabilityIssue[]
+  onUpdateModelSelection?: (modelSelection: AppSettings['modelSelection']) => void | Promise<void>
+  onLoadModelSelection?: (modelSelection: AppSettings['modelSelection']) => Promise<LoadDefaultModelsResult> | void
 }) {
   return {
     sessions: input?.sessions ?? [makeSession()],
@@ -105,7 +117,11 @@ function sidebarProps(input?: {
     onOpenSkills: () => {},
     selectedSkillCount: 0,
     systemStats: SYSTEM_STATS,
-    models: [MODEL],
+    models: [MODEL, SECONDARY_MODEL],
+    modelSelection: input?.modelSelection,
+    modelAvailabilityIssues: input?.modelAvailabilityIssues,
+    onUpdateModelSelection: input?.onUpdateModelSelection,
+    onLoadModelSelection: input?.onLoadModelSelection,
     onReloadModels: input?.onReloadModels ?? (() => {}),
   }
 }
@@ -124,6 +140,15 @@ function getButtonByLabelPrefix(container: HTMLElement, labelPrefix: string): HT
     .find((entry) => entry.getAttribute('aria-label')?.startsWith(labelPrefix))
   if (!button) {
     throw new Error(`Could not find button with label prefix: ${labelPrefix}`)
+  }
+  return button
+}
+
+function getButtonByText(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+    .find((entry) => entry.textContent?.includes(text))
+  if (!button) {
+    throw new Error(`Could not find button containing text: ${text}`)
   }
   return button
 }
@@ -209,5 +234,70 @@ describe('Sidebar reload models control', () => {
     await click(reloadButton)
 
     expect(onReloadModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces global primary and secondary model selection in the sidebar', async () => {
+    const onUpdateModelSelection = vi.fn()
+    renderSidebar(sidebarProps({ onUpdateModelSelection }))
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+
+    expect(container.textContent).toContain('Global Models')
+    expect(container.textContent).toContain('Primary powers chats, research, and automations.')
+    expect(getButtonByLabel(container, 'Primary model').textContent).toContain('Gemma 4 26B')
+    expect(getButtonByLabel(container, 'Secondary model').textContent).toContain('gemma4:e2b')
+
+    await click(getButtonByLabel(container, 'Primary model'))
+    await click(getButtonByText(container, 'Qwen3 8B'))
+
+    expect(onUpdateModelSelection).toHaveBeenCalledWith({
+      ...DEFAULT_MODEL_SELECTION_SETTINGS,
+      mainModel: {
+        modelId: 'qwen3:8b',
+        runtimeId: 'lmstudio-openai',
+      },
+    })
+  })
+
+  it('toggles secondary model use from the global model popover', async () => {
+    const onUpdateModelSelection = vi.fn()
+    renderSidebar(sidebarProps({ onUpdateModelSelection }))
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+    await click(getButtonByLabel(container, 'Toggle secondary model'))
+
+    expect(onUpdateModelSelection).toHaveBeenCalledWith({
+      ...DEFAULT_MODEL_SELECTION_SETTINGS,
+      helperModelEnabled: false,
+    })
+  })
+
+  it('loads the globally selected models from the sidebar popover', async () => {
+    const onLoadModelSelection = vi.fn().mockResolvedValue(LOAD_RESULT)
+    renderSidebar(sidebarProps({ onLoadModelSelection }))
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+    await click(getButtonByText(container, 'Load Selected Models'))
+
+    expect(onLoadModelSelection).toHaveBeenCalledWith(DEFAULT_MODEL_SELECTION_SETTINGS)
+    expect(container.textContent).toContain('Reloaded expected models.')
+  })
+
+  it('marks selected model load failures while keeping the model selected', async () => {
+    renderSidebar(sidebarProps({
+      modelAvailabilityIssues: [{
+        modelId: DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.modelId,
+        runtimeId: DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.runtimeId,
+        message: 'Ollama could not load gemma4:26b.',
+        detectedAt: 1,
+        source: 'send',
+      }],
+    }))
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+
+    expect(getButtonByLabel(container, 'Primary model').textContent).toContain('Gemma 4 26B')
+    expect(container.textContent).toContain('Ollama could not load gemma4:26b.')
+    expect(container.querySelector('[aria-label="Primary model failed to load"]')).not.toBeNull()
   })
 })

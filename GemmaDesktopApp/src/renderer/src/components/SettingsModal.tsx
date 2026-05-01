@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import {
   Bell,
-  Check,
-  ChevronDown,
   ExternalLink,
   Eye,
   EyeOff,
   FolderOpen,
   Loader2,
-  Power,
   RotateCcw,
-  Search,
   X,
 } from 'lucide-react'
 import {
@@ -19,9 +15,7 @@ import {
 } from '@shared/about'
 import type {
   AppSettings,
-  BootstrapState,
   AppToolPolicyMode,
-  GemmaInstallState,
   ModelSummary,
   ReadAloudInspection,
   ReadAloudTestInput,
@@ -41,11 +35,6 @@ import {
   listKnownReasoningControlModels,
 } from '@shared/reasoningSettings'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
-import { normalizeProviderRuntimeId } from '@shared/sessionModelDefaults'
-import type {
-  DefaultModelLifecycleStepResult,
-  LoadDefaultModelsResult,
-} from '@shared/modelLifecycle'
 import {
   Button,
   MetaList,
@@ -58,26 +47,12 @@ import {
   TextInput,
   Toggle,
 } from './settings/Primitives'
-import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 
 interface SettingsModalProps {
   settings: AppSettings
-  defaultModelSelection: AppSettings['modelSelection']
   models: ModelSummary[]
-  gemmaInstallStates: GemmaInstallState[]
-  bootstrapState: BootstrapState
   onClose: () => void
   onUpdate: (patch: Partial<AppSettings>) => void | Promise<void>
-  onLoadDefaultModels: (
-    modelSelection: AppSettings['modelSelection'],
-  ) => Promise<LoadDefaultModelsResult>
-  onEnsureGemmaModel: (tag: string) => Promise<{
-    ok: boolean
-    tag: string
-    installed: boolean
-    cancelled?: boolean
-    error?: string
-  }>
   initialTab?: SettingsTab
   speechStatus: SpeechInspection | null
   readAloudStatus: ReadAloudInspection | null
@@ -120,15 +95,6 @@ const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['tools', 'Tools'],
   ['about', 'About'],
 ] as const
-
-export interface DefaultModelOption {
-  modelId: string
-  runtimeId: string
-  label: string
-  providerLabel: string
-  apiTypeLabel: string
-  optimizationTags?: string[]
-}
 
 const TOOL_POLICY_SECTIONS = [
   {
@@ -285,327 +251,11 @@ function formatNotificationPermissionLabel(
   }
 }
 
-function compareModelOptionText(left: string, right: string): number {
-  return left.localeCompare(right, undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  })
-}
-
-function providerLabelForRuntime(runtimeId: string, runtimeName?: string): string {
-  if (runtimeId.startsWith('ollama')) return 'Ollama'
-  if (runtimeId.startsWith('lmstudio')) return 'LM Studio'
-  if (runtimeId.startsWith('llamacpp')) return 'llama.cpp'
-  if (runtimeId.startsWith('omlx')) return 'oMLX'
-  return runtimeName?.trim() || runtimeId
-}
-
-function apiTypeLabelForRuntime(runtimeId: string): string {
-  if (runtimeId.endsWith('-openai')) return 'OpenAI-compatible API'
-  if (runtimeId.endsWith('-native')) return 'Native API'
-  if (runtimeId.endsWith('-server')) return 'Server API'
-  return runtimeId
-}
-
-function modelTargetValue(target: {
-  modelId: string
-  runtimeId: string
-}): string {
-  return JSON.stringify([target.runtimeId, target.modelId])
-}
-
-function sameModelTarget(
-  left: { modelId: string; runtimeId: string },
-  right: { modelId: string; runtimeId: string },
-): boolean {
-  return left.modelId === right.modelId && left.runtimeId === right.runtimeId
-}
-
-function optionSearchText(option: DefaultModelOption): string {
-  return [
-    option.label,
-    option.providerLabel,
-    option.apiTypeLabel,
-    option.runtimeId,
-    option.modelId,
-    ...(option.optimizationTags ?? []),
-  ].join(' ').toLowerCase()
-}
-
-export function formatDefaultModelOptionLabel(option: DefaultModelOption): string {
-  const tagLabel = option.optimizationTags?.length
-    ? ` - ${option.optimizationTags.join(', ')}`
-    : ''
-  return `${option.label} - ${option.providerLabel} - ${option.apiTypeLabel}${tagLabel}`
-}
-
-function compareDefaultModelOptions(
-  left: DefaultModelOption,
-  right: DefaultModelOption,
-): number {
-  return (
-    compareModelOptionText(left.label, right.label)
-    || compareModelOptionText(left.providerLabel, right.providerLabel)
-    || compareModelOptionText(left.apiTypeLabel, right.apiTypeLabel)
-    || compareModelOptionText(left.runtimeId, right.runtimeId)
-    || compareModelOptionText(left.modelId, right.modelId)
-  )
-}
-
-function normalizeDefaultModelOption(option: DefaultModelOption): DefaultModelOption {
-  const runtimeId = normalizeProviderRuntimeId(option.runtimeId)
-  return {
-    ...option,
-    runtimeId,
-    providerLabel: providerLabelForRuntime(runtimeId, option.providerLabel),
-    apiTypeLabel: apiTypeLabelForRuntime(runtimeId),
-  }
-}
-
-export function groupDefaultModelOptions(options: DefaultModelOption[]): Array<{
-  providerLabel: string
-  options: DefaultModelOption[]
-}> {
-  const byProvider = new Map<string, DefaultModelOption[]>()
-  const byValue = new Map<string, DefaultModelOption>()
-  for (const option of options) {
-    const normalizedOption = normalizeDefaultModelOption(option)
-    const value = modelTargetValue(normalizedOption)
-    const existing = byValue.get(value)
-    if (
-      !existing
-      || option.runtimeId === normalizedOption.runtimeId
-    ) {
-      byValue.set(value, normalizedOption)
-    }
-  }
-
-  for (const option of byValue.values()) {
-    const providerOptions = byProvider.get(option.providerLabel) ?? []
-    providerOptions.push(option)
-    byProvider.set(option.providerLabel, providerOptions)
-  }
-
-  return [...byProvider.entries()]
-    .sort(([left], [right]) => compareModelOptionText(left, right))
-    .map(([providerLabel, providerOptions]) => ({
-      providerLabel,
-      options: [...providerOptions].sort(compareDefaultModelOptions),
-    }))
-}
-
-export function DefaultModelTargetPicker({
-  ariaLabel,
-  value,
-  groups,
-  onSelect,
-  initialOpen = false,
-  disabled = false,
-}: {
-  ariaLabel: string
-  value: { modelId: string; runtimeId: string }
-  groups: Array<{ providerLabel: string; options: DefaultModelOption[] }>
-  onSelect: (target: { modelId: string; runtimeId: string }) => void
-  initialOpen?: boolean
-  disabled?: boolean
-}) {
-  const [open, setOpen] = useState(initialOpen)
-  const [query, setQuery] = useState('')
-  const rootRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const selectedOption = groups
-    .flatMap((group) => group.options)
-    .find((option) => sameModelTarget(option, value))
-  const normalizedQuery = query.trim().toLowerCase()
-  const visibleGroups = normalizedQuery
-    ? groups
-      .map((group) => ({
-        ...group,
-        options: group.options.filter((option) =>
-          optionSearchText(option).includes(normalizedQuery),
-        ),
-      }))
-      .filter((group) => group.options.length > 0)
-    : groups
-
-  useEffect(() => {
-    if (disabled) {
-      setOpen(false)
-    }
-  }, [disabled])
-
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  useEffect(() => {
-    if (!open || disabled) {
-      setQuery('')
-      return
-    }
-    requestAnimationFrame(() => inputRef.current?.focus())
-  }, [disabled, open])
-
-  return (
-    <div ref={rootRef} className={`relative ${open ? 'z-30' : 'z-0'}`}>
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => {
-          if (!disabled) {
-            setOpen((current) => !current)
-          }
-        }}
-        className={`flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm outline-none transition-colors focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:focus:border-indigo-700 ${
-          disabled
-            ? 'cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-600'
-            : 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-700'
-        }`}
-      >
-        <span className="min-w-0">
-          <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
-            <span className="truncate">
-              {selectedOption?.label ?? value.modelId}
-            </span>
-            <ModelOptimizationBadges
-              tags={selectedOption?.optimizationTags}
-              compact
-            />
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-            {selectedOption
-              ? `${selectedOption.providerLabel} · ${selectedOption.apiTypeLabel}`
-              : value.runtimeId}
-          </span>
-        </span>
-        <ChevronDown
-          size={14}
-          className={`shrink-0 text-zinc-400 transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-40 mt-1.5 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-          <div className="border-b border-zinc-100 p-2 dark:border-zinc-800">
-            <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-950">
-              <Search size={13} className="shrink-0 text-zinc-400" />
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Filter by model, provider, or API..."
-                className="min-w-0 flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-200 dark:placeholder:text-zinc-500"
-              />
-            </div>
-          </div>
-          <div
-            role="listbox"
-            aria-label={ariaLabel}
-            className="max-h-64 overflow-y-auto overscroll-contain py-1"
-            onWheel={(event) => event.stopPropagation()}
-          >
-            {visibleGroups.length === 0 ? (
-              <div className="px-3 py-4 text-xs text-zinc-500 dark:text-zinc-400">
-                No models match this filter.
-              </div>
-            ) : visibleGroups.map((group) => (
-              <div key={group.providerLabel}>
-                <div className="bg-zinc-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:bg-zinc-950 dark:text-zinc-500">
-                  {group.providerLabel}
-                </div>
-                {group.options.map((option) => {
-                  const selected = sameModelTarget(option, value)
-                  return (
-                    <button
-                      key={modelTargetValue(option)}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => {
-                        onSelect({
-                          modelId: option.modelId,
-                          runtimeId: option.runtimeId,
-                        })
-                        setOpen(false)
-                      }}
-                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
-                        selected
-                          ? 'bg-indigo-600 text-white'
-                          : 'text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800'
-                      }`}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
-                          <span className="truncate">
-                            {option.label}
-                          </span>
-                          <ModelOptimizationBadges
-                            tags={option.optimizationTags}
-                            selected={selected}
-                            compact
-                          />
-                        </span>
-                        <span
-                          className={`mt-0.5 block truncate text-[11px] ${
-                            selected ? 'text-indigo-200' : 'text-zinc-400'
-                          }`}
-                        >
-                          {option.apiTypeLabel} · {option.runtimeId}
-                        </span>
-                      </span>
-                      {selected && (
-                        <Check size={13} className="shrink-0" />
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-type DefaultModelLoadFeedback = {
-  tone: 'info' | 'success' | 'error'
-  message: string
-  details: string[]
-}
-
-function formatDefaultModelLoadStep(
-  step: DefaultModelLifecycleStepResult,
-): string {
-  const target = step.runtimeId && step.modelId
-    ? `${step.runtimeId}/${step.modelId}`
-    : ''
-  const roles = step.roles && step.roles.length > 0
-    ? `${step.roles.join(' + ')} default`
-    : ''
-  const label = [roles, target].filter(Boolean).join(' · ')
-  const body = step.error ?? step.message ?? 'Operation did not complete.'
-  return label ? `${label}: ${body}` : body
-}
-
 export function SettingsModal({
   settings,
-  defaultModelSelection,
   models,
-  bootstrapState,
   onClose,
   onUpdate,
-  onLoadDefaultModels,
   initialTab = 'general',
   speechStatus,
   readAloudStatus,
@@ -620,9 +270,6 @@ export function SettingsModal({
   const [local, setLocal] = useState(settings)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [previewBusy, setPreviewBusy] = useState(false)
-  const [defaultModelsLoading, setDefaultModelsLoading] = useState(false)
-  const [defaultModelLoadFeedback, setDefaultModelLoadFeedback] =
-    useState<DefaultModelLoadFeedback | null>(null)
   const [installedTerminals, setInstalledTerminals] = useState<TerminalAppInfo[]>([])
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -776,142 +423,6 @@ export function SettingsModal({
 
   const readAloudProgressLabel = buildReadAloudProgressLabel(readAloudStatus)
 
-  const findTargetModel = (target: {
-    modelId: string
-    runtimeId: string
-  }): ModelSummary | undefined =>
-    models.find(
-      (model) =>
-        model.id === target.modelId
-        && model.runtimeId === target.runtimeId,
-    )
-  const defaultModelOptions = ((): DefaultModelOption[] => {
-    const byValue = new Map<string, DefaultModelOption>()
-    const addTarget = (
-      target: { modelId: string; runtimeId: string },
-    ) => {
-      const normalizedTarget = {
-        ...target,
-        runtimeId: normalizeProviderRuntimeId(target.runtimeId),
-      }
-      const value = modelTargetValue(normalizedTarget)
-      if (byValue.has(value)) {
-        return
-      }
-      const targetModel = findTargetModel(normalizedTarget) ?? findTargetModel(target)
-      byValue.set(value, {
-        ...normalizedTarget,
-        label: targetModel?.name ?? target.modelId,
-        providerLabel: providerLabelForRuntime(
-          normalizedTarget.runtimeId,
-          targetModel?.runtimeName,
-        ),
-        apiTypeLabel: apiTypeLabelForRuntime(normalizedTarget.runtimeId),
-        optimizationTags: targetModel?.optimizationTags,
-      })
-    }
-
-    addTarget(local.modelSelection.mainModel)
-    addTarget(local.modelSelection.helperModel)
-    addTarget(defaultModelSelection.mainModel)
-    addTarget(defaultModelSelection.helperModel)
-    for (const model of models) {
-      addTarget({
-        modelId: model.id,
-        runtimeId: model.runtimeId,
-      })
-    }
-    return [...byValue.values()]
-  })()
-  const defaultModelOptionGroups = groupDefaultModelOptions(defaultModelOptions)
-  const updateModelSelectionTarget = (
-    key: 'mainModel' | 'helperModel',
-    target: { modelId: string; runtimeId: string },
-  ) => {
-    const normalizedTarget = {
-      ...target,
-      runtimeId: normalizeProviderRuntimeId(target.runtimeId),
-    }
-    const modelSelection = {
-      ...local.modelSelection,
-      [key]: normalizedTarget,
-    }
-    setDefaultModelLoadFeedback(null)
-    setLocal({ ...local, modelSelection })
-    commitUpdate({ modelSelection })
-  }
-  const updateHelperModelEnabled = (helperModelEnabled: boolean) => {
-    const modelSelection = {
-      ...local.modelSelection,
-      helperModelEnabled,
-    }
-    setDefaultModelLoadFeedback(null)
-    setLocal({ ...local, modelSelection })
-    commitUpdate({ modelSelection })
-  }
-
-  const modelSelectionMatchesBuiltIn =
-    local.modelSelection.mainModel.modelId === defaultModelSelection.mainModel.modelId
-    && local.modelSelection.mainModel.runtimeId === defaultModelSelection.mainModel.runtimeId
-    && local.modelSelection.helperModel.modelId === defaultModelSelection.helperModel.modelId
-    && local.modelSelection.helperModel.runtimeId === defaultModelSelection.helperModel.runtimeId
-    && local.modelSelection.helperModelEnabled === defaultModelSelection.helperModelEnabled
-
-  const resetModelSelection = () => {
-    const modelSelection = {
-      mainModel: { ...defaultModelSelection.mainModel },
-      helperModel: { ...defaultModelSelection.helperModel },
-      helperModelEnabled: defaultModelSelection.helperModelEnabled,
-    }
-    setDefaultModelLoadFeedback(null)
-    setLocal({ ...local, modelSelection })
-    commitUpdate({ modelSelection })
-  }
-
-  const handleLoadDefaultModels = async () => {
-    const modelSelection = {
-      mainModel: {
-        ...local.modelSelection.mainModel,
-        runtimeId: normalizeProviderRuntimeId(local.modelSelection.mainModel.runtimeId),
-      },
-      helperModel: {
-        ...local.modelSelection.helperModel,
-        runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
-      },
-      helperModelEnabled: local.modelSelection.helperModelEnabled,
-    }
-
-    setDefaultModelsLoading(true)
-    setDefaultModelLoadFeedback({
-      tone: 'info',
-      message: 'Loading default models...',
-      details: [],
-    })
-
-    try {
-      const result = await onLoadDefaultModels(modelSelection)
-      const details = [
-        ...result.errors.map(formatDefaultModelLoadStep),
-        ...result.skipped.map(formatDefaultModelLoadStep),
-      ]
-      setDefaultModelLoadFeedback({
-        tone: result.ok ? 'success' : 'error',
-        message: result.message,
-        details,
-      })
-    } catch (error) {
-      setDefaultModelLoadFeedback({
-        tone: 'error',
-        message: error instanceof Error && error.message.trim().length > 0
-          ? error.message.trim()
-          : 'Could not load the default models.',
-        details: [],
-      })
-    } finally {
-      setDefaultModelsLoading(false)
-    }
-  }
-
   const previewButtonLabel =
     readAloudStatus?.state === 'installing' && readAloudProgressLabel
       ? `Installing… ${readAloudStatus.installProgress?.percent ?? 0}%`
@@ -1008,117 +519,6 @@ export function SettingsModal({
                   </SettingsSection>
 
                   <SettingsSection
-                    title="Default Models"
-                    description="Main is the saved default for new conversations, research, and automations. Helper can be disabled when you want all background helper work off."
-                    trailing={
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          variant="primary"
-                          disabled={defaultModelsLoading}
-                          onClick={() => { void handleLoadDefaultModels() }}
-                          title="Unload other supported runtime models and load the saved defaults"
-                        >
-                          {defaultModelsLoading
-                            ? <Loader2 size={12} className="animate-spin" />
-                            : <Power size={12} />}
-                          {defaultModelsLoading ? 'Loading...' : 'Load Models'}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          disabled={modelSelectionMatchesBuiltIn || defaultModelsLoading}
-                          onClick={resetModelSelection}
-                          title="Restore the built-in Gemma defaults"
-                        >
-                          <RotateCcw size={12} />
-                          Reset Defaults
-                        </Button>
-                      </div>
-                    }
-                  >
-                    <SettingsRow
-                      label="Helper model"
-                      description={
-                        local.modelSelection.helperModelEnabled
-                          ? 'Background helper turns, title generation, startup welcomes, and helper warmup are enabled.'
-                          : 'Background helper turns, title generation, startup welcomes, and helper warmup are disabled.'
-                      }
-                      control={
-                        <Toggle
-                          ariaLabel="Toggle helper model"
-                          checked={local.modelSelection.helperModelEnabled}
-                          onChange={() =>
-                            updateHelperModelEnabled(!local.modelSelection.helperModelEnabled)}
-                        />
-                      }
-                    />
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <SettingsField
-                        label="Main Model"
-                        hint="Used for new conversations, research, and automations. The conversation model picker can override per-session."
-                      >
-                        <DefaultModelTargetPicker
-                          ariaLabel="Default main model"
-                          value={{
-                            ...local.modelSelection.mainModel,
-                            runtimeId: normalizeProviderRuntimeId(local.modelSelection.mainModel.runtimeId),
-                          }}
-                          groups={defaultModelOptionGroups}
-                          onSelect={(target) =>
-                            updateModelSelectionTarget('mainModel', target)}
-                        />
-                      </SettingsField>
-
-                      <SettingsField
-                        label="Helper Model"
-                        hint={
-                          local.modelSelection.helperModelEnabled
-                            ? (
-                                <>
-                                  Used for titles and helper turns. Bootstrap target:
-                                  {' '}
-                                  <code>{bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>.
-                                </>
-                              )
-                            : 'Saved for later, but no helper work will run while the helper model is disabled.'
-                        }
-                      >
-                        <DefaultModelTargetPicker
-                          ariaLabel="Default helper model"
-                          disabled={!local.modelSelection.helperModelEnabled}
-                          value={{
-                            ...local.modelSelection.helperModel,
-                            runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
-                          }}
-                          groups={defaultModelOptionGroups}
-                          onSelect={(target) =>
-                            updateModelSelectionTarget('helperModel', target)}
-                        />
-                      </SettingsField>
-                    </div>
-                    {defaultModelLoadFeedback && (
-                      <div
-                        aria-live="polite"
-                        className={`rounded-md border px-3 py-2 text-xs leading-5 ${
-                          defaultModelLoadFeedback.tone === 'success'
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
-                            : defaultModelLoadFeedback.tone === 'error'
-                              ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
-                              : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
-                        }`}
-                      >
-                        <div className="font-medium">{defaultModelLoadFeedback.message}</div>
-                        {defaultModelLoadFeedback.details.length > 0 && (
-                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                            {defaultModelLoadFeedback.details.map((detail, index) => (
-                              <li key={`${detail}-${index}`}>{detail}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    )}
-                  </SettingsSection>
-
-                  <SettingsSection
                     title="Workspace"
                     description="Defaults for project locations and external tools."
                   >
@@ -1186,7 +586,7 @@ export function SettingsModal({
                           {' '}
                           <code>
                             {local.modelSelection.helperModelEnabled
-                              ? `helper=${bootstrapState.helperRuntimeId}/${bootstrapState.helperModelId}`
+                              ? `helper=${local.modelSelection.helperModel.runtimeId}/${local.modelSelection.helperModel.modelId}`
                               : 'helper=disabled'}
                           </code>
                           {', '}

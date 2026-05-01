@@ -25,7 +25,6 @@ function makeSession(
     titleSource: 'user',
     modelId: 'gemma4:26b',
     runtimeId: 'ollama-native',
-    usesTemporaryModelOverride: false,
     conversationKind: 'normal',
     workMode: 'explore',
     planMode: false,
@@ -168,7 +167,7 @@ describe('Sidebar conversation icons', () => {
     expect(markup).not.toContain('aria-label="Show ⭐ conversations"')
   })
 
-  it('uses the reorder affordance slot for project conversation icons', async () => {
+  it('renders project conversation icons next to recency metadata', async () => {
     root = renderSidebar(container, sidebarProps({
       sessions: [
         makeSession({
@@ -192,12 +191,20 @@ describe('Sidebar conversation icons', () => {
     const plainRow = getSessionRow(container, 'Plain Chat')
     const taggedIcon = Array.from(taggedRow.querySelectorAll<HTMLElement>('[role="img"]'))
       .find((element) => element.getAttribute('aria-label') === 'Conversation icon 🧪')
+    const taggedTitle = taggedRow.querySelector<HTMLElement>('span[title="Tagged Chat"]')
+    const taggedTime = taggedRow.querySelector<HTMLElement>('span.text-right')
     const reorderButton = getButtonByLabel(taggedRow, 'Reorder Tagged Chat')
 
     expect(taggedIcon).toBeTruthy()
+    expect(taggedTitle).toBeTruthy()
+    expect(taggedTime).toBeTruthy()
     expect(reorderButton).toBeTruthy()
-    expect(taggedIcon?.className).toContain('absolute left-0.5')
-    expect(taggedIcon?.className).toContain('group-hover:opacity-0')
+    expect(taggedTitle?.compareDocumentPosition(taggedIcon!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(taggedTime?.contains(taggedIcon!)).toBe(true)
+    expect(taggedIcon?.className).not.toContain('flex-shrink-0')
+    expect(taggedIcon?.className).not.toContain('absolute left-0.5')
     expect(reorderButton?.className).toContain('absolute left-0.5')
     expect(reorderButton?.className).toContain('group-hover:pointer-events-auto')
     expect(plainRow.querySelector('[aria-label^="Conversation icon"]')).toBeNull()

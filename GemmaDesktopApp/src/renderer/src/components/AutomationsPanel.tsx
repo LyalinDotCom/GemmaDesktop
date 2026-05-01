@@ -14,21 +14,14 @@ import type {
   AutomationDetail,
   AutomationRunRecord,
   AutomationSchedule,
-  GemmaInstallState,
   InstalledSkillRecord,
-  ModelSummary,
   SessionMode,
 } from '@/types'
-import { ModelSelector } from '@/components/ModelSelector'
-import { isGuidedGemmaMissing } from '@/lib/guidedModels'
-import { findGemmaCatalogEntryByTag } from '@shared/gemmaCatalog'
 
 interface AutomationDraft {
   id?: string
   name: string
   prompt: string
-  modelId: string
-  runtimeId: string
   selectedSkillIds: string[]
   workingDirectory: string
   enabled: boolean
@@ -41,24 +34,12 @@ interface AutomationDraft {
 
 interface AutomationsPanelProps {
   activeAutomation: AutomationDetail | null
-  models: ModelSummary[]
-  gemmaInstallStates: GemmaInstallState[]
   installedSkills: InstalledSkillRecord[]
   defaultWorkingDirectory: string
-  defaultModelTarget: { modelId: string; runtimeId: string }
   newAutomationSeed: number
-  onEnsureGemmaModel: (tag: string) => Promise<{
-    ok: boolean
-    tag: string
-    installed: boolean
-    cancelled?: boolean
-    error?: string
-  }>
   onCreateAutomation: (input: {
     name: string
     prompt: string
-    runtimeId: string
-    modelId: string
     mode: SessionMode
     selectedSkillIds?: string[]
     workingDirectory: string
@@ -70,8 +51,6 @@ interface AutomationsPanelProps {
     patch: Partial<{
       name: string
       prompt: string
-      runtimeId: string
-      modelId: string
       mode: SessionMode
       selectedSkillIds: string[]
       workingDirectory: string
@@ -82,6 +61,7 @@ interface AutomationsPanelProps {
   onDeleteAutomation: (automationId: string) => Promise<void>
   onRunNow: (automationId: string) => Promise<void>
   onCancelRun: (automationId: string) => Promise<void>
+  disabledReason?: string | null
   onClose?: () => void
 }
 
@@ -144,17 +124,12 @@ function describeSchedule(schedule: AutomationSchedule): string {
   return `Runs every ${schedule.every} ${unitLabel}, starting ${formatTimestamp(schedule.startAt)}`
 }
 
-function createDefaultDraft(
-  defaultModelTarget: { modelId: string; runtimeId: string },
-  defaultWorkingDirectory: string,
-): AutomationDraft {
+function createDefaultDraft(defaultWorkingDirectory: string): AutomationDraft {
   const defaultStart = Date.now() + 60 * 60 * 1000
 
   return {
     name: 'New Automation',
     prompt: '',
-    modelId: defaultModelTarget.modelId,
-    runtimeId: defaultModelTarget.runtimeId,
     selectedSkillIds: [],
     workingDirectory: defaultWorkingDirectory,
     enabled: true,
@@ -173,8 +148,6 @@ function draftFromAutomation(detail: AutomationDetail): AutomationDraft {
     id: detail.id,
     name: detail.name,
     prompt: detail.prompt,
-    modelId: detail.modelId,
-    runtimeId: detail.runtimeId,
     selectedSkillIds: detail.selectedSkillIds,
     workingDirectory: detail.workingDirectory,
     enabled: detail.enabled,
@@ -391,27 +364,20 @@ function RunDetailPanel({
 
 export function AutomationsPanel({
   activeAutomation,
-  models,
-  gemmaInstallStates,
   installedSkills,
   defaultWorkingDirectory,
-  defaultModelTarget,
   newAutomationSeed,
-  onEnsureGemmaModel,
   onCreateAutomation,
   onUpdateAutomation,
   onDeleteAutomation,
   onRunNow,
   onCancelRun,
+  disabledReason = null,
   onClose,
 }: AutomationsPanelProps) {
   const defaultDraft = useMemo(
-    () => createDefaultDraft(defaultModelTarget, defaultWorkingDirectory),
-    [
-      defaultModelTarget.modelId,
-      defaultModelTarget.runtimeId,
-      defaultWorkingDirectory,
-    ],
+    () => createDefaultDraft(defaultWorkingDirectory),
+    [defaultWorkingDirectory],
   )
   const [draft, setDraft] = useState<AutomationDraft>(() => defaultDraft)
   const [editorSource, setEditorSource] = useState<string | 'new'>('new')
@@ -499,8 +465,8 @@ export function AutomationsPanel({
   const canSubmit =
     draft.name.trim().length > 0
     && draft.prompt.trim().length > 0
-    && draft.modelId.length > 0
     && draft.workingDirectory.trim().length > 0
+  const runDisabledReason = disabledReason
   const headerTitle = isEditing ? draft.name : 'New automation'
   const headerSubtitle = isEditing
     ? `${scheduleDescription}${activeAutomation?.enabled === false ? ' · Paused' : ''}`
@@ -514,24 +480,10 @@ export function AutomationsPanel({
     setSaving(true)
     setOperationError(null)
     try {
-      const gemmaEntry = findGemmaCatalogEntryByTag(draft.modelId)
-      if (
-        gemmaEntry
-        && draft.runtimeId === 'ollama-native'
-        && isGuidedGemmaMissing(models, draft.modelId, gemmaInstallStates)
-      ) {
-        const result = await onEnsureGemmaModel(draft.modelId)
-        if (!result.ok) {
-          return null
-        }
-      }
-
       const savedAutomation = draft.id
         ? await onUpdateAutomation(draft.id, {
             name: draft.name,
             prompt: draft.prompt,
-            runtimeId: draft.runtimeId,
-            modelId: draft.modelId,
             mode: 'build',
             selectedSkillIds: draft.selectedSkillIds,
             workingDirectory: draft.workingDirectory,
@@ -541,8 +493,6 @@ export function AutomationsPanel({
         : await onCreateAutomation({
             name: draft.name,
             prompt: draft.prompt,
-            runtimeId: draft.runtimeId,
-            modelId: draft.modelId,
             mode: 'build',
             selectedSkillIds: draft.selectedSkillIds,
             workingDirectory: draft.workingDirectory,
@@ -563,6 +513,11 @@ export function AutomationsPanel({
   }
 
   const persistAndRun = async (): Promise<void> => {
+    if (runDisabledReason) {
+      setOperationError(runDisabledReason)
+      return
+    }
+
     const savedAutomation = await persistDraft()
     if (!savedAutomation) {
       return
@@ -628,7 +583,8 @@ export function AutomationsPanel({
               </HeaderButton>
               <HeaderButton
                 onClick={() => void persistAndRun()}
-                disabled={!canSubmit || saving || runningNow || isRunning || cancelling}
+                disabled={!canSubmit || saving || runningNow || isRunning || cancelling || Boolean(runDisabledReason)}
+                title={runDisabledReason ?? undefined}
               >
                 {runningNow ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
                 Run now
@@ -672,7 +628,8 @@ export function AutomationsPanel({
               </HeaderButton>
               <HeaderButton
                 onClick={() => void persistAndRun()}
-                disabled={!canSubmit || saving || runningNow}
+                disabled={!canSubmit || saving || runningNow || Boolean(runDisabledReason)}
+                title={runDisabledReason ?? undefined}
                 tone="primary"
               >
                 {runningNow ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
@@ -695,6 +652,16 @@ export function AutomationsPanel({
               </div>
             </div>
           </div>
+
+          {runDisabledReason && (
+            <div className="flex gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
+                <div className="font-semibold">Automation runs disabled</div>
+                <div className="mt-0.5 leading-5">{runDisabledReason}</div>
+              </div>
+            </div>
+          )}
 
           {operationError && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">
@@ -825,7 +792,7 @@ export function AutomationsPanel({
               <span className="flex items-center gap-2">
                 Advanced
                 <span className="text-[11px] font-normal text-zinc-400 dark:text-zinc-500">
-                  Model · Working directory · Skills{isEditing ? ' · State' : ''}
+                  Working directory · Skills{isEditing ? ' · State' : ''}
                 </span>
               </span>
               <ChevronDown
@@ -834,40 +801,6 @@ export function AutomationsPanel({
               />
             </summary>
             <div className="space-y-4 border-t border-zinc-200 p-3 dark:border-zinc-800">
-              <div>
-                <SectionLabel>Model</SectionLabel>
-                      <ModelSelector
-                        models={models}
-                        gemmaInstallStates={gemmaInstallStates}
-                        selectedModelId={draft.modelId}
-                        selectedRuntimeId={draft.runtimeId}
-                        mode="build"
-                        layout="expanded"
-                  rootClassName="relative w-full"
-                  menuPlacement="bottom"
-                  menuClassName="absolute right-0 top-full z-50 mt-2 w-[36rem] max-w-[calc(100vw-5rem)] max-h-[360px] overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-                  onSelect={async ({ modelId, runtimeId }) => {
-                    const gemmaEntry = findGemmaCatalogEntryByTag(modelId)
-                    if (
-                      gemmaEntry
-                      && runtimeId === 'ollama-native'
-                      && isGuidedGemmaMissing(models, modelId, gemmaInstallStates)
-                    ) {
-                      const result = await onEnsureGemmaModel(modelId)
-                      if (!result.ok) {
-                        return
-                      }
-                    }
-
-                    setDraft((current) => ({
-                      ...current,
-                      runtimeId,
-                      modelId,
-                    }))
-                  }}
-                />
-              </div>
-
               <div>
                 <SectionLabel>Working directory</SectionLabel>
                 <div className="flex items-center gap-2">

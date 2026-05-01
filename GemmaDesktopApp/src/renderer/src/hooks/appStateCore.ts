@@ -1019,8 +1019,6 @@ export function finalizeStreamingContentForStopping(
 
 export function buildCreateSessionBridgeOptions(input: CreateSessionOpts): CreateSessionOpts {
   return {
-    modelId: input.modelId,
-    runtimeId: input.runtimeId,
     conversationKind: input.conversationKind,
     workMode: input.workMode,
     planMode: input.planMode,

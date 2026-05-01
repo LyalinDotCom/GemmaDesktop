@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Flag,
@@ -11,6 +12,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Power,
   Search,
   SmilePlus,
   SquareTerminal,
@@ -33,18 +35,34 @@ import {
   type SessionProjectGroup,
 } from '@/lib/sidebarModel'
 import type {
+  AppSettings,
   AppView,
   AutomationSummary,
   ModelSummary,
   ModelTokenUsageReport,
+  PrimaryModelAvailabilityIssue,
   SessionSearchResult,
   SessionSummary,
   SidebarState,
   SystemStats,
   TerminalAppInfo,
 } from '@/types'
-import type { LoadDefaultModelsResult } from '@shared/modelLifecycle'
+import type {
+  DefaultModelLifecycleStepResult,
+  LoadDefaultModelsResult,
+} from '@shared/modelLifecycle'
 import { normalizeConversationIcon } from '@shared/conversationIcon'
+import {
+  DEFAULT_MODEL_SELECTION_SETTINGS,
+  normalizeProviderRuntimeId,
+} from '@shared/sessionModelDefaults'
+import {
+  buildModelTargetOptions,
+  groupModelTargetOptions,
+  ModelTargetPicker,
+  type ModelTargetOption,
+} from '@/components/ModelTargetPicker'
+import { Toggle } from '@/components/settings/Primitives'
 
 type SidebarSearchStatus = 'idle' | 'searching' | 'ready' | 'error'
 
@@ -114,12 +132,21 @@ interface SidebarProps {
   onCollapse?: () => void
   systemStats: SystemStats
   models: ModelSummary[]
+  modelSelection?: AppSettings['modelSelection']
+  defaultModelSelection?: AppSettings['modelSelection']
+  modelAvailabilityIssues?: PrimaryModelAvailabilityIssue[]
   modelTokenUsage?: ModelTokenUsageReport
   activeModelId?: string | null
   activeRuntimeId?: string | null
   helperModelId?: string | null
   helperRuntimeId?: string | null
   reloadModelsDisabledReason?: string | null
+  onUpdateModelSelection?: (
+    modelSelection: AppSettings['modelSelection'],
+  ) => void | Promise<void>
+  onLoadModelSelection?: (
+    modelSelection: AppSettings['modelSelection'],
+  ) => Promise<LoadDefaultModelsResult> | void
   onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
   initialSearchState?: SidebarInitialSearchState
 }
@@ -156,6 +183,43 @@ function automationStatusTone(status?: AutomationSummary['lastRunStatus']): stri
     case 'error':
       return 'bg-red-500'
   }
+}
+
+function formatModelTarget(
+  target: { modelId: string; runtimeId: string },
+  options: ModelTargetOption[],
+): string {
+  const option = options.find(
+    (candidate) =>
+      candidate.modelId === target.modelId
+      && candidate.runtimeId === target.runtimeId,
+  )
+  return option?.label ?? target.modelId
+}
+
+function findModelAvailabilityIssue(
+  target: { modelId: string; runtimeId: string },
+  issues: PrimaryModelAvailabilityIssue[],
+): PrimaryModelAvailabilityIssue | null {
+  const runtimeId = normalizeProviderRuntimeId(target.runtimeId)
+  return issues.find((issue) =>
+    issue.modelId === target.modelId
+    && normalizeProviderRuntimeId(issue.runtimeId) === runtimeId
+  ) ?? null
+}
+
+function formatDefaultModelLoadStep(
+  step: DefaultModelLifecycleStepResult,
+): string {
+  const target = step.runtimeId && step.modelId
+    ? `${step.runtimeId}/${step.modelId}`
+    : ''
+  const roles = step.roles && step.roles.length > 0
+    ? `${step.roles.join(' + ')} model`
+    : ''
+  const label = [roles, target].filter(Boolean).join(' - ')
+  const body = step.error ?? step.message ?? 'Operation did not complete.'
+  return label ? `${label}: ${body}` : body
 }
 
 function buildProcessHoverText(
@@ -215,12 +279,17 @@ export function Sidebar({
   onCollapse,
   systemStats,
   models,
+  modelSelection = DEFAULT_MODEL_SELECTION_SETTINGS,
+  defaultModelSelection,
+  modelAvailabilityIssues = [],
   modelTokenUsage,
   activeModelId = null,
   activeRuntimeId = null,
   helperModelId = null,
   helperRuntimeId = null,
   reloadModelsDisabledReason = null,
+  onUpdateModelSelection,
+  onLoadModelSelection,
   onReloadModels,
   initialSearchState,
 }: SidebarProps) {
@@ -236,8 +305,15 @@ export function Sidebar({
     name: string
   } | null>(null)
   const [quickCreateMenuPinned, setQuickCreateMenuPinned] = useState(false)
+  const [modelSelectionPanelOpen, setModelSelectionPanelOpen] = useState(false)
+  const [modelSelectionLoadFeedback, setModelSelectionLoadFeedback] = useState<{
+    tone: 'info' | 'success' | 'error'
+    message: string
+    details: string[]
+  } | null>(null)
   const [modelMemoryPanelOpen, setModelMemoryPanelOpen] = useState(false)
   const [modelReloadPending, setModelReloadPending] = useState(false)
+  const [modelSelectionLoadPending, setModelSelectionLoadPending] = useState(false)
   const [renameDialog, setRenameDialog] = useState<{
     sessionId: string
     title: string
@@ -315,6 +391,35 @@ export function Sidebar({
       ? sidebarModel.iconGroups.find((group) => group.icon === expandedIcon) ?? null
       : null
   const hasActiveSearch = currentView === 'chat' && searchQuery.trim().length > 0
+  const modelTargetOptions = useMemo(
+    () =>
+      buildModelTargetOptions({
+        models,
+        modelSelection,
+        defaultModelSelection,
+      }),
+    [defaultModelSelection, modelSelection, models],
+  )
+  const modelTargetGroups = useMemo(
+    () => groupModelTargetOptions(modelTargetOptions),
+    [modelTargetOptions],
+  )
+  const primaryModelLabel = formatModelTarget(
+    modelSelection.mainModel,
+    modelTargetOptions,
+  )
+  const secondaryModelLabel = formatModelTarget(
+    modelSelection.helperModel,
+    modelTargetOptions,
+  )
+  const primaryModelIssue = findModelAvailabilityIssue(
+    modelSelection.mainModel,
+    modelAvailabilityIssues,
+  )
+  const secondaryModelIssue = findModelAvailabilityIssue(
+    modelSelection.helperModel,
+    modelAvailabilityIssues,
+  )
 
   useEffect(() => {
     if (renameDialog && renameTitleInputRef.current) {
@@ -336,6 +441,7 @@ export function Sidebar({
     const handler = () => {
       setContextMenu(null)
       setQuickCreateMenuPinned(false)
+      setModelSelectionPanelOpen(false)
     }
     window.addEventListener('click', handler)
     return () => window.removeEventListener('click', handler)
@@ -346,6 +452,79 @@ export function Sidebar({
       setQuickCreateMenuPinned(false)
     }
   }, [currentView, quickCreateMenuPinned])
+
+  const commitModelSelection = (
+    nextModelSelection: AppSettings['modelSelection'],
+  ) => {
+    setModelSelectionLoadFeedback(null)
+    void Promise.resolve(onUpdateModelSelection?.(nextModelSelection)).catch((error) => {
+      console.error('Failed to update global model selection:', error)
+      setModelSelectionLoadFeedback({
+        tone: 'error',
+        message: error instanceof Error && error.message.trim().length > 0
+          ? error.message.trim()
+          : 'Could not update global model selection.',
+        details: [],
+      })
+    })
+  }
+
+  const updateModelSelectionTarget = (
+    key: 'mainModel' | 'helperModel',
+    target: { modelId: string; runtimeId: string },
+  ) => {
+    commitModelSelection({
+      ...modelSelection,
+      [key]: target,
+    })
+  }
+
+  const toggleSecondaryModel = () => {
+    commitModelSelection({
+      ...modelSelection,
+      helperModelEnabled: !modelSelection.helperModelEnabled,
+    })
+  }
+
+  const handleLoadModelSelection = async () => {
+    if (!onLoadModelSelection) {
+      return
+    }
+
+    setModelSelectionLoadPending(true)
+    setModelSelectionLoadFeedback({
+      tone: 'info',
+      message: 'Loading selected models...',
+      details: [],
+    })
+
+    try {
+      const result = await onLoadModelSelection(modelSelection)
+      if (!result) {
+        setModelSelectionLoadFeedback(null)
+        return
+      }
+
+      setModelSelectionLoadFeedback({
+        tone: result.ok ? 'success' : 'error',
+        message: result.message,
+        details: [
+          ...result.errors.map(formatDefaultModelLoadStep),
+          ...result.skipped.map(formatDefaultModelLoadStep),
+        ],
+      })
+    } catch (error) {
+      setModelSelectionLoadFeedback({
+        tone: 'error',
+        message: error instanceof Error && error.message.trim().length > 0
+          ? error.message.trim()
+          : 'Could not load the selected models.',
+        details: [],
+      })
+    } finally {
+      setModelSelectionLoadPending(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -843,7 +1022,6 @@ export function Sidebar({
       && session.id in sidebarState.sessionOrderOverrides,
     )
     const rowKind = inPinnedSection ? 'pinned' : inIconSection ? 'icon' : 'project'
-    const conversationIconUsesDragSlot = Boolean(session.conversationIcon && projectKey)
 
     return (
       <div key={`${rowKind}-${session.id}`}>
@@ -938,26 +1116,6 @@ export function Sidebar({
             {followUpSessionIds.has(session.id) && (
               <Flag size={12} className="flex-shrink-0 text-amber-500/70 dark:text-amber-400/60" />
             )}
-            {session.conversationIcon && conversationIconUsesDragSlot && (
-              <span
-                className="pointer-events-none absolute left-0.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-sm leading-none opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
-                title="Conversation icon"
-                role="img"
-                aria-label={`Conversation icon ${session.conversationIcon}`}
-              >
-                {session.conversationIcon}
-              </span>
-            )}
-            {session.conversationIcon && !conversationIconUsesDragSlot && (
-              <span
-                className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-sm leading-none"
-                title="Conversation icon"
-                role="img"
-                aria-label={`Conversation icon ${session.conversationIcon}`}
-              >
-                {session.conversationIcon}
-              </span>
-            )}
             <div className="min-w-0 flex flex-1 items-center gap-2">
                 <span
                   className={`min-w-0 flex-1 truncate text-[15px] ${
@@ -982,12 +1140,22 @@ export function Sidebar({
 
               <div className={`relative h-5 flex-shrink-0 ${inPinnedSection ? 'w-[52px]' : 'w-[88px]'}`}>
                 <span
-                  className={`absolute inset-0 flex items-center justify-end text-right text-xs text-zinc-400 dark:text-zinc-600 ${
+                  className={`absolute inset-0 flex items-center justify-end gap-1 text-right text-xs text-zinc-400 dark:text-zinc-600 ${
                     hoverActionVisible
                       ? 'transition-opacity group-hover:opacity-0 group-focus-within:opacity-0'
                       : ''
                   }`}
                 >
+                  {session.conversationIcon && (
+                    <span
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-md text-sm leading-none"
+                      title="Conversation icon"
+                      role="img"
+                      aria-label={`Conversation icon ${session.conversationIcon}`}
+                    >
+                      {session.conversationIcon}
+                    </span>
+                  )}
                   {formatRelativeTime(session.updatedAt)}
                 </span>
 
@@ -1565,6 +1733,165 @@ export function Sidebar({
           />
         </div>
       )}
+
+      <div className="no-drag relative px-3 pb-1 pt-2">
+        <button
+          type="button"
+          aria-label="Global model selection"
+          aria-haspopup="dialog"
+          aria-expanded={modelSelectionPanelOpen}
+          onClick={(event) => {
+            event.stopPropagation()
+            setModelSelectionPanelOpen((open) => !open)
+            setQuickCreateMenuPinned(false)
+          }}
+          className="flex w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white/95 px-2.5 py-2 text-left text-zinc-700 shadow-[0_14px_30px_-24px_rgba(24,24,27,0.42)] backdrop-blur transition-colors hover:border-zinc-300 hover:bg-white hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white"
+        >
+          <span className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300">
+            <Sparkles size={14} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-1 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+              <span className="truncate">{primaryModelLabel}</span>
+              {primaryModelIssue && (
+                <AlertTriangle
+                  size={12}
+                  className="flex-shrink-0 text-red-500 dark:text-red-400"
+                  aria-label="Primary model failed to load"
+                />
+              )}
+            </span>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <span className="truncate">
+                {modelSelection.helperModelEnabled
+                  ? `Secondary: ${secondaryModelLabel}`
+                  : 'Secondary off'}
+              </span>
+              {modelSelection.helperModelEnabled && secondaryModelIssue && (
+                <AlertTriangle
+                  size={11}
+                  className="flex-shrink-0 text-red-500 dark:text-red-400"
+                  aria-label="Secondary model failed to load"
+                />
+              )}
+            </span>
+          </span>
+          <ChevronDown
+            size={14}
+            className={`flex-shrink-0 text-zinc-400 transition-transform ${modelSelectionPanelOpen ? 'rotate-180' : ''}`}
+          />
+        </button>
+
+        {modelSelectionPanelOpen && (
+          <div
+            role="dialog"
+            aria-label="Global model settings"
+            className="absolute bottom-full left-3 right-3 z-40 mb-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_22px_50px_-30px_rgba(24,24,27,0.65)] dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-[0_24px_54px_-32px_rgba(0,0,0,0.92)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  Global Models
+                </div>
+                <div className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                  Primary powers chats, research, and automations.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModelSelectionPanelOpen(false)}
+                className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                aria-label="Close global model settings"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <div>
+                <div className="mb-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                  Primary Model
+                </div>
+                <ModelTargetPicker
+                  ariaLabel="Primary model"
+                  value={modelSelection.mainModel}
+                  groups={modelTargetGroups}
+                  onSelect={(target) => updateModelSelectionTarget('mainModel', target)}
+                />
+                {primaryModelIssue && (
+                  <div className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
+                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+                    <span>{primaryModelIssue.message}</span>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                    Secondary Model
+                  </div>
+                  <Toggle
+                    size="sm"
+                    ariaLabel="Toggle secondary model"
+                    checked={modelSelection.helperModelEnabled}
+                    onChange={toggleSecondaryModel}
+                  />
+                </div>
+                <ModelTargetPicker
+                  ariaLabel="Secondary model"
+                  value={modelSelection.helperModel}
+                  groups={modelTargetGroups}
+                  disabled={!modelSelection.helperModelEnabled}
+                  onSelect={(target) => updateModelSelectionTarget('helperModel', target)}
+                />
+                {modelSelection.helperModelEnabled && secondaryModelIssue && (
+                  <div className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
+                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+                    <span>{secondaryModelIssue.message}</span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                disabled={modelSelectionLoadPending || !onLoadModelSelection}
+                onClick={() => { void handleLoadModelSelection() }}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+                title="Unload other supported runtime models and load the global selection"
+              >
+                {modelSelectionLoadPending
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <Power size={13} />}
+                {modelSelectionLoadPending ? 'Loading...' : 'Load Selected Models'}
+              </button>
+
+              {modelSelectionLoadFeedback && (
+                <div
+                  aria-live="polite"
+                  className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
+                    modelSelectionLoadFeedback.tone === 'success'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+                      : modelSelectionLoadFeedback.tone === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300'
+                  }`}
+                >
+                  <div className="font-medium">{modelSelectionLoadFeedback.message}</div>
+                  {modelSelectionLoadFeedback.details.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {modelSelectionLoadFeedback.details.map((detail, index) => (
+                        <li key={`${detail}-${index}`}>{detail}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="no-drag px-3 pb-3 pt-2">
         {currentView === 'chat' ? (

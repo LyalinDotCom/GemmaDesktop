@@ -44,7 +44,6 @@ function buildProps(
     conversationKind: 'normal',
     planMode: false,
     onSelectConversationMode: () => {},
-    onSelectModel: () => {},
     modeChangeDisabled: false,
     messages: [],
     streamingContent: null,
@@ -80,7 +79,6 @@ function buildProps(
     onInstallSpeech: async () => null,
     onRepairSpeech: async () => null,
     onOpenSpeechSettings: () => {},
-    gemmaInstallStates: [],
     pinnedQuotes: [],
     onRemovePinnedQuote: () => {},
     onClearPinnedQuotes: () => {},
@@ -125,9 +123,8 @@ describe('InputBar mode rendering', () => {
     expect(buildMarkup).toContain('title="Switch to explore mode"')
     expect(buildMarkup).toContain('title="Switch to act mode"')
     expect(buildMarkup).toContain('title="Switch to plan mode"')
-    expect(buildMarkup).toContain('aria-label="Session model size"')
-    expect(buildMarkup).toContain('Session model: Gemma 4 26B')
-    expect(buildMarkup).toContain('Ollama Native')
+    expect(buildMarkup).not.toContain('aria-label="Session model size"')
+    expect(buildMarkup).not.toContain('Session model: Gemma 4 26B')
     expect(buildMarkup).toContain('aria-label="Switch to YOLO approval mode"')
     expect(buildMarkup).toContain('>Ask<')
     expect(exploreMarkup).toContain('aria-label="Switch between Explore, Act, and Plan"')
@@ -149,7 +146,7 @@ describe('InputBar mode rendering', () => {
     expect(markup).toContain('>YOLO<')
   })
 
-  it('shows a Research badge plus an enabled model selector for research conversations', () => {
+  it('shows a Research badge without per-conversation model selection', () => {
     const researchMarkup = renderToStaticMarkup(
       createElement(InputBar, buildProps({
         selectedMode: 'explore',
@@ -159,8 +156,8 @@ describe('InputBar mode rendering', () => {
 
     expect(researchMarkup).toContain('title="Deep research conversation"')
     expect(researchMarkup).toContain('>Research<')
-    expect(researchMarkup).toContain('aria-label="Session model size"')
-    expect(researchMarkup).toContain('Session model: Gemma 4 26B')
+    expect(researchMarkup).not.toContain('aria-label="Session model size"')
+    expect(researchMarkup).not.toContain('Session model: Gemma 4 26B')
   })
 
   it('renders tool toggles as disabled in research conversations', () => {
@@ -250,7 +247,7 @@ describe('InputBar mode rendering', () => {
     expect(markup).not.toContain('Read full responses')
   })
 
-  it('keeps model and tool controls beside the mode selector and context beside send', () => {
+  it('keeps tool controls beside the mode selector and context beside send', () => {
     const tool = {
       id: 'ask-gemini',
       slug: 'ask-gemini',
@@ -270,7 +267,6 @@ describe('InputBar mode rendering', () => {
     )
 
     const modeIndex = markup.indexOf('aria-label="Switch between Explore, Act, and Plan"')
-    const modelIndex = markup.indexOf('aria-label="Session model size"')
     const toolIndex = markup.indexOf('aria-label="Disable Ask Gemini"')
     const spacerIndex = markup.indexOf('class="flex-1"', modeIndex)
     const contextIndex = markup.indexOf('title="Context: ~0 / 32768 tokens (0%)"')
@@ -278,9 +274,8 @@ describe('InputBar mode rendering', () => {
     const sendIndex = markup.indexOf('title="Send message"', contextIndex)
 
     expect(modeIndex).toBeGreaterThanOrEqual(0)
-    expect(modelIndex).toBeGreaterThan(modeIndex)
-    expect(toolIndex).toBeGreaterThan(modelIndex)
-    expect(modelIndex).toBeLessThan(spacerIndex)
+    expect(markup).not.toContain('aria-label="Session model size"')
+    expect(toolIndex).toBeGreaterThan(modeIndex)
     expect(toolIndex).toBeLessThan(spacerIndex)
     expect(moreIndex).toBeGreaterThan(spacerIndex)
     expect(contextIndex).toBeGreaterThanOrEqual(0)
@@ -458,56 +453,19 @@ describe('InputBar mode rendering', () => {
     expect(markup).toContain('disabled=""')
   })
 
-  it('can keep model switching available when only sending is blocked', () => {
+  it('keeps model switching out of the composer when only sending is blocked', () => {
     const reason =
       'oMLX could not load gemma-4-26b-a4b-it-nvfp4. Chats using omlx-openai / gemma-4-26b-a4b-it-nvfp4 are paused until you switch them to another model or restart after the model is available.'
     const markup = renderToStaticMarkup(
       createElement(InputBar, buildProps({
         initialDraftText: 'hello',
         conversationRunDisabledReason: reason,
-        modelSelectionDisabled: false,
       })),
     )
 
-    expect(markup.match(/<button[^>]*aria-label="Session model size"[^>]*>/)?.[0] ?? '')
-      .not.toMatch(/\sdisabled(?=[\s=>])/)
+    expect(markup).not.toContain('aria-label="Session model size"')
     expect(markup).toContain(reason)
     expect(markup.match(/<button[^>]*disabled=""[^>]*title="oMLX could not load[^"]*"[^>]*>/)?.[0] ?? '')
       .toMatch(/\sdisabled(?=[\s=>])/)
-  })
-
-  it('maps saved Gemma variant defaults to the size ladder instead of Custom', () => {
-    const markup = renderToStaticMarkup(
-      createElement(InputBar, buildProps({
-        models: [{
-          ...model,
-          id: 'gemma4:31b-mlx-bf16',
-          name: 'Gemma 4 31B MLX BF16',
-          optimizationTags: ['MLX'],
-        }],
-        selectedModelId: 'gemma4:31b-mlx-bf16',
-        selectedRuntimeId: 'ollama-native',
-        usesTemporaryModelOverride: false,
-      })),
-    )
-
-    expect(markup).toContain('X-High')
-    expect(markup).not.toContain('>Custom<')
-
-    const savedOtherDefaultMarkup = renderToStaticMarkup(
-      createElement(InputBar, buildProps({
-        models: [{
-          ...model,
-          id: 'qwen3:8b',
-          name: 'Qwen3 8B',
-        }],
-        selectedModelId: 'qwen3:8b',
-        selectedRuntimeId: 'ollama-native',
-        usesTemporaryModelOverride: false,
-      })),
-    )
-
-    expect(savedOtherDefaultMarkup).toContain('>Main<')
-    expect(savedOtherDefaultMarkup).not.toContain('>Custom<')
   })
 })

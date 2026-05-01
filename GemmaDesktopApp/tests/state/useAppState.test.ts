@@ -5,8 +5,6 @@ import type { MessageContent } from '../../src/renderer/src/types'
 describe('useAppState stop handling', () => {
   it('preserves plan mode and selected skills when creating a session', () => {
     expect(__testOnly.buildCreateSessionBridgeOptions({
-      modelId: 'gemma4:31b',
-      runtimeId: 'ollama-native',
       conversationKind: 'normal',
       workMode: 'build',
       planMode: true,
@@ -16,8 +14,6 @@ describe('useAppState stop handling', () => {
       workingDirectory: '/tmp/project',
       title: 'Plan first',
     })).toEqual({
-      modelId: 'gemma4:31b',
-      runtimeId: 'ollama-native',
       conversationKind: 'normal',
       workMode: 'build',
       planMode: true,

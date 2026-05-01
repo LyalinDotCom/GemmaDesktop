@@ -19,7 +19,6 @@ function makeSession(
     titleSource: 'user',
     modelId: 'gemma3:4b',
     runtimeId: 'ollama-native',
-    usesTemporaryModelOverride: false,
     conversationKind: 'normal',
     workMode: 'explore',
     planMode: false,

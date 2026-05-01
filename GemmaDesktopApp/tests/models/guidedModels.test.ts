@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildGuidedGemmaModels,
-  resolveDefaultAutomationModelTarget,
   buildOtherSelectableModels,
   resolveDefaultResearchModelTarget,
   resolveDefaultInteractiveSessionTarget,
@@ -286,57 +285,6 @@ describe('guided Gemma model helpers', () => {
     })
     expect(persistedCustomDefault).toEqual({
       modelId: 'qwen3:14b',
-      runtimeId: 'ollama-native',
-    })
-  })
-
-  it('defaults automations to the same saved primary Gemma target', () => {
-    const prefers26B = resolveDefaultAutomationModelTarget([
-      makeModel({
-        id: 'gemma4:26b',
-        name: 'Gemma 4 26B',
-        status: 'available',
-      }),
-      makeModel({
-        id: 'gemma4:31b',
-        name: 'Gemma 4 31B',
-        status: 'loaded',
-      }),
-    ])
-    const fallsBackToStrongestInstalled = resolveDefaultAutomationModelTarget([
-      makeModel({
-        id: 'gemma4:e4b',
-        name: 'Gemma 4 E4B',
-        status: 'available',
-      }),
-      makeModel({
-        id: 'gemma4:31b',
-        name: 'Gemma 4 31B',
-        status: 'loaded',
-      }),
-    ])
-    const persistedCustomDefault = resolveDefaultAutomationModelTarget(
-      [],
-      [],
-      {
-        ...DEFAULT_MODEL_SELECTION_SETTINGS,
-        mainModel: {
-          modelId: 'gemma4:e4b',
-          runtimeId: 'ollama-native',
-        },
-      },
-    )
-
-    expect(prefers26B).toEqual({
-      modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
-    })
-    expect(fallsBackToStrongestInstalled).toEqual({
-      modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
-    })
-    expect(persistedCustomDefault).toEqual({
-      modelId: 'gemma4:e4b',
       runtimeId: 'ollama-native',
     })
   })

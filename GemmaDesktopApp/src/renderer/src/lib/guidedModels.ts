@@ -6,7 +6,6 @@ import {
 } from '@shared/gemmaCatalog'
 import {
   normalizeProviderRuntimeId,
-  resolveSavedDefaultSessionPrimaryTarget,
   resolveConfiguredSessionPrimaryTarget,
   type AppModelSelectionSettings,
 } from '@shared/sessionModelDefaults'
@@ -180,14 +179,6 @@ export function resolveDefaultResearchModelTarget(
     },
     modelSelection,
   )
-}
-
-export function resolveDefaultAutomationModelTarget(
-  _models: ModelSummary[],
-  _installs: GemmaInstallState[] = [],
-  modelSelection?: AppModelSelectionSettings,
-): { modelId: string; runtimeId: string } {
-  return resolveSavedDefaultSessionPrimaryTarget(modelSelection)
 }
 
 export function resolveDefaultInteractiveSessionTarget(

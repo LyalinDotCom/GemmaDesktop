@@ -688,8 +688,6 @@ interface PrimaryModelTarget {
   loadedInstanceId?: string
 }
 
-type PrimaryModelSource = NonNullable<AppSessionConfig['primaryModelSource']>
-
 type EnvironmentInspection = Awaited<ReturnType<GemmaDesktop['inspectEnvironment']>>
 
 interface PrimaryModelAvailabilityIssue {
@@ -890,6 +888,12 @@ function hasPrimaryModelAvailabilityIssue(
   target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
 ): boolean {
   return primaryModelAvailabilityIssues.has(modelTargetKey(target))
+}
+
+function getPrimaryModelAvailabilityIssue(
+  target: Pick<PrimaryModelTarget, 'runtimeId' | 'modelId'>,
+): PrimaryModelAvailabilityIssue | undefined {
+  return primaryModelAvailabilityIssues.get(modelTargetKey(target))
 }
 
 function clearPrimaryModelAvailabilityIssue(
@@ -1584,30 +1588,11 @@ function buildDefaultSessionPrimaryTarget(
   }
 }
 
-function usesTemporaryModelOverride(snapshot?: SessionSnapshot | null): boolean {
-  if (!snapshot || isTalkSessionSnapshot(snapshot)) {
-    return false
-  }
-
-  return resolveSessionPrimaryModelSource(snapshot, settings) === 'custom'
-}
-
 function resolveSessionPrimaryTarget(
   _sessionId: string,
   config: Pick<AppSessionConfig, 'conversationKind' | 'baseMode' | 'surface'>,
-  snapshot?: SessionSnapshot | null,
+  _snapshot?: SessionSnapshot | null,
 ): PrimaryModelTarget {
-  if (snapshot && !isTalkSessionSnapshot(snapshot)) {
-    if (resolveSessionPrimaryModelSource(snapshot, settings) === 'default') {
-      return buildDefaultSessionPrimaryTarget(config, settings)
-    }
-
-    return {
-      modelId: snapshot.modelId,
-      runtimeId: snapshot.runtimeId,
-    }
-  }
-
   return buildDefaultSessionPrimaryTarget(config, settings)
 }
 
@@ -1621,43 +1606,6 @@ function primaryTargetsMatch(
     && left.modelId === right.modelId
     && normalizeProviderRuntimeId(left.runtimeId) === normalizeProviderRuntimeId(right.runtimeId),
   )
-}
-
-function resolveSessionPrimaryModelSource(
-  snapshot: SessionSnapshot,
-  _currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
-): PrimaryModelSource {
-  const config = getSessionConfig(snapshot)
-  if (config.primaryModelSource === 'default' || config.primaryModelSource === 'custom') {
-    return config.primaryModelSource
-  }
-
-  return 'default'
-}
-
-function resolveRequestedPrimaryModelSource(
-  config: Pick<AppSessionConfig, 'conversationKind' | 'baseMode' | 'surface'>,
-  target: PrimaryModelTarget,
-  currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
-): PrimaryModelSource {
-  return primaryTargetsMatch(target, buildDefaultSessionPrimaryTarget(config, currentSettings))
-    ? 'default'
-    : 'custom'
-}
-
-function shouldTreatLegacySessionAsDefaultPrimary(
-  snapshot: SessionSnapshot,
-  _previousSettings: Pick<AppSettingsRecord, 'modelSelection'>,
-): boolean {
-  const config = getSessionConfig(snapshot)
-  if (config.primaryModelSource === 'default') {
-    return true
-  }
-  if (config.primaryModelSource === 'custom') {
-    return false
-  }
-
-  return true
 }
 
 function shouldWarmModelTarget(
@@ -2612,6 +2560,11 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
 async function ensurePrimaryModelTargetLoaded(
   inputTarget: PrimaryModelTarget,
 ): Promise<void> {
+  const issue = getPrimaryModelAvailabilityIssue(inputTarget)
+  if (issue) {
+    throw new PrimaryModelUnavailableError(issue)
+  }
+
   return await runModelLifecycleExclusive(() =>
     ensurePrimaryModelTargetLoadedUnlocked(inputTarget),
   )
@@ -4591,7 +4544,6 @@ async function reconfigureDefaultPrimarySession(
     modelId: target.modelId,
     runtimeId: runtimeSelection.runtimeId,
     preferredRuntimeId: target.runtimeId,
-    primaryModelSource: 'default',
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
     approvalMode: currentConfig.approvalMode,
@@ -4642,13 +4594,6 @@ async function reconcileDefaultPrimarySessionForSend(
   changed: boolean
 }> {
   const snapshot = session.snapshot()
-  if (
-    isTalkSessionSnapshot(snapshot)
-    || resolveSessionPrimaryModelSource(snapshot, currentSettings) !== 'default'
-  ) {
-    return { session, snapshot, changed: false }
-  }
-
   const config = getSessionConfig(snapshot)
   const target = buildDefaultSessionPrimaryTarget(config, currentSettings)
   if (primaryTargetsMatch({
@@ -4673,7 +4618,7 @@ async function reconcileDefaultPrimarySessionForSend(
 }
 
 async function reconcileDefaultPrimarySessionsForSettingsChange(
-  previousSettings: AppSettingsRecord,
+  _previousSettings: AppSettingsRecord,
   nextSettings: AppSettingsRecord,
 ): Promise<void> {
   const updates: Promise<boolean>[] = []
@@ -4688,20 +4633,13 @@ async function reconcileDefaultPrimarySessionsForSettingsChange(
       continue
     }
 
-    if (!shouldTreatLegacySessionAsDefaultPrimary(snapshot, previousSettings)) {
-      continue
-    }
-
     const config = getSessionConfig(snapshot)
     const target = buildDefaultSessionPrimaryTarget(config, nextSettings)
     const currentTarget = {
       modelId: snapshot.modelId,
       runtimeId: snapshot.runtimeId,
     }
-    if (
-      primaryTargetsMatch(currentTarget, target)
-      && config.primaryModelSource === 'default'
-    ) {
+    if (primaryTargetsMatch(currentTarget, target)) {
       continue
     }
 
@@ -5628,7 +5566,6 @@ async function resolveSessionComposition(input: {
   modelId: string
   runtimeId: string
   preferredRuntimeId: string
-  primaryModelSource?: PrimaryModelSource
   selectedSkillIds: string[]
   selectedToolIds: string[]
   approvalMode: ConversationApprovalMode
@@ -5650,11 +5587,6 @@ async function resolveSessionComposition(input: {
     ...sessionModeToConfig(input.sessionMode),
     planMode: input.planMode,
     preferredRuntimeId: input.preferredRuntimeId,
-    primaryModelSource:
-      input.primaryModelSource
-      ?? (input.snapshot
-        ? resolveSessionPrimaryModelSource(input.snapshot, currentSettings)
-        : undefined),
     selectedSkillIds: [...input.selectedSkillIds],
     selectedSkillNames: [],
     selectedToolIds: [],
@@ -6423,8 +6355,6 @@ function automationToSummary(record: AutomationRecord): Record<string, unknown> 
     id: record.id,
     name: record.name,
     prompt: record.prompt,
-    runtimeId: record.runtimeId,
-    modelId: record.modelId,
     mode: 'build',
     selectedSkillIds: record.selectedSkillIds,
     selectedSkillNames: record.selectedSkillNames,
@@ -8020,7 +7950,6 @@ async function ensureTalkSessionInternal(
       modelId: defaultTarget.modelId,
       runtimeId: defaultTarget.runtimeId,
       preferredRuntimeId: defaultTarget.runtimeId,
-      primaryModelSource: 'default',
       selectedSkillIds: [],
       selectedToolIds: [],
       approvalMode: talkConfig.approvalMode,
@@ -8087,7 +8016,6 @@ async function ensureTalkSessionInternal(
     modelId: snapshot.modelId,
     runtimeId: snapshot.runtimeId,
     preferredRuntimeId: currentConfig.preferredRuntimeId,
-    primaryModelSource: currentConfig.primaryModelSource ?? 'default',
     selectedSkillIds: talkConfig.selectedSkillIds,
     selectedToolIds: talkConfig.selectedToolIds,
     approvalMode: talkConfig.approvalMode,
@@ -8215,10 +8143,6 @@ async function warmSelectedSessionPrimary(sessionId: string): Promise<void> {
   }
 
   const currentSettings = await getSettingsState()
-  if (resolveSessionPrimaryModelSource(snapshot, currentSettings) !== 'default') {
-    return
-  }
-
   const target = buildDefaultSessionPrimaryTarget(
     getSessionConfig(snapshot),
     currentSettings,
@@ -9305,6 +9229,28 @@ async function runAutomation(
     throw new Error(buildConversationExecutionBlockedMessage(blocker))
   }
 
+  const sessionMode: AppSessionMode = 'build'
+  const executionTarget = buildDefaultSessionPrimaryTarget({
+    conversationKind: 'normal',
+    baseMode: sessionMode,
+    surface: 'default',
+  }, settings)
+  const runtimeSelection = normalizeRuntimeForSessionMode(
+    executionTarget.runtimeId,
+    sessionMode,
+  )
+  const primaryIssue = getPrimaryModelAvailabilityIssue({
+    modelId: executionTarget.modelId,
+    runtimeId: runtimeSelection.runtimeId,
+  })
+  if (primaryIssue) {
+    if (trigger === 'schedule') {
+      return 'deferred'
+    }
+
+    throw new PrimaryModelUnavailableError(primaryIssue)
+  }
+
   const abortController = new AbortController()
   let assistantText = ''
   let reasoningText = ''
@@ -9330,24 +9276,18 @@ async function runAutomation(
     releasePrimaryLease = await acquirePrimaryModelLease(
       getAutomationExecutionSessionId(automationId),
       {
-        modelId: record.modelId,
-        runtimeId: record.runtimeId,
+        modelId: executionTarget.modelId,
+        runtimeId: runtimeSelection.runtimeId,
       },
-    )
-
-    const sessionMode: AppSessionMode = 'build'
-    const runtimeSelection = normalizeRuntimeForSessionMode(
-      record.runtimeId,
-      sessionMode,
     )
     const composition = await resolveSessionComposition({
       snapshot: null,
       conversationKind: 'normal',
       sessionMode,
       planMode: false,
-      modelId: record.modelId,
+      modelId: executionTarget.modelId,
       runtimeId: runtimeSelection.runtimeId,
-      preferredRuntimeId: record.runtimeId,
+      preferredRuntimeId: executionTarget.runtimeId,
       selectedSkillIds: record.selectedSkillIds,
       selectedToolIds: [],
       approvalMode: AUTOMATION_APPROVAL_MODE,
@@ -9357,7 +9297,7 @@ async function runAutomation(
 
     const session = await gemmaDesktop.sessions.create({
       runtime: runtimeSelection.runtimeId,
-      model: record.modelId,
+      model: executionTarget.modelId,
       mode: composition.mode,
       workingDirectory: record.workingDirectory,
       systemInstructions: composition.systemInstructions,
@@ -9682,7 +9622,6 @@ function snapshotToDetail(
     titleSource: meta.titleSource,
     modelId: snapshot.modelId,
     runtimeId: snapshot.runtimeId,
-    usesTemporaryModelOverride: usesTemporaryModelOverride(snapshot),
     conversationKind: config.conversationKind,
     workMode: sessionMode,
     planMode: config.planMode,
@@ -9723,7 +9662,6 @@ function metaToSummary(
     titleSource: meta.titleSource,
     modelId: snapshot?.modelId ?? '',
     runtimeId: snapshot?.runtimeId ?? '',
-    usesTemporaryModelOverride: usesTemporaryModelOverride(snapshot),
     conversationKind: config?.conversationKind ?? 'normal',
     workMode: config ? resolveAppSessionMode(config) : 'explore',
     planMode: config?.planMode ?? false,
@@ -10072,7 +10010,6 @@ async function applyTemporarySessionModelOverride(input: {
     modelId: overrideTarget.modelId,
     runtimeId: overrideTarget.runtimeId,
     preferredRuntimeId: currentConfig.preferredRuntimeId,
-    primaryModelSource: currentConfig.primaryModelSource,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
     approvalMode: currentConfig.approvalMode,
@@ -10108,7 +10045,6 @@ async function applyTemporarySessionModelOverride(input: {
         modelId: originalTarget.modelId,
         runtimeId: originalTarget.runtimeId,
         preferredRuntimeId: latestConfig.preferredRuntimeId,
-        primaryModelSource: latestConfig.primaryModelSource,
         selectedSkillIds: latestConfig.selectedSkillIds,
         selectedToolIds: latestConfig.selectedToolIds,
         approvalMode: latestConfig.approvalMode,
@@ -12716,8 +12652,6 @@ export function registerIpcHandlers(): void {
     async (
       _,
       opts: {
-        modelId: string
-        runtimeId: string
         mode?: AppSessionMode
         conversationKind?: ConversationKind
         workMode?: AppSessionMode
@@ -12740,7 +12674,7 @@ export function registerIpcHandlers(): void {
         conversationKind,
         ...sessionModeToConfig(sessionMode),
         planMode: typeof opts.planMode === 'boolean' ? opts.planMode : false,
-        preferredRuntimeId: opts.runtimeId,
+        preferredRuntimeId: '',
         selectedSkillIds: [],
         selectedSkillNames: [],
         selectedToolIds: [],
@@ -12756,27 +12690,22 @@ export function registerIpcHandlers(): void {
       const workingDirectory = await ensureDirectoryExists(
         opts.workingDirectory ?? currentSettings.defaultProjectDirectory,
       )
-      const runtimeSelection = normalizeRuntimeForSessionMode(
-        opts.runtimeId,
-        nextSessionConfig.baseMode,
-      )
-      const primaryModelSource = resolveRequestedPrimaryModelSource(
+      const target = buildDefaultSessionPrimaryTarget(
         nextSessionConfig,
-        {
-          modelId: opts.modelId,
-          runtimeId: runtimeSelection.runtimeId,
-        },
         currentSettings,
+      )
+      const runtimeSelection = normalizeRuntimeForSessionMode(
+        target.runtimeId,
+        nextSessionConfig.baseMode,
       )
       const composition = await resolveSessionComposition({
         snapshot: null,
         conversationKind: nextSessionConfig.conversationKind,
         sessionMode: nextSessionConfig.baseMode,
         planMode: nextSessionConfig.planMode,
-        modelId: opts.modelId,
+        modelId: target.modelId,
         runtimeId: runtimeSelection.runtimeId,
-        preferredRuntimeId: opts.runtimeId,
-        primaryModelSource,
+        preferredRuntimeId: target.runtimeId,
         selectedSkillIds: Array.isArray(opts.selectedSkillIds)
           ? opts.selectedSkillIds
           : [],
@@ -12796,7 +12725,7 @@ export function registerIpcHandlers(): void {
       assertNoConversationExecutionRunning()
       const session = await gemmaDesktop.sessions.create({
         runtime: runtimeSelection.runtimeId,
-        model: opts.modelId,
+        model: target.modelId,
         mode: composition.mode,
         workingDirectory,
         systemInstructions: composition.systemInstructions,
@@ -12822,9 +12751,11 @@ export function registerIpcHandlers(): void {
         layer: 'ipc',
         direction: 'renderer->main',
         event: 'sessions.create.request',
-        summary: `Create session request for ${runtimeSelection.runtimeId}/${opts.modelId}`,
+        summary: `Create session request for ${runtimeSelection.runtimeId}/${target.modelId}`,
         data: {
           ...opts,
+          modelId: target.modelId,
+          preferredRuntimeId: target.runtimeId,
           normalizedRuntimeId: runtimeSelection.runtimeId,
           runtimeNormalizationReason: runtimeSelection.reason,
         },
@@ -12887,8 +12818,6 @@ export function registerIpcHandlers(): void {
         workMode?: AppSessionMode
         planMode?: boolean
         approvalMode?: ConversationApprovalMode
-        modelId?: string
-        runtimeId?: string
         selectedSkillIds?: string[]
         selectedToolIds?: string[]
         workingDirectory?: string
@@ -12989,36 +12918,11 @@ export function registerIpcHandlers(): void {
       if (opts.planMode === true && !nextSessionConfig.planMode) {
         throw new Error('Plan mode is only available in Build conversations.')
       }
-      const requestedTarget =
-        opts.modelId && opts.runtimeId
-          ? {
-              modelId: opts.modelId,
-              runtimeId: opts.runtimeId,
-            }
-          : null
       const currentSettings = await getSettingsState()
-      const snapshotTarget = {
-        modelId: currentSnapshot.modelId,
-        runtimeId: currentSnapshot.runtimeId,
-      }
-      const currentPrimaryModelSource = currentSnapshotIsTalk
-        ? 'default'
-        : resolveSessionPrimaryModelSource(currentSnapshot, currentSettings)
-      const defaultTarget = buildDefaultSessionPrimaryTarget(
+      const nextTarget = buildDefaultSessionPrimaryTarget(
         nextSessionConfig,
         currentSettings,
       )
-      const nextTarget =
-        requestedTarget
-          ?? (currentPrimaryModelSource === 'default' ? defaultTarget : snapshotTarget)
-      const nextPrimaryModelSource =
-        requestedTarget
-          ? resolveRequestedPrimaryModelSource(
-              nextSessionConfig,
-              normalizePrimaryModelTarget(requestedTarget),
-              currentSettings,
-            )
-          : currentPrimaryModelSource
 
       const selectedSkillIds = Array.isArray(opts.selectedSkillIds)
         ? opts.selectedSkillIds
@@ -13041,7 +12945,6 @@ export function registerIpcHandlers(): void {
         modelId: nextTarget.modelId,
         runtimeId: runtimeSelection.runtimeId,
         preferredRuntimeId: nextTarget.runtimeId,
-        primaryModelSource: nextPrimaryModelSource,
         selectedSkillIds,
         selectedToolIds,
         approvalMode: nextSessionConfig.approvalMode,
@@ -13788,8 +13691,6 @@ export function registerIpcHandlers(): void {
       input: {
         name: string
         prompt: string
-        runtimeId: string
-        modelId: string
         mode: AppSessionMode
         selectedSkillIds?: string[]
         workingDirectory: string
@@ -13805,8 +13706,6 @@ export function registerIpcHandlers(): void {
       const record = await automationStore.create({
         name: input.name.trim() || 'Untitled Automation',
         prompt: input.prompt,
-        runtimeId: input.runtimeId,
-        modelId: input.modelId,
         mode: modeConfig.baseMode,
         selectedSkillIds,
         selectedSkillNames: await resolveSelectedSkillNames(selectedSkillIds),
@@ -13828,8 +13727,6 @@ export function registerIpcHandlers(): void {
       input: Partial<{
         name: string
         prompt: string
-        runtimeId: string
-        modelId: string
         mode: AppSessionMode
         selectedSkillIds: string[]
         workingDirectory: string
@@ -13854,8 +13751,6 @@ export function registerIpcHandlers(): void {
       const nextRecord = await automationStore.update(automationId, {
         name: input.name?.trim() || current.name,
         prompt: input.prompt ?? current.prompt,
-        runtimeId: input.runtimeId ?? current.runtimeId,
-        modelId: input.modelId ?? current.modelId,
         mode: nextModeConfig.baseMode,
         selectedSkillIds: nextSelectedSkillIds,
         selectedSkillNames: await resolveSelectedSkillNames(nextSelectedSkillIds),

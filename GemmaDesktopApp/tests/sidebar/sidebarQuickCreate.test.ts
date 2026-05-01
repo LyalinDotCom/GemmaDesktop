@@ -12,7 +12,6 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     titleSource: 'user',
     modelId: 'gemma3:4b',
     runtimeId: 'ollama-native',
-    usesTemporaryModelOverride: false,
     conversationKind: 'normal',
     workMode: 'build',
     planMode: false,

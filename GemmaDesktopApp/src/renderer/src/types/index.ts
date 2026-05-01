@@ -112,7 +112,6 @@ export interface SessionSummary {
   titleSource: SessionTitleSource
   modelId: string
   runtimeId: string
-  usesTemporaryModelOverride: boolean
   conversationKind: ConversationKind
   workMode: WorkMode
   planMode: boolean
@@ -869,8 +868,6 @@ export interface AutomationSummary {
   id: string
   name: string
   prompt: string
-  runtimeId: string
-  modelId: string
   mode: WorkMode
   selectedSkillIds: string[]
   selectedSkillNames: string[]
@@ -891,8 +888,6 @@ export interface AutomationDetail extends AutomationSummary {
 }
 
 export interface CreateSessionOpts {
-  modelId: string
-  runtimeId: string
   conversationKind: ConversationKind
   workMode?: WorkMode
   planMode?: boolean
@@ -907,8 +902,6 @@ export interface UpdateSessionOpts {
   workMode?: WorkMode
   planMode?: boolean
   approvalMode?: ConversationApprovalMode
-  modelId?: string
-  runtimeId?: string
   selectedSkillIds?: string[]
   selectedToolIds?: string[]
   workingDirectory?: string
@@ -1260,8 +1253,6 @@ export interface GemmaDesktopBridge {
     create(input: {
       name: string
       prompt: string
-      runtimeId: string
-      modelId: string
       mode: WorkMode
       selectedSkillIds?: string[]
       workingDirectory: string
@@ -1273,8 +1264,6 @@ export interface GemmaDesktopBridge {
       patch: Partial<{
         name: string
         prompt: string
-        runtimeId: string
-        modelId: string
         mode: WorkMode
         selectedSkillIds: string[]
         workingDirectory: string

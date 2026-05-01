@@ -2,14 +2,16 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
-  DefaultModelTargetPicker,
   SettingsModal,
-  formatDefaultModelOptionLabel,
-  groupDefaultModelOptions,
-  type DefaultModelOption,
   type SettingsTab,
 } from '../../src/renderer/src/components/SettingsModal'
-import type { AppSettings, BootstrapState, ModelSummary } from '../../src/renderer/src/types'
+import {
+  formatModelTargetOptionLabel,
+  groupModelTargetOptions,
+  ModelTargetPicker,
+  type ModelTargetOption,
+} from '../../src/renderer/src/components/ModelTargetPicker'
+import type { AppSettings, ModelSummary } from '../../src/renderer/src/types'
 import { getDefaultLmStudioSettings } from '../../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../../src/shared/ollamaRuntimeConfig'
 import { getDefaultOmlxSettings } from '../../src/shared/omlxRuntimeConfig'
@@ -116,18 +118,6 @@ function makeSettings(): AppSettings {
   }
 }
 
-const bootstrapState: BootstrapState = {
-  status: 'ready',
-  ready: true,
-  message: 'Ready',
-  helperModelEnabled: true,
-  helperModelId: 'gemma4:e2b',
-  helperRuntimeId: 'ollama-native',
-  requiredPrimaryModelIds: ['gemma4:26b'],
-  modelAvailabilityIssues: [],
-  updatedAt: 0,
-}
-
 function renderSettingsModal(
   initialTab: SettingsTab = 'general',
   models: ModelSummary[] = [],
@@ -135,31 +125,9 @@ function renderSettingsModal(
   return renderToStaticMarkup(
     createElement(SettingsModal, {
       settings: makeSettings(),
-      defaultModelSelection: {
-        mainModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.mainModel },
-        helperModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.helperModel },
-        helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
-      },
       models,
-      gemmaInstallStates: [],
-      bootstrapState,
       onClose: () => {},
       onUpdate: () => {},
-      onLoadDefaultModels: async () => ({
-        ok: true,
-        message: 'Loaded 2 of 2 default models.',
-        selection: makeSettings().modelSelection,
-        targets: [],
-        unloaded: [],
-        loaded: [],
-        skipped: [],
-        errors: [],
-      }),
-      onEnsureGemmaModel: async (tag: string) => ({
-        ok: true,
-        tag,
-        installed: true,
-      }),
       initialTab,
       speechStatus: null,
       readAloudStatus: null,
@@ -184,7 +152,7 @@ function modelOption(
   providerLabel: string,
   apiTypeLabel: string,
   optimizationTags?: string[],
-): DefaultModelOption {
+): ModelTargetOption {
   return {
     modelId,
     runtimeId,
@@ -213,7 +181,7 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('border-b-2 pb-2.5 pt-3')
   })
 
-  it('renders searchable saved default model pickers in general settings', () => {
+  it('removes default model selection from general settings', () => {
     const markup = renderSettingsModal('general', [
       {
         id: 'qwen3:8b',
@@ -224,19 +192,17 @@ describe('SettingsModal layout', () => {
       },
     ])
 
-    expect(markup).toContain('aria-label="Default main model"')
-    expect(markup).toContain('aria-label="Default helper model"')
-    expect(markup).toContain('aria-label="Toggle helper model"')
-    expect(markup).toContain('aria-haspopup="listbox"')
-    expect(markup).toContain('Load Models')
-    expect(markup).toContain('Unload other supported runtime models and load the saved defaults')
-    expect(markup).toContain('gemma4:26b')
-    expect(markup).toContain('Ollama · Native API')
+    expect(markup).not.toContain('Default Models')
+    expect(markup).not.toContain('aria-label="Default main model"')
+    expect(markup).not.toContain('aria-label="Default helper model"')
+    expect(markup).not.toContain('aria-label="Toggle helper model"')
+    expect(markup).not.toContain('Load Models')
+    expect(markup).not.toContain('Unload other supported runtime models and load the saved defaults')
     expect(markup).not.toContain('<optgroup')
   })
 
-  it('groups saved default model options by provider and sorts inside each group', () => {
-    const groups = groupDefaultModelOptions([
+  it('groups model target options by provider and sorts inside each group', () => {
+    const groups = groupModelTargetOptions([
       modelOption('zeta:7b', 'Zeta 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
       modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
       modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
@@ -249,24 +215,24 @@ describe('SettingsModal layout', () => {
       'LM Studio',
       'Ollama',
     ])
-    expect(groups[0]?.options.map(formatDefaultModelOptionLabel)).toEqual([
+    expect(groups[0]?.options.map(formatModelTargetOptionLabel)).toEqual([
       'Alpha 7B - LM Studio - OpenAI-compatible API',
       'Qwen3 8B - LM Studio - OpenAI-compatible API',
       'Zeta 7B - LM Studio - OpenAI-compatible API',
     ])
-    expect(groups[1]?.options.map(formatDefaultModelOptionLabel)).toEqual([
+    expect(groups[1]?.options.map(formatModelTargetOptionLabel)).toEqual([
       'Gemma 4 26B - Ollama - Native API',
     ])
   })
 
-  it('opens default model pickers as bounded searchable lists', () => {
-    const groups = groupDefaultModelOptions([
+  it('opens model target pickers as bounded searchable lists', () => {
+    const groups = groupModelTargetOptions([
       modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API', ['MLX']),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
     ])
     const markup = renderToStaticMarkup(
-      createElement(DefaultModelTargetPicker, {
-        ariaLabel: 'Default main model',
+      createElement(ModelTargetPicker, {
+        ariaLabel: 'Primary model',
         value: {
           modelId: 'gemma4:26b',
           runtimeId: 'ollama-native',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSnapshot } from '@gemma-desktop/sdk-core'
 import {
+  APP_SESSION_METADATA_KEY,
   createSessionMetadata,
   getSessionConfig,
   normalizeSessionConfig,
@@ -44,23 +45,24 @@ function makeSnapshot(metadata: Record<string, unknown>): SessionSnapshot {
 }
 
 describe('session config metadata', () => {
-  it('persists whether the primary model follows settings or is customized', () => {
-    const defaultMetadata = createSessionMetadata(
-      null,
-      makeConfig({ primaryModelSource: 'default' }),
-    )
-    const customMetadata = createSessionMetadata(
-      null,
-      makeConfig({ primaryModelSource: 'custom' }),
-    )
+  it('does not persist legacy per-session primary model source metadata', () => {
+    const metadata = createSessionMetadata(null, makeConfig())
+    const appMetadata = metadata[APP_SESSION_METADATA_KEY] as Record<string, unknown>
 
-    expect(getSessionConfig(makeSnapshot(defaultMetadata)).primaryModelSource).toBe('default')
-    expect(getSessionConfig(makeSnapshot(customMetadata)).primaryModelSource).toBe('custom')
+    expect(appMetadata).not.toHaveProperty('primaryModelSource')
   })
 
-  it('leaves legacy sessions without a model source marker unpinned', () => {
-    const legacyMetadata = createSessionMetadata(null, makeConfig())
+  it('ignores legacy primary model source metadata when restoring config', () => {
+    const metadata = createSessionMetadata(null, makeConfig())
+    const appMetadata = metadata[APP_SESSION_METADATA_KEY] as Record<string, unknown>
+    const restored = getSessionConfig(makeSnapshot({
+      ...metadata,
+      [APP_SESSION_METADATA_KEY]: {
+        ...appMetadata,
+        primaryModelSource: 'custom',
+      },
+    }))
 
-    expect(getSessionConfig(makeSnapshot(legacyMetadata)).primaryModelSource).toBeUndefined()
+    expect(restored).not.toHaveProperty('primaryModelSource')
   })
 })

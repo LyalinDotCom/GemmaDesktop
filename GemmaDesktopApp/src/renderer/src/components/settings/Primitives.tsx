@@ -1,3 +1,4 @@
+import * as RadixSwitch from '@radix-ui/react-switch'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 
 export function SettingsSection({
@@ -89,30 +90,34 @@ export function Toggle({
   onChange,
   disabled,
   ariaLabel,
+  size = 'md',
 }: {
   checked: boolean
   onChange: () => void
   disabled?: boolean
   ariaLabel?: string
+  size?: 'sm' | 'md'
 }) {
+  const sizeClasses =
+    size === 'sm'
+      ? 'h-[20px] w-[34px]'
+      : 'h-[24px] w-[42px]'
+  const thumbClasses =
+    size === 'sm'
+      ? 'h-4 w-4 data-[state=checked]:translate-x-[14px] data-[state=unchecked]:translate-x-0.5'
+      : 'h-5 w-5 data-[state=checked]:translate-x-[18px] data-[state=unchecked]:translate-x-0.5'
   return (
-    <button
-      type="button"
-      onClick={onChange}
+    <RadixSwitch.Root
+      checked={checked}
+      onCheckedChange={onChange}
       disabled={disabled}
-      role="switch"
-      aria-checked={checked}
       aria-label={ariaLabel}
-      className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? 'bg-indigo-600' : 'bg-zinc-300 dark:bg-zinc-700'
-      }`}
+      className={`group relative inline-flex flex-shrink-0 cursor-pointer items-center rounded-full outline-none transition-colors duration-200 ease-out focus-visible:ring-2 focus-visible:ring-indigo-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:ring-offset-zinc-950 data-[state=checked]:bg-indigo-600 data-[state=unchecked]:bg-zinc-300 dark:data-[state=checked]:bg-indigo-500 dark:data-[state=unchecked]:bg-zinc-700 ${sizeClasses}`}
     >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-5' : 'translate-x-0.5'
-        }`}
+      <RadixSwitch.Thumb
+        className={`pointer-events-none block rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2),0_1px_3px_rgba(0,0,0,0.15)] ring-0 transition-transform duration-200 ease-out will-change-transform ${thumbClasses}`}
       />
-    </button>
+    </RadixSwitch.Root>
   )
 }
 

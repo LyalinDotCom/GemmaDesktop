@@ -1522,8 +1522,6 @@ export function useAppState() {
     async (input: {
       name: string
       prompt: string
-      runtimeId: string
-      modelId: string
       mode: SessionMode
       selectedSkillIds?: string[]
       workingDirectory: string
@@ -1549,8 +1547,6 @@ export function useAppState() {
       patch: Partial<{
         name: string
         prompt: string
-        runtimeId: string
-        modelId: string
         mode: SessionMode
         selectedSkillIds: string[]
         workingDirectory: string

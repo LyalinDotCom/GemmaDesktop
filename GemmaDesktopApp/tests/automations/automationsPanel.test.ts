@@ -5,16 +5,7 @@ import { AutomationsPanel } from '../../src/renderer/src/components/AutomationsP
 import type {
   AutomationDetail,
   AutomationSchedule,
-  ModelSummary,
 } from '../../src/renderer/src/types'
-
-const model: ModelSummary = {
-  id: 'gemma4:26b',
-  name: 'Gemma 4 26B',
-  runtimeId: 'ollama-native',
-  runtimeName: 'Ollama Native',
-  status: 'available',
-}
 
 function makeAutomationDetail(input: {
   schedule: AutomationSchedule
@@ -23,8 +14,6 @@ function makeAutomationDetail(input: {
     id: 'automation-1',
     name: 'Nightly build check',
     prompt: 'Run the nightly check.',
-    runtimeId: model.runtimeId,
-    modelId: model.id,
     mode: 'build',
     selectedSkillIds: [],
     selectedSkillNames: [],
@@ -49,20 +38,9 @@ function renderPanel(): string {
   return renderToStaticMarkup(
     createElement(AutomationsPanel, {
       activeAutomation: null,
-      models: [model],
-      gemmaInstallStates: [],
       installedSkills: [],
       defaultWorkingDirectory: '/tmp/project',
-      defaultModelTarget: {
-        modelId: model.id,
-        runtimeId: model.runtimeId,
-      },
       newAutomationSeed: 0,
-      onEnsureGemmaModel: async (tag) => ({
-        ok: true,
-        tag,
-        installed: true,
-      }),
       onCreateAutomation: async () => makeAutomationDetail({ schedule }),
       onUpdateAutomation: async () => makeAutomationDetail({ schedule }),
       onDeleteAutomation: async () => {},

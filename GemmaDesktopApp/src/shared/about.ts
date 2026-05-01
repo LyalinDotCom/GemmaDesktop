@@ -265,6 +265,15 @@ export const ABOUT_CREDIT_SECTIONS: readonly AboutCreditSection[] = [
         kind: 'open-source',
       },
       {
+        id: 'radix-ui-react-switch',
+        name: '@radix-ui/react-switch',
+        version: '1.2.6',
+        license: 'MIT',
+        website: 'https://www.radix-ui.com/primitives/docs/components/switch',
+        role: 'Accessible switch primitive used by the shared Toggle in settings and the sidebar.',
+        kind: 'open-source',
+      },
+      {
         id: 'react-markdown',
         name: 'react-markdown',
         version: '9.1.0',

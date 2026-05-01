@@ -43,8 +43,6 @@ export interface AutomationRecord {
   id: string
   name: string
   prompt: string
-  runtimeId: string
-  modelId: string
   mode: 'explore' | 'build'
   selectedSkillIds: string[]
   selectedSkillNames: string[]
@@ -135,8 +133,17 @@ function recoverInterruptedRuns(record: AutomationRecord): {
 }
 
 function normalizeAutomationRecord(record: AutomationRecord): AutomationRecord {
+  const legacyRecord = record as AutomationRecord & {
+    runtimeId?: unknown
+    modelId?: unknown
+  }
+  const {
+    runtimeId: _runtimeId,
+    modelId: _modelId,
+    ...rest
+  } = legacyRecord
   return {
-    ...record,
+    ...rest,
     mode: 'build',
     lastRunStatus:
       record.lastRunStatus === 'running'
