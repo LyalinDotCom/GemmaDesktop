@@ -2759,7 +2759,7 @@ export function App() {
             >
               {/* Right dock resize handle */}
               <div
-                className="absolute left-0 top-0 z-[61] h-full w-1 cursor-col-resize select-none"
+                className={rightDockLayout.rightPanelResizeHandle}
                 {...rightDockResize.handleProps}
               />
               <div className={rightDockLayout.rightPanelInner}>

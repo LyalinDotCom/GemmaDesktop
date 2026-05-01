@@ -2,6 +2,7 @@ export interface RightDockLayoutClasses {
   splitContainer: string
   mainPane: string
   rightPanel: string
+  rightPanelResizeHandle: string
   rightPanelInner: string
   statusBar: string
   statusBarSurface: string
@@ -14,6 +15,7 @@ export type ChatContentLayout = 'centered' | 'expanded'
 const BASE_SPLIT_CONTAINER_CLASS = 'flex min-h-0 flex-1 overflow-hidden'
 const BASE_MAIN_PANE_CLASS = 'relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
 const BASE_RIGHT_PANEL_CLASS = 'relative flex min-h-0 flex-col'
+const BASE_RIGHT_PANEL_RESIZE_HANDLE_CLASS = 'absolute bottom-0 left-0 top-16 z-[61] w-1 cursor-col-resize select-none'
 const BASE_RIGHT_PANEL_INNER_CLASS = 'flex min-h-0 min-w-0 flex-1 flex-col'
 // statusBar is now a canvas-colored shell that hosts the lifted statusbar
 // surface. The shell creates the small left gutter against the sidebar
@@ -29,6 +31,7 @@ const RIGHT_DOCK_PANEL_CONTENT_PADDING_CLASS = 'px-4'
 const RIGHT_DOCK_DEFAULT_CONTENT_PADDING_CLASS = 'px-6'
 const RIGHT_DOCK_PANEL_RAIL_GUTTER_CLASS = 'pr-6'
 const RIGHT_DOCK_RAIL_ONLY_GUTTER_CLASS = 'pr-14'
+const RIGHT_DOCK_TOP_BAR_CLEARANCE_CLASS = 'pt-16'
 
 export function getRightDockLayoutClasses(rightDockVisible: boolean): RightDockLayoutClasses {
   return {
@@ -41,8 +44,10 @@ export function getRightDockLayoutClasses(rightDockVisible: boolean): RightDockL
     mainPane: BASE_MAIN_PANE_CLASS,
     rightPanel: [
       BASE_RIGHT_PANEL_CLASS,
+      RIGHT_DOCK_TOP_BAR_CLEARANCE_CLASS,
       RIGHT_DOCK_PANEL_RAIL_GUTTER_CLASS,
     ].join(' '),
+    rightPanelResizeHandle: BASE_RIGHT_PANEL_RESIZE_HANDLE_CLASS,
     rightPanelInner: BASE_RIGHT_PANEL_INNER_CLASS,
     statusBar: [
       BASE_STATUS_BAR_CLASS,
