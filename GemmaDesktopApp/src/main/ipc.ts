@@ -140,6 +140,7 @@ import {
   SESSION_TITLE_RESPONSE_FORMAT,
   buildAutoSessionTitleTask,
   buildFallbackSessionTitle,
+  isAutoSessionTitleReplaceable,
   normalizeGeneratedSessionTitle,
 } from './sessionTitles'
 import {
@@ -6647,11 +6648,16 @@ async function maybeGenerateAutoSessionTitle(input: {
     return
   }
 
+  const conversationKind = getSessionConfig(input.snapshot).conversationKind
   const meta = store.getMeta(input.sessionId)
   if (
     !meta
-    || meta.titleSource === 'user'
-    || meta.title !== PLACEHOLDER_SESSION_TITLE
+    || !isAutoSessionTitleReplaceable({
+      conversationKind,
+      title: meta.title,
+      titleSource: meta.titleSource,
+      placeholderTitle: PLACEHOLDER_SESSION_TITLE,
+    })
   ) {
     return
   }
@@ -6669,48 +6675,10 @@ async function maybeGenerateAutoSessionTitle(input: {
     return
   }
 
-  const conversationKind = getSessionConfig(input.snapshot).conversationKind
   const titleTask = buildAutoSessionTitleTask({
     conversationKind,
     promptSeed,
   })
-
-  if (conversationKind === 'research') {
-    const fallbackTitle = buildFallbackSessionTitle(
-      promptSeed,
-      titleTask.fallbackMaxWords,
-    )
-    if (!fallbackTitle) {
-      return
-    }
-    const latestMeta = store.getMeta(input.sessionId)
-    if (
-      !latestMeta
-      || latestMeta.titleSource === 'user'
-      || latestMeta.title !== PLACEHOLDER_SESSION_TITLE
-    ) {
-      return
-    }
-    const live = liveSessions.get(input.sessionId)
-    const persisted = live ? null : await getPersistedSession(input.sessionId)
-    const snapshot = live?.snapshot() ?? persisted?.snapshot
-    if (!snapshot) {
-      return
-    }
-
-    await store.save(
-      input.sessionId,
-      snapshot,
-      {
-        title: fallbackTitle,
-        titleSource: 'auto',
-      },
-      undefined,
-      { preserveUpdatedAt: true },
-    )
-    await broadcastSessionsChanged()
-    return
-  }
 
   try {
     const result = await runHelperStructuredTask({
@@ -6735,8 +6703,12 @@ async function maybeGenerateAutoSessionTitle(input: {
     const latestMeta = store.getMeta(input.sessionId)
     if (
       !latestMeta
-      || latestMeta.titleSource === 'user'
-      || latestMeta.title !== PLACEHOLDER_SESSION_TITLE
+      || !isAutoSessionTitleReplaceable({
+        conversationKind,
+        title: latestMeta.title,
+        titleSource: latestMeta.titleSource,
+        placeholderTitle: PLACEHOLDER_SESSION_TITLE,
+      })
     ) {
       return
     }
@@ -6768,8 +6740,12 @@ async function maybeGenerateAutoSessionTitle(input: {
       const latestMeta = store.getMeta(input.sessionId)
       if (
         latestMeta
-        && latestMeta.titleSource !== 'user'
-        && latestMeta.title === PLACEHOLDER_SESSION_TITLE
+        && isAutoSessionTitleReplaceable({
+          conversationKind,
+          title: latestMeta.title,
+          titleSource: latestMeta.titleSource,
+          placeholderTitle: PLACEHOLDER_SESSION_TITLE,
+        })
       ) {
         const live = liveSessions.get(input.sessionId)
         const persisted = live ? null : await getPersistedSession(input.sessionId)
@@ -6792,7 +6768,7 @@ async function maybeGenerateAutoSessionTitle(input: {
     }
 
     console.warn(
-      '[gemma-desktop] Auto title generation failed; keeping the existing placeholder title.',
+      '[gemma-desktop] Auto title generation failed; keeping the existing session title.',
       {
         sessionId: input.sessionId,
         modelId: input.snapshot.modelId,

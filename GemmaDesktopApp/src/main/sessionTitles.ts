@@ -23,6 +23,32 @@ export interface AutoSessionTitleTask {
   fallbackMaxWords: number
 }
 
+export interface AutoSessionTitleEligibilityInput {
+  conversationKind: ConversationKind
+  title: string
+  titleSource: 'auto' | 'user'
+  placeholderTitle: string
+}
+
+export function isAutoSessionTitleReplaceable(
+  input: AutoSessionTitleEligibilityInput,
+): boolean {
+  if (input.titleSource === 'user') {
+    return false
+  }
+
+  const normalizedTitle = input.title.trim()
+  if (!normalizedTitle || normalizedTitle === input.placeholderTitle) {
+    return true
+  }
+
+  if (input.conversationKind === 'research') {
+    return /^Research(?:\s+\d+)?$/i.test(normalizedTitle)
+  }
+
+  return false
+}
+
 export function normalizeGeneratedSessionTitle(
   value: unknown,
   maxWords?: number,

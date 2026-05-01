@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAutoSessionTitleTask,
   buildFallbackSessionTitle,
+  isAutoSessionTitleReplaceable,
   normalizeGeneratedSessionTitle,
-} from '../src/main/sessionTitles'
+} from '../../src/main/sessionTitles'
 
 function extractFirstText(input: ReturnType<typeof buildAutoSessionTitleTask>['sessionInput']): string {
   if (!Array.isArray(input)) {
@@ -51,5 +52,44 @@ describe('session title helpers', () => {
       'Research current Model Context Protocol adoption across vendors today',
       5,
     )).toBe('Research Current Model Context Protocol')
+  })
+
+  it('allows research defaults to be replaced by request-based auto titles', () => {
+    expect(isAutoSessionTitleReplaceable({
+      conversationKind: 'research',
+      title: 'Research 1',
+      titleSource: 'auto',
+      placeholderTitle: 'New Conversation',
+    })).toBe(true)
+
+    expect(isAutoSessionTitleReplaceable({
+      conversationKind: 'research',
+      title: 'Qwen Packaging Landscape',
+      titleSource: 'auto',
+      placeholderTitle: 'New Conversation',
+    })).toBe(false)
+
+    expect(isAutoSessionTitleReplaceable({
+      conversationKind: 'research',
+      title: 'Research 1',
+      titleSource: 'user',
+      placeholderTitle: 'New Conversation',
+    })).toBe(false)
+  })
+
+  it('keeps normal auto title replacement scoped to the placeholder', () => {
+    expect(isAutoSessionTitleReplaceable({
+      conversationKind: 'normal',
+      title: 'New Conversation',
+      titleSource: 'auto',
+      placeholderTitle: 'New Conversation',
+    })).toBe(true)
+
+    expect(isAutoSessionTitleReplaceable({
+      conversationKind: 'normal',
+      title: 'Research 1',
+      titleSource: 'auto',
+      placeholderTitle: 'New Conversation',
+    })).toBe(false)
   })
 })
