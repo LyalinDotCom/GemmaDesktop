@@ -400,7 +400,8 @@ describe("research content-quality hardening", () => {
       expect(synthesis.reportMarkdown).not.toContain("## Source Context");
       expect(synthesis.reportMarkdown).not.toContain("## Open Questions\n\n- The model synthesis coordinator");
       expect(synthesis.reportMarkdown).toContain("## Critical Research Warnings");
-      expect(synthesis.reportMarkdown).toContain("## Consensus vs. disputed");
+      expect(synthesis.reportMarkdown).not.toContain("## Consensus vs. disputed");
+      expect(synthesis.reportMarkdown).not.toContain("## Players & Positions");
       expect(synthesis.reportMarkdown).toContain("Model synthesis fallback was used");
       expect(synthesis.reportMarkdown).not.toContain("exceeded..");
       expect(synthesis.openQuestions).toEqual(["Which quantization is best for each machine?"]);
@@ -429,6 +430,43 @@ describe("research content-quality hardening", () => {
         "",
         "- internal uncertainty",
       ].join("\n"))).toBe("# Report\n\nUseful report.");
+
+      expect(__testOnly.stripUserFacingResearchScaffoldSections([
+        "# Report",
+        "",
+        "Useful report.",
+        "",
+        "## Players & Positions",
+        "",
+        "| Actor | Position | Source # |",
+        "| --- | --- | --- |",
+        "| Blog | Commentary [1] | |",
+        "",
+        "## Consensus vs. Disputed",
+        "",
+        "No direct contradictions surfaced.",
+        "",
+        "## Sources",
+        "",
+        "[1] Example — \"Example\" — https://example.com/",
+      ].join("\n"))).toBe([
+        "# Report",
+        "",
+        "Useful report.",
+        "",
+        "## Sources",
+        "",
+        "[1] Example — \"Example\" — https://example.com/",
+      ].join("\n"));
+    });
+
+    it("detects malformed markdown table rows before publishing reports", () => {
+      expect(__testOnly.findMalformedMarkdownTableRows([
+        "| Actor | Position | Source # |",
+        "| --- | --- | --- |",
+        "| Google DeepMind | Released Gemma 4 [1] | |",
+        "| Mashable | Commentary [2] |",
+      ].join("\n"))).toEqual(["Markdown table row 4 has 2 cells; expected 3."]);
     });
   });
 
@@ -712,6 +750,93 @@ describe("research content-quality hardening", () => {
       expect(enhanced).toContain(`[2] deepmind.google — "DeepMind News" — https://deepmind.google/blog/`);
       expect(enhanced).toContain(`[3] cloud.google.com — "Google Cloud blog" — https://cloud.google.com/blog`);
       expect(enhanced).not.toMatch(/\[source-\d+/);
+    });
+
+    it("remaps numeric evidence-card citations to the rebuilt source list", () => {
+      const sources = [
+        {
+          id: "source-1",
+          requestedUrl: "https://deepmind.google/models/gemma/gemma-4/",
+          resolvedUrl: "https://deepmind.google/models/gemma/gemma-4/",
+          title: "Gemma 4",
+          description: "",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: false,
+          fetchedAt: new Date().toISOString(),
+          topicIds: ["topic-1"],
+          domain: "deepmind.google",
+          sourceFamily: "official" as const,
+          pageRole: "reference" as const,
+          contentPreview: "Gemma 4 official model page.",
+        },
+        {
+          id: "source-13",
+          requestedUrl: "https://ai.google.dev/gemma/docs/core",
+          resolvedUrl: "https://ai.google.dev/gemma/docs/core",
+          title: "Gemma model overview",
+          description: "",
+          kind: "html",
+          extractedWith: "readability",
+          blockedLikely: false,
+          fetchedAt: new Date().toISOString(),
+          topicIds: ["topic-1"],
+          domain: "ai.google.dev",
+          sourceFamily: "official" as const,
+          pageRole: "reference" as const,
+          contentPreview: "Gemma 4 overview documentation.",
+        },
+      ];
+      const evidenceCards = [
+        {
+          sourceId: "source-1",
+          title: "Gemma 4",
+          url: "https://deepmind.google/models/gemma/gemma-4/",
+          domain: "deepmind.google",
+          signals: ["Official sources"],
+          sourceDepth: 0,
+          discoveryMethod: "search" as const,
+          relevanceScore: 200,
+          excerpt: "Gemma 4 official model page.",
+        },
+        ...Array.from({ length: 11 }, (_, index) => ({
+          sourceId: `source-fill-${index + 2}`,
+          title: `Filler ${index + 2}`,
+          url: `https://example.com/${index + 2}`,
+          domain: "example.com",
+          signals: [],
+          sourceDepth: 0,
+          discoveryMethod: "search" as const,
+          relevanceScore: 1,
+          excerpt: "Filler evidence.",
+        })),
+        {
+          sourceId: "source-13",
+          title: "Gemma model overview",
+          url: "https://ai.google.dev/gemma/docs/core",
+          domain: "ai.google.dev",
+          signals: ["Official sources"],
+          sourceDepth: 0,
+          discoveryMethod: "search" as const,
+          relevanceScore: 180,
+          excerpt: "Gemma 4 overview documentation.",
+        },
+      ];
+      const citedSourceIds = __testOnly.extractSourceIdsFromEvidenceNumberCitations(
+        "Gemma docs describe the model overview [13].",
+        evidenceCards,
+      );
+      const enhanced = __testOnly.enhanceReportWithSourceLinks(
+        "Gemma docs describe the model overview [13].",
+        sources,
+        citedSourceIds,
+        evidenceCards,
+      );
+
+      expect(citedSourceIds).toEqual(["source-13"]);
+      expect(enhanced).toContain("Gemma docs describe the model overview [1].");
+      expect(enhanced).toContain(`[1] ai.google.dev — "Gemma model overview" — https://ai.google.dev/gemma/docs/core`);
+      expect(enhanced).not.toContain("[13]");
     });
 
     it("replaces [source-N](url) with a numbered citation", () => {
