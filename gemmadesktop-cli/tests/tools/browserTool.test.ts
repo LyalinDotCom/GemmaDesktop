@@ -45,6 +45,114 @@ describe("CLI browser tool helpers", () => {
     })).toEqual(["snapshot"]);
   });
 
+  it("auto-scans long news snapshots when the model asks for a plain snapshot", async () => {
+    const longNewsSnapshot = [
+      "- generic",
+      "  - StaticText \"HEADLINES\"",
+      "  - StaticText \"By CNN\"",
+      "  - StaticText \"2h ago\"",
+      ...Array.from(
+        { length: 140 },
+        (_, index) =>
+          `  - link "CNN fixture supporting story ${index} about public events and policy updates" [ref=e${index}]`,
+      ),
+    ].join("\n");
+    const linksByStep = [
+      [
+        {
+          text: "CNN fixture lead story about global markets and policy shifts",
+          href: "https://www.cnn.com/2026/05/01/business/global-markets-policy",
+        },
+      ],
+      [
+        {
+          text: "CNN fixture analysis of a major election night result",
+          href: "https://www.cnn.com/2026/05/01/politics/election-analysis",
+        },
+      ],
+      [
+        {
+          text: "CNN fixture health story on hospital staffing pressure",
+          href: "https://www.cnn.com/2026/05/01/health/hospital-staffing",
+        },
+      ],
+      [
+        {
+          text: "CNN fixture travel story about airport delays this weekend",
+          href: "https://www.cnn.com/2026/05/01/travel/airport-delays",
+        },
+      ],
+    ];
+    let stepIndex = 0;
+    const calls: string[][] = [];
+    const result = await browserToolTesting.runSnapshotWithOptionalScan({
+      args: {
+        action: "snapshot",
+      },
+      runCommand(args: string[]) {
+        calls.push(args);
+        if (args[0] === "snapshot") {
+          return Promise.resolve({
+            success: true,
+            data: {
+              origin: "https://www.cnn.com/",
+              refs: {},
+              snapshot: longNewsSnapshot,
+            },
+          });
+        }
+
+        if (args[0] === "screenshot") {
+          return Promise.resolve({
+            success: true,
+            data: {
+              path: `/tmp/cnn-cli-auto-scan-step-${stepIndex}.png`,
+            },
+          });
+        }
+
+        if (args[0] === "eval") {
+          return Promise.resolve({
+            success: true,
+            data: {
+              result: {
+                scrollY: stepIndex * 900,
+                viewportHeight: 720,
+                documentHeight: 3600,
+                links: linksByStep[stepIndex] ?? [],
+              },
+            },
+          });
+        }
+
+        if (args[0] === "scroll") {
+          stepIndex += 1;
+          return Promise.resolve({ success: true, data: {} });
+        }
+
+        if (args[0] === "wait") {
+          return Promise.resolve({ success: true, data: {} });
+        }
+
+        return Promise.reject(new Error(`unexpected args ${args.join(" ")}`));
+      },
+    });
+    const data = result.data as Record<string, unknown>;
+
+    expect(calls[0]).toEqual(["snapshot"]);
+    expect(calls.filter((args) => args[0] === "scroll")).toHaveLength(3);
+    expect(data.autoScannedFromSnapshot).toBe(true);
+    expect(data.scanText).toContain("automatically scanned it with scrolling and screenshots");
+    expect(data.scanText).toContain("scrolling added 3");
+    expect(data.scanText).toContain("CNN fixture travel story");
+    expect(data).toEqual(expect.objectContaining({
+      snapshotOrigin: "https://www.cnn.com/",
+      firstViewportStoryCount: 1,
+      uniqueStoryCount: 4,
+      addedAfterFirstViewport: 3,
+    }));
+  });
+
   it("scans a CNN-style page with more stories after the default three scrolls", async () => {
     const linksByStep = [
       [

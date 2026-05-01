@@ -251,6 +251,120 @@ describe('agentBrowser helpers', () => {
     })
   })
 
+  it('auto-scans long news snapshots when the model asks for a plain snapshot', async () => {
+    const longNewsSnapshot = [
+      '- generic',
+      '  - StaticText "HEADLINES"',
+      '  - StaticText "By CNN"',
+      '  - StaticText "2h ago"',
+      ...Array.from(
+        { length: 140 },
+        (_, index) =>
+          `  - link "CNN fixture supporting story ${index} about public events and policy updates" [ref=e${index}]`,
+      ),
+    ].join('\n')
+    const linksByStep = [
+      [
+        {
+          text: 'CNN fixture lead story about global markets and policy shifts',
+          href: 'https://www.cnn.com/2026/05/01/business/global-markets-policy',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture analysis of a major election night result',
+          href: 'https://www.cnn.com/2026/05/01/politics/election-analysis',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture health story on hospital staffing pressure',
+          href: 'https://www.cnn.com/2026/05/01/health/hospital-staffing',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture travel story about airport delays this weekend',
+          href: 'https://www.cnn.com/2026/05/01/travel/airport-delays',
+        },
+      ],
+    ]
+    let stepIndex = 0
+    const { cli, execJson } = createCliMocks(
+      async (_sessionId: string | null, args: string[]) => {
+        if (args[0] === 'snapshot') {
+          return {
+            success: true,
+            data: {
+              origin: 'https://www.cnn.com/',
+              refs: {},
+              snapshot: longNewsSnapshot,
+            },
+          }
+        }
+
+        if (args[0] === 'screenshot') {
+          return {
+            success: true,
+            data: {
+              path: `/tmp/cnn-auto-scan-step-${stepIndex}.png`,
+            },
+          }
+        }
+
+        if (args[0] === 'eval') {
+          return {
+            success: true,
+            data: {
+              result: {
+                scrollY: stepIndex * 900,
+                viewportHeight: 720,
+                documentHeight: 3600,
+                links: linksByStep[stepIndex] ?? [],
+              },
+            },
+          }
+        }
+
+        if (args[0] === 'scroll') {
+          stepIndex += 1
+          return { success: true, data: {} }
+        }
+
+        if (args[0] === 'wait') {
+          return { success: true, data: {} }
+        }
+
+        throw new Error(`unexpected args ${args.join(' ')}`)
+      },
+    )
+
+    const result = await executeAgentBrowserTool({
+      sessionId: 'session-snapshot-auto-scan',
+      args: {
+        action: 'snapshot',
+      },
+      cli,
+    })
+
+    expect(execJson).toHaveBeenNthCalledWith(1, 'session-snapshot-auto-scan', ['snapshot'])
+    expect(execJson.mock.calls.filter((call) => call[1][0] === 'scroll')).toHaveLength(3)
+    expect(result.output).toContain('automatically scanned it with scrolling and screenshots')
+    expect(result.output).toContain('scrolling added 3')
+    expect(result.output).toContain('CNN fixture travel story')
+    expect(result.structuredOutput).toEqual(expect.objectContaining({
+      action: 'snapshot',
+      autoScanned: true,
+      origin: 'https://www.cnn.com/',
+    }))
+    expect(result.structuredOutput?.scan).toEqual(expect.objectContaining({
+      action: 'scan_page',
+      firstViewportStoryCount: 1,
+      uniqueStoryCount: 4,
+      addedAfterFirstViewport: 3,
+    }))
+  })
+
   it('invokes model-supplied evaluate functions before passing them to agent-browser', async () => {
     const { cli, execJson } = createCliMocks(
       async (_sessionId: string | null, args: string[]) => {

@@ -17,6 +17,8 @@ const DEFAULT_BROWSER_SCAN_WAIT_MS = 750
 const DEFAULT_BROWSER_SCAN_MAX_STORIES = 80
 const MAX_BROWSER_SCAN_SCROLLS = 8
 const MAX_BROWSER_SCAN_STORIES = 200
+const BROWSER_SNAPSHOT_AUTO_SCAN_MIN_CHARS = 8_000
+const BROWSER_SNAPSHOT_AUTO_SCAN_MIN_LINKS = 12
 
 export const BROWSER_TOOL_ACTIONS = [
   'tabs',
@@ -236,6 +238,7 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
         scrollAmount: { type: 'number' },
         maxStories: { type: 'number' },
         captureScreenshots: { type: 'boolean' },
+        autoScan: { type: 'boolean' },
         ref: { type: 'string' },
         uid: { type: 'string' },
         value: { type: 'string' },
@@ -564,6 +567,45 @@ function normalizeSnapshotText(data: BrowserSnapshotData | undefined): string {
   }
 
   return snapshot.replace(/\bref=(e\d+)\b/g, 'ref=@$1')
+}
+
+function countSnapshotLinks(text: string): number {
+  return text.match(/\blink\s+"/gi)?.length ?? 0
+}
+
+function looksLikeNewsOrFeedSnapshot(text: string): boolean {
+  const signals = [
+    /\b(all news|top stories|headlines|latest news|live updates|breaking news|news today)\b/i
+      .test(text),
+    /\btoday.?s headlines\b/i.test(text),
+    /\b(cnn|kyiv post|bbc|reuters|associated press|ap news|the guardian|new york times|washington post|nbc news|cbs news|abc news|al jazeera)\b/i
+      .test(text),
+    /\b\d+\s*(?:m|h|hr|hrs|minute|minutes|hour|hours)\s+ago\b/i.test(text),
+    /\bby\s+[A-Z][A-Za-z .'-]{2,60}\b/.test(text) || /StaticText\s+"By\s+[^"]+"/.test(text),
+    countSnapshotLinks(text) >= BROWSER_SNAPSHOT_AUTO_SCAN_MIN_LINKS,
+  ].filter(Boolean).length
+
+  return signals >= 2
+}
+
+function shouldAutoScanSnapshot(
+  args: Record<string, unknown>,
+  snapshotText: string,
+  maxChars: number,
+): boolean {
+  if (args.autoScan === false) {
+    return false
+  }
+
+  if (args.autoScan === true) {
+    return true
+  }
+
+  if (snapshotText.length < Math.max(maxChars, BROWSER_SNAPSHOT_AUTO_SCAN_MIN_CHARS)) {
+    return false
+  }
+
+  return looksLikeNewsOrFeedSnapshot(snapshotText)
 }
 
 function normalizeEvaluateArgs(value: unknown): unknown[] {
@@ -1285,6 +1327,55 @@ export async function executeAgentBrowserTool(input: {
         typeof input.args.maxChars === 'number' && Number.isFinite(input.args.maxChars)
           ? input.args.maxChars
           : DEFAULT_BROWSER_SNAPSHOT_INLINE_TEXT_CHARS
+      const snapshotMetadata = {
+        ...(tabId ? { tabId } : {}),
+        snapshotMode,
+        ...(typeof envelope.data?.origin === 'string' ? { origin: envelope.data.origin } : {}),
+        ...(envelope.data?.refs ? { refs: envelope.data.refs } : {}),
+      }
+
+      if (shouldAutoScanSnapshot(input.args, snapshotText, maxChars)) {
+        try {
+          const scanResult = await runBrowserPageScan({
+            sessionId: input.sessionId,
+            args: {
+              ...input.args,
+              action: 'scan_page',
+            },
+            cli: input.cli,
+            persistArtifact: input.persistArtifact,
+          })
+
+          return {
+            output: [
+              buildLead(action),
+              'The snapshot looked like a long news/feed page, so I automatically scanned it with scrolling and screenshots.',
+              scanResult.output,
+            ].join('\n\n'),
+            structuredOutput: {
+              action,
+              autoScanned: true,
+              snapshotChars: snapshotText.length,
+              ...snapshotMetadata,
+              scan: scanResult.structuredOutput ?? {},
+            },
+          }
+        } catch (error) {
+          const autoScanWarning = extractErrorMessage(error)
+          return await finalizeBrowserTextResult({
+            sessionId: input.sessionId,
+            action,
+            text: `${snapshotText}\n\nAuto-scan warning: ${autoScanWarning}`,
+            maxChars,
+            persistArtifact: input.persistArtifact,
+            metadata: {
+              ...snapshotMetadata,
+              autoScanWarning,
+            },
+            lead: buildLead(action),
+          })
+        }
+      }
 
       return await finalizeBrowserTextResult({
         sessionId: input.sessionId,
@@ -1292,12 +1383,7 @@ export async function executeAgentBrowserTool(input: {
         text: snapshotText,
         maxChars,
         persistArtifact: input.persistArtifact,
-        metadata: {
-          ...(tabId ? { tabId } : {}),
-          snapshotMode,
-          ...(typeof envelope.data?.origin === 'string' ? { origin: envelope.data.origin } : {}),
-          ...(envelope.data?.refs ? { refs: envelope.data.refs } : {}),
-        },
+        metadata: snapshotMetadata,
         lead: buildLead(action),
       })
     }

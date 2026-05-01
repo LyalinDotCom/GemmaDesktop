@@ -13,6 +13,8 @@ const DEFAULT_BROWSER_SCAN_WAIT_MS = 750;
 const DEFAULT_BROWSER_SCAN_MAX_STORIES = 80;
 const MAX_BROWSER_SCAN_SCROLLS = 8;
 const MAX_BROWSER_SCAN_STORIES = 200;
+const BROWSER_SNAPSHOT_AUTO_SCAN_MIN_CHARS = 8_000;
+const BROWSER_SNAPSHOT_AUTO_SCAN_MIN_LINKS = 12;
 
 const BROWSER_ACTIONS = [
   "tabs",
@@ -186,6 +188,44 @@ function readSnapshotText(data: unknown): string {
   }
   const snapshot = (data as Record<string, unknown>).snapshot;
   return typeof snapshot === "string" ? snapshot.trim() : "";
+}
+
+function countSnapshotLinks(text: string): number {
+  return text.match(/\blink\s+"/gi)?.length ?? 0;
+}
+
+function looksLikeNewsOrFeedSnapshot(text: string): boolean {
+  const signals = [
+    /\b(all news|top stories|headlines|latest news|live updates|breaking news|news today)\b/i
+      .test(text),
+    /\btoday.?s headlines\b/i.test(text),
+    /\b(cnn|kyiv post|bbc|reuters|associated press|ap news|the guardian|new york times|washington post|nbc news|cbs news|abc news|al jazeera)\b/i
+      .test(text),
+    /\b\d+\s*(?:m|h|hr|hrs|minute|minutes|hour|hours)\s+ago\b/i.test(text),
+    /\bby\s+[A-Z][A-Za-z .'-]{2,60}\b/.test(text) || /StaticText\s+"By\s+[^"]+"/.test(text),
+    countSnapshotLinks(text) >= BROWSER_SNAPSHOT_AUTO_SCAN_MIN_LINKS,
+  ].filter(Boolean).length;
+
+  return signals >= 2;
+}
+
+function shouldAutoScanSnapshot(
+  args: Record<string, unknown>,
+  snapshotText: string,
+): boolean {
+  if (args.autoScan === false) {
+    return false;
+  }
+
+  if (args.autoScan === true) {
+    return true;
+  }
+
+  if (snapshotText.length < BROWSER_SNAPSHOT_AUTO_SCAN_MIN_CHARS) {
+    return false;
+  }
+
+  return looksLikeNewsOrFeedSnapshot(snapshotText);
 }
 
 function normalizeEvaluateArgs(value: unknown): unknown[] {
@@ -529,6 +569,66 @@ async function runBrowserPageScan(input: {
   };
 }
 
+function mergeSnapshotAutoScanEnvelope(input: {
+  snapshotEnvelope: BrowserEnvelope;
+  scanEnvelope: BrowserEnvelope;
+  snapshotText: string;
+}): BrowserEnvelope {
+  const snapshotData = isRecord(input.snapshotEnvelope.data) ? input.snapshotEnvelope.data : {};
+  const scanData = isRecord(input.scanEnvelope.data) ? input.scanEnvelope.data : {};
+  const scanText = typeof scanData.scanText === "string" ? scanData.scanText.trim() : "";
+
+  return {
+    success: input.scanEnvelope.success,
+    data: {
+      ...scanData,
+      autoScannedFromSnapshot: true,
+      snapshotChars: input.snapshotText.length,
+      ...(typeof snapshotData.origin === "string" ? { snapshotOrigin: snapshotData.origin } : {}),
+      scanText: [
+        "The snapshot looked like a long news/feed page, so the browser automatically scanned it with scrolling and screenshots.",
+        scanText,
+      ].filter((entry) => entry.length > 0).join("\n\n"),
+    },
+  };
+}
+
+async function runSnapshotWithOptionalScan(input: {
+  args: Record<string, unknown>;
+  runCommand: (args: string[]) => Promise<BrowserEnvelope>;
+}): Promise<BrowserEnvelope> {
+  const envelope = await input.runCommand(["snapshot"]);
+  const fallbackEnvelope = readSnapshotText(envelope.data).length === 0
+    ? await input.runCommand(["snapshot", "-i"])
+    : null;
+  const snapshotEnvelope =
+    fallbackEnvelope && readSnapshotText(fallbackEnvelope.data).length > 0
+      ? fallbackEnvelope
+      : envelope;
+  const snapshotText = readSnapshotText(snapshotEnvelope.data);
+
+  if (!shouldAutoScanSnapshot(input.args, snapshotText)) {
+    return snapshotEnvelope;
+  }
+
+  try {
+    const scanEnvelope = await runBrowserPageScan({
+      args: {
+        ...input.args,
+        action: "scan_page",
+      },
+      runCommand: input.runCommand,
+    });
+    return mergeSnapshotAutoScanEnvelope({
+      snapshotEnvelope,
+      scanEnvelope,
+      snapshotText,
+    });
+  } catch {
+    return snapshotEnvelope;
+  }
+}
+
 function resolveBrowserArgs(input: Record<string, unknown>): string[] {
   const action = requireString(input, "action", "browser");
   switch (action) {
@@ -668,6 +768,7 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
         scrollAmount: { type: "number" },
         maxStories: { type: "number" },
         captureScreenshots: { type: "boolean" },
+        autoScan: { type: "boolean" },
         ref: { type: "string" },
         attribute: { type: "string" },
         textIncludes: { type: "string" },
@@ -690,16 +791,11 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
           context,
           args,
         });
-      const envelope = action === "scan_page"
+      const outputEnvelope = action === "scan_page"
         ? await runBrowserPageScan({ args: input, runCommand })
-        : await runCommand(resolveBrowserArgs(input));
-      const fallbackEnvelope = action === "snapshot" && readSnapshotText(envelope.data).length === 0
-        ? await runCommand(["snapshot", "-i"])
-        : null;
-      const outputEnvelope =
-        fallbackEnvelope && readSnapshotText(fallbackEnvelope.data).length > 0
-          ? fallbackEnvelope
-          : envelope;
+        : action === "snapshot"
+          ? await runSnapshotWithOptionalScan({ args: input, runCommand })
+          : await runCommand(resolveBrowserArgs(input));
       return {
         output: formatBrowserOutput(action, outputEnvelope),
         structuredOutput: {
@@ -716,5 +812,6 @@ export const __testing = {
   formatBrowserOutput,
   readSnapshotText,
   runBrowserPageScan,
+  runSnapshotWithOptionalScan,
   resolveBrowserArgs,
 };
