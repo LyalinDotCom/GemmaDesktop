@@ -230,6 +230,7 @@ describe('preload bridge', () => {
       onOpenInAppRequested: (callback: (request: unknown) => void) => () => void
     }
     const talk = bridge.talk as {
+      maybeStartStartupWelcome: () => Promise<unknown>
       listSessions: () => Promise<unknown>
       startSession: () => Promise<unknown>
       switchSession: (sessionId: string) => Promise<unknown>
@@ -239,6 +240,7 @@ describe('preload bridge', () => {
     await globalChat.getSession()
     await globalChat.assignSession('session-1')
     await globalChat.clearAssignment()
+    await talk.maybeStartStartupWelcome()
     await talk.listSessions()
     await talk.startSession()
     await talk.switchSession('talk-00000000-0000-4000-8000-000000000000')
@@ -247,6 +249,7 @@ describe('preload bridge', () => {
     expect(invoke).toHaveBeenCalledWith('global-chat:get-session')
     expect(invoke).toHaveBeenCalledWith('global-chat:assign-session', 'session-1')
     expect(invoke).toHaveBeenCalledWith('global-chat:clear-assignment')
+    expect(invoke).toHaveBeenCalledWith('talk:maybe-startup-welcome')
     expect(invoke).toHaveBeenCalledWith('talk:list-sessions')
     expect(invoke).toHaveBeenCalledWith('talk:start-session')
     expect(invoke).toHaveBeenCalledWith(

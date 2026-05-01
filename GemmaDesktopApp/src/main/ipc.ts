@@ -225,6 +225,18 @@ import {
   USER_MEMORY_DISTILLER_SYSTEM_PROMPT,
 } from './userMemory'
 import {
+  buildStartupWelcomeHiddenPrompt,
+  createStartupWelcomeState,
+  getStartupWelcomeStateFilePath,
+  markStartupWelcomeStarted,
+  markStartupWelcomeUserActive,
+  readStartupWelcomeState,
+  shouldStartStartupWelcome,
+  summarizeStartupWelcomeConversation,
+  writeStartupWelcomeState,
+  type StartupWelcomeState,
+} from './startupWelcome'
+import {
   createGemmaInstallManager,
   type EnsureGemmaModelResult,
 } from './gemmaInstall'
@@ -1141,6 +1153,10 @@ const projectBrowserManager = new ProjectBrowserManager((state: ProjectBrowserSt
 let speechRuntimeSubscribed = false
 let readAloudSubscribed = false
 let notificationWindowStateSubscribed = false
+let startupWelcomeActivitySubscribed = false
+let startupWelcomeState: StartupWelcomeState = createStartupWelcomeState()
+let startupWelcomeLaunchLastUserActiveAt: number | null = null
+let startupWelcomeCheckedForLaunch = false
 let shellShutdownSubscribed = false
 const shellMessageFlushTimers = new Map<string, NodeJS.Timeout>()
 const shellSummaryBroadcastTimers = new Map<string, NodeJS.Timeout>()
@@ -1207,6 +1223,40 @@ const notificationManager = new AppNotificationManager({
   emitRendererEvent: broadcastNotificationEvent,
   focusApp: focusNotificationWindow,
 })
+
+function persistStartupWelcomeStateInBackground(action: string): void {
+  void writeStartupWelcomeState(
+    app.getPath('userData'),
+    startupWelcomeState,
+  ).catch((error) => {
+    console.warn(`[gemma-desktop] ${action}:`, error)
+  })
+}
+
+function persistStartupWelcomeStateSync(action: string): void {
+  const filePath = getStartupWelcomeStateFilePath(app.getPath('userData'))
+  try {
+    fsSync.mkdirSync(path.dirname(filePath), { recursive: true })
+    fsSync.writeFileSync(filePath, `${JSON.stringify(startupWelcomeState)}\n`, 'utf8')
+  } catch (error) {
+    console.warn(`[gemma-desktop] ${action}:`, error)
+  }
+}
+
+function recordStartupWelcomeUserActivity(
+  timestamp = Date.now(),
+  options: { sync?: boolean } = {},
+): void {
+  startupWelcomeState = markStartupWelcomeUserActive(
+    startupWelcomeState,
+    timestamp,
+  )
+  if (options.sync) {
+    persistStartupWelcomeStateSync('Failed to persist startup welcome activity state')
+    return
+  }
+  persistStartupWelcomeStateInBackground('Failed to persist startup welcome activity state')
+}
 
 function getDefaultProjectDirectory(): string {
   return path.join(app.getPath('home'), 'gemma-desktop-projects')
@@ -6074,6 +6124,93 @@ async function getGlobalChatSessionDetailInternal(): Promise<Record<string, unkn
   )
 }
 
+async function maybeStartStartupWelcomeInternal(): Promise<{
+  started: boolean
+  reason: string
+  sessionId?: string
+}> {
+  if (startupWelcomeCheckedForLaunch) {
+    return { started: false, reason: 'already_checked_for_launch' }
+  }
+  startupWelcomeCheckedForLaunch = true
+
+  const globalChatState = getGlobalChatStateInternal()
+  if (globalChatState.target.kind !== 'fallback') {
+    return { started: false, reason: 'global_chat_assigned' }
+  }
+
+  const detail = await ensureTalkSessionInternal(
+    globalChatState.target.sessionId === TALK_SESSION_ID
+      ? undefined
+      : globalChatState.target.sessionId,
+  )
+  const sessionId =
+    typeof detail.id === 'string'
+      ? detail.id
+      : currentTalkSessionId
+  if (!sessionId) {
+    return { started: false, reason: 'missing_talk_session' }
+  }
+
+  const now = Date.now()
+  const decision = shouldStartStartupWelcome({
+    now,
+    lastUserActiveAt: startupWelcomeLaunchLastUserActiveAt,
+    lastWelcomeStartedAt: startupWelcomeState.lastWelcomeStartedAt,
+    sessionBusy: isSessionExecutionBusy(sessionId),
+  })
+  if (!decision.shouldStart) {
+    appendDebugLog(sessionId, {
+      layer: 'ipc',
+      direction: 'main->renderer',
+      event: 'talk.startup-welcome.skipped',
+      summary: `Startup welcome skipped: ${decision.reason}`,
+      data: {
+        reason: decision.reason,
+        idleMs: decision.idleMs ?? null,
+        lastUserActiveAt: startupWelcomeLaunchLastUserActiveAt,
+        lastWelcomeStartedAt: startupWelcomeState.lastWelcomeStartedAt,
+      },
+    })
+    return { started: false, reason: decision.reason, sessionId }
+  }
+
+  const helperTarget = resolveHelperRouterTarget(await getSettingsState())
+  const messages = store.getAppMessages(sessionId)
+  const hiddenPrompt = buildStartupWelcomeHiddenPrompt({
+    idleMs: decision.idleMs,
+    memoryAvailable: (await readUserMemory(app.getPath('userData'))).trim().length > 0,
+    conversation: summarizeStartupWelcomeConversation(messages),
+  })
+
+  startupWelcomeState = markStartupWelcomeStarted(startupWelcomeState, now)
+  await writeStartupWelcomeState(app.getPath('userData'), startupWelcomeState)
+  appendDebugLog(sessionId, {
+    layer: 'ipc',
+    direction: 'main->renderer',
+    event: 'talk.startup-welcome.started',
+    summary: `Starting helper welcome after ${Math.round(decision.idleMs / 60_000)} idle minute(s)`,
+    data: {
+      idleMs: decision.idleMs,
+      helperModelId: helperTarget.modelId,
+      helperRuntimeId: helperTarget.runtimeId,
+      messageCount: messages.length,
+    },
+  })
+
+  await sendTalkMessageInternal(
+    sessionId,
+    { text: hiddenPrompt },
+    {
+      hiddenUserMessage: true,
+      modelOverride: helperTarget,
+      skipTalkTurnAudit: true,
+    },
+  )
+
+  return { started: true, reason: 'started', sessionId }
+}
+
 async function broadcastGlobalChatChanged(): Promise<void> {
   broadcastToWindows(
     BrowserWindow.getAllWindows(),
@@ -9274,6 +9411,9 @@ async function getSystemStats() {
 
 export async function initializeGemmaDesktop(): Promise<void> {
   const currentSettings = await loadSettings()
+  startupWelcomeState = await readStartupWelcomeState(app.getPath('userData'))
+  startupWelcomeLaunchLastUserActiveAt = startupWelcomeState.lastUserActiveAt
+  startupWelcomeCheckedForLaunch = false
   primaryModelHoldCounts.clear()
   clearPrimaryModelAvailabilityIssues()
   activePrimaryModelTarget = null
@@ -9350,6 +9490,19 @@ export async function initializeGemmaDesktop(): Promise<void> {
     })
   }
 
+  if (!startupWelcomeActivitySubscribed) {
+    startupWelcomeActivitySubscribed = true
+    app.on('browser-window-focus', () => {
+      recordStartupWelcomeUserActivity()
+    })
+    app.on('browser-window-blur', () => {
+      recordStartupWelcomeUserActivity()
+    })
+    app.on('before-quit', () => {
+      recordStartupWelcomeUserActivity(Date.now(), { sync: true })
+    })
+  }
+
   // Resume live sessions from persisted snapshots (best-effort)
   for (const meta of store.listMeta()) {
     let persisted = await store.load(meta.id)
@@ -9381,6 +9534,8 @@ export async function initializeGemmaDesktop(): Promise<void> {
 type SendSessionMessageOptions = {
   hiddenUserMessage?: boolean
   coBrowse?: boolean
+  modelOverride?: PrimaryModelTarget
+  skipTalkTurnAudit?: boolean
 }
 
 async function sendTalkMessageInternal(
@@ -9411,6 +9566,103 @@ function stripHiddenUserMessageFromHistory(
     ...prefix,
     ...suffix.filter((_, index) => index !== hiddenUserIndex),
   ]
+}
+
+async function applyTemporarySessionModelOverride(input: {
+  sessionId: string
+  session: GemmaDesktopSession
+  snapshot: SessionSnapshot
+  target: PrimaryModelTarget
+  coBrowseActive?: boolean
+}): Promise<{
+  session: GemmaDesktopSession
+  snapshot: SessionSnapshot
+  restore: (latestSnapshot: SessionSnapshot) => Promise<{
+    session: GemmaDesktopSession
+    snapshot: SessionSnapshot
+  }>
+} | null> {
+  const originalTarget: PrimaryModelTarget = {
+    modelId: input.snapshot.modelId,
+    runtimeId: input.snapshot.runtimeId,
+  }
+  const overrideTarget = normalizePrimaryModelTarget(input.target)
+  if (primaryTargetsMatch(originalTarget, overrideTarget)) {
+    return null
+  }
+
+  const currentConfig = getSessionConfig(input.snapshot)
+  const overrideComposition = await resolveSessionComposition({
+    snapshot: input.snapshot,
+    conversationKind: currentConfig.conversationKind,
+    sessionMode: currentConfig.baseMode,
+    planMode: currentConfig.planMode,
+    modelId: overrideTarget.modelId,
+    runtimeId: overrideTarget.runtimeId,
+    preferredRuntimeId: currentConfig.preferredRuntimeId,
+    selectedSkillIds: currentConfig.selectedSkillIds,
+    selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
+    coBrowseActive: input.coBrowseActive,
+    surface: currentConfig.surface,
+    visibility: currentConfig.visibility,
+    storageScope: currentConfig.storageScope,
+  })
+  const overrideSnapshot: SessionSnapshot = {
+    ...input.snapshot,
+    modelId: overrideTarget.modelId,
+    runtimeId: overrideTarget.runtimeId,
+    mode: overrideComposition.mode,
+    systemInstructions: overrideComposition.systemInstructions,
+    metadata: overrideComposition.metadata,
+    savedAt: new Date().toISOString(),
+  }
+  const overrideSession = await gemmaDesktop.sessions.resume({
+    snapshot: overrideSnapshot,
+  })
+  liveSessions.set(input.sessionId, overrideSession)
+
+  return {
+    session: overrideSession,
+    snapshot: overrideSnapshot,
+    restore: async (latestSnapshot) => {
+      const latestConfig = getSessionConfig(latestSnapshot)
+      const restoredComposition = await resolveSessionComposition({
+        snapshot: latestSnapshot,
+        conversationKind: latestConfig.conversationKind,
+        sessionMode: latestConfig.baseMode,
+        planMode: latestConfig.planMode,
+        modelId: originalTarget.modelId,
+        runtimeId: originalTarget.runtimeId,
+        preferredRuntimeId: latestConfig.preferredRuntimeId,
+        selectedSkillIds: latestConfig.selectedSkillIds,
+        selectedToolIds: latestConfig.selectedToolIds,
+        approvalMode: latestConfig.approvalMode,
+        coBrowseActive: input.coBrowseActive,
+        surface: latestConfig.surface,
+        visibility: latestConfig.visibility,
+        storageScope: latestConfig.storageScope,
+      })
+      const restoredSnapshot: SessionSnapshot = {
+        ...latestSnapshot,
+        modelId: originalTarget.modelId,
+        runtimeId: originalTarget.runtimeId,
+        mode: restoredComposition.mode,
+        systemInstructions: restoredComposition.systemInstructions,
+        metadata: restoredComposition.metadata,
+        savedAt: new Date().toISOString(),
+      }
+      const restoredSession = await gemmaDesktop.sessions.resume({
+        snapshot: restoredSnapshot,
+      })
+      liveSessions.set(input.sessionId, restoredSession)
+
+      return {
+        session: restoredSession,
+        snapshot: restoredSnapshot,
+      }
+    },
+  }
 }
 
 async function sendSessionMessageInternal(
@@ -9449,6 +9701,9 @@ async function sendSessionMessageInternal(
   }
 
   const requestStartedAt = Date.now()
+  if (!hiddenUserMessage) {
+    recordStartupWelcomeUserActivity(requestStartedAt)
+  }
 
   if (isSessionExecutionBusy(sessionId)) {
     throw new Error('This session is already generating a response.')
@@ -9463,6 +9718,11 @@ async function sendSessionMessageInternal(
     session: GemmaDesktopSession
     snapshot: SessionSnapshot
   }>) | null = null
+  let restoreTemporaryModelOverride: ((latestSnapshot: SessionSnapshot) => Promise<{
+    session: GemmaDesktopSession
+    snapshot: SessionSnapshot
+  }>) | null = null
+  let hiddenInputHistoryLength: number | null = null
   const restoreCoBrowseCompositionIfNeeded = async (): Promise<void> => {
     if (!restoreCoBrowseSessionComposition) {
       return
@@ -9472,6 +9732,37 @@ async function sendSessionMessageInternal(
     session = restored.session
     sessionSnapshot = restored.snapshot
     restoreCoBrowseSessionComposition = null
+  }
+  const restoreTemporaryModelOverrideIfNeeded = async (): Promise<void> => {
+    if (!restoreTemporaryModelOverride) {
+      return
+    }
+
+    const restored = await restoreTemporaryModelOverride(session.snapshot())
+    session = restored.session
+    sessionSnapshot = restored.snapshot
+    restoreTemporaryModelOverride = null
+  }
+  const stripHiddenUserInputFromSessionIfNeeded = async (): Promise<void> => {
+    if (hiddenInputHistoryLength === null) {
+      return
+    }
+
+    const currentSnapshot = session.snapshot()
+    const sanitizedSnapshot: SessionSnapshot = {
+      ...currentSnapshot,
+      history: stripHiddenUserMessageFromHistory(
+        currentSnapshot.history,
+        hiddenInputHistoryLength,
+      ),
+      savedAt: new Date().toISOString(),
+    }
+    session = await gemmaDesktop.sessions.resume({
+      snapshot: sanitizedSnapshot,
+    })
+    sessionSnapshot = sanitizedSnapshot
+    liveSessions.set(sessionId, session)
+    hiddenInputHistoryLength = null
   }
 
   try {
@@ -9562,6 +9853,21 @@ async function sendSessionMessageInternal(
       sessionSnapshot = coBrowseComposition.snapshot
       restoreCoBrowseSessionComposition = coBrowseComposition.restore
     }
+
+    if (options.modelOverride) {
+      const override = await applyTemporarySessionModelOverride({
+        sessionId,
+        session,
+        snapshot: sessionSnapshot,
+        target: options.modelOverride,
+        coBrowseActive: coBrowseTurn,
+      })
+      if (override) {
+        session = override.session
+        sessionSnapshot = override.snapshot
+        restoreTemporaryModelOverride = override.restore
+      }
+    }
   } catch (error) {
     releaseExecutionGate()
     throw error
@@ -9595,12 +9901,15 @@ async function sendSessionMessageInternal(
     modelId: sessionSnapshot.modelId,
     runtimeId: sessionSnapshot.runtimeId,
   }
+  const usesHelperModelOverride = Boolean(options.modelOverride)
   const shouldPersistPrimaryModelMetadata =
     !isTalkSessionId(sessionId)
     && !isTalkSessionConfig(getSessionConfig(sessionSnapshot))
   let releasePrimaryLease: (() => void) | null = null
   try {
-    releasePrimaryLease = await acquirePrimaryModelLease(sessionId, primaryTarget)
+    releasePrimaryLease = usesHelperModelOverride
+      ? await acquireHelperModelLease(sessionId)
+      : await acquirePrimaryModelLease(sessionId, primaryTarget)
     await validateOutgoingAttachmentsForSession({
       attachments: message.attachments ?? [],
       snapshot: sessionSnapshot,
@@ -10079,7 +10388,7 @@ async function sendSessionMessageInternal(
       }
     }
 
-    const hiddenInputHistoryLength = hiddenUserMessage
+    hiddenInputHistoryLength = hiddenUserMessage
       ? session.snapshot().history.length
       : null
     const sessionInput = buildSessionInputFromUserMessage({
@@ -10431,11 +10740,20 @@ async function sendSessionMessageInternal(
       })
       liveSessions.set(sessionId, session)
       snapshot = sanitizedSnapshot
+      hiddenInputHistoryLength = null
+    }
+    if (restoreTemporaryModelOverride) {
+      const restored = await restoreTemporaryModelOverride(snapshot)
+      session = restored.session
+      snapshot = restored.snapshot
+      sessionSnapshot = restored.snapshot
+      restoreTemporaryModelOverride = null
     }
     if (restoreCoBrowseSessionComposition) {
       const restored = await restoreCoBrowseSessionComposition(snapshot)
       session = restored.session
       snapshot = restored.snapshot
+      sessionSnapshot = restored.snapshot
       restoreCoBrowseSessionComposition = null
     }
     let assistantHistoryMessage = [...snapshot.history]
@@ -10443,7 +10761,11 @@ async function sendSessionMessageInternal(
       .find((entry) => entry.role === 'assistant')
     let helperCompletionMessage: string | undefined
 
-    if (isTalkSessionConfig(getSessionConfig(snapshot)) && !abortController.signal.aborted) {
+    if (
+      isTalkSessionConfig(getSessionConfig(snapshot))
+      && !abortController.signal.aborted
+      && !options.skipTalkTurnAudit
+    ) {
       const heartbeatAudit = await auditAssistantTurnWithHelper({
         sessionId,
         workingDirectory: snapshot.workingDirectory,
@@ -10924,6 +11246,8 @@ async function sendSessionMessageInternal(
     }
 
     try {
+      await stripHiddenUserInputFromSessionIfNeeded()
+      await restoreTemporaryModelOverrideIfNeeded()
       await restoreCoBrowseCompositionIfNeeded()
       session = await persistSessionStateWithRecoveredUserHistory(sessionId, session)
     } catch {
@@ -10979,6 +11303,8 @@ async function sendSessionMessageInternal(
     })
 
     try {
+      await stripHiddenUserInputFromSessionIfNeeded()
+      await restoreTemporaryModelOverrideIfNeeded()
       await restoreCoBrowseCompositionIfNeeded()
       session = await persistSessionStateWithRecoveredUserHistory(sessionId, session)
     } catch {
@@ -11838,6 +12164,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('talk:ensure-session', async () => {
     return await ensureTalkSessionInternal()
+  })
+
+  ipcMain.handle('talk:maybe-startup-welcome', async () => {
+    return await maybeStartStartupWelcomeInternal()
   })
 
   ipcMain.handle('talk:list-sessions', async () => {

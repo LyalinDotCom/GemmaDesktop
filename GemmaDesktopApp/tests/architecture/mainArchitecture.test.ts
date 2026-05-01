@@ -31,6 +31,7 @@ const EXPECTED_IPC_CHANNELS = [
   'sessions:list',
   'sessions:search',
   'talk:ensure-session',
+  'talk:maybe-startup-welcome',
   'talk:list-sessions',
   'talk:start-session',
   'talk:switch-session',

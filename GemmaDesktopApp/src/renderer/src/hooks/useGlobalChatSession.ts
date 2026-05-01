@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildFallbackGlobalChatState,
   GLOBAL_CHAT_LABEL,
@@ -72,6 +72,7 @@ function stateFromDetail(detail: SessionDetail): Pick<
 
 export function useGlobalChatSession() {
   const [state, setState] = useState<GlobalChatSessionState>(INITIAL_STATE)
+  const startupWelcomeRequestedRef = useRef(false)
 
   const refreshSession = useCallback(async (sessionId: string) => {
     const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
@@ -288,6 +289,22 @@ export function useGlobalChatSession() {
 
     return unsubscribe
   }, [refreshTalkSessions, state.sessionId])
+
+  useEffect(() => {
+    if (
+      !state.sessionId
+      || state.globalChat.target.kind !== 'fallback'
+      || startupWelcomeRequestedRef.current
+    ) {
+      return
+    }
+
+    startupWelcomeRequestedRef.current = true
+    void window.gemmaDesktopBridge.talk.maybeStartStartupWelcome()
+      .catch((error) => {
+        console.warn('Startup Assistant Chat welcome failed:', error)
+      })
+  }, [state.globalChat.target.kind, state.sessionId])
 
   const sendMessage = useCallback(async (text: string) => {
     if (!state.sessionId) {

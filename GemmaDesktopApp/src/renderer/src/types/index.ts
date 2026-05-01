@@ -1081,6 +1081,11 @@ export interface GemmaDesktopBridge {
   }
   talk: {
     ensureSession(): Promise<SessionDetail>
+    maybeStartStartupWelcome(): Promise<{
+      started: boolean
+      reason: string
+      sessionId?: string
+    }>
     listSessions(): Promise<GlobalChatConversationSummary[]>
     startSession(): Promise<SessionDetail>
     switchSession(sessionId: string): Promise<SessionDetail>
