@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Info, X } from 'lucide-react'
 import { AssistantActionRow } from '@/components/AssistantActionRow'
 import { MarkdownContent } from '@/components/MarkdownContent'
@@ -493,6 +493,16 @@ function findActiveBlockIndex(
   return -1
 }
 
+export type StreamingStatusTooltipPlacement = 'above' | 'below'
+
+export function determineStreamingStatusTooltipPlacement(
+  triggerTop: number,
+  viewportHeight: number,
+): StreamingStatusTooltipPlacement {
+  const topEdgeThreshold = Math.min(180, Math.max(120, viewportHeight * 0.35))
+  return triggerTop < topEdgeThreshold ? 'below' : 'above'
+}
+
 export function StreamingStatus({
   elapsedClock,
   activity,
@@ -503,7 +513,10 @@ export function StreamingStatus({
   className?: string
 }) {
   const [open, setOpen] = useState(false)
+  const [tooltipPlacement, setTooltipPlacement] =
+    useState<StreamingStatusTooltipPlacement>('above')
   const [now, setNow] = useState(() => Date.now())
+  const statusRef = useRef<HTMLDivElement | null>(null)
   const tooltipId = useId()
 
   useEffect(() => {
@@ -519,13 +532,45 @@ export function StreamingStatus({
   const triggerLabel = presentation
     ? `${presentation.label}. ${presentation.note}`
     : 'Working'
+  const tooltipPositionClass = tooltipPlacement === 'below'
+    ? 'top-full mt-2'
+    : 'bottom-full mb-2'
+  const closedOffsetClass = tooltipPlacement === 'below'
+    ? '-translate-y-1'
+    : 'translate-y-1'
+
+  const updateTooltipPlacement = useCallback(() => {
+    const statusElement = statusRef.current
+    if (!statusElement) return
+    const rect = statusElement.getBoundingClientRect()
+    setTooltipPlacement(
+      determineStreamingStatusTooltipPlacement(rect.top, window.innerHeight),
+    )
+  }, [])
+
+  const showTooltip = () => {
+    updateTooltipPlacement()
+    setOpen(true)
+  }
+
+  useEffect(() => {
+    if (!open) return undefined
+    const handleViewportChange = () => updateTooltipPlacement()
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('scroll', handleViewportChange, true)
+    return () => {
+      window.removeEventListener('resize', handleViewportChange)
+      window.removeEventListener('scroll', handleViewportChange, true)
+    }
+  }, [open, updateTooltipPlacement])
 
   return (
     <div
+      ref={statusRef}
       className={`relative inline-flex items-center gap-2 text-[11px] text-zinc-400 dark:text-zinc-500 ${className}`}
-      onMouseEnter={() => setOpen(true)}
+      onMouseEnter={showTooltip}
       onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
+      onFocus={showTooltip}
       onBlur={() => setOpen(false)}
     >
       <button
@@ -545,8 +590,8 @@ export function StreamingStatus({
       {presentation && (
         <div
           id={tooltipId}
-          className={`pointer-events-none absolute bottom-full left-0 z-[70] mb-2 w-[260px] rounded-lg border border-sky-200/80 bg-sky-50/95 p-2.5 text-xs shadow-lg backdrop-blur transition-all duration-150 dark:border-sky-800/70 dark:bg-zinc-950/95 ${
-            open ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+          className={`pointer-events-none absolute left-0 z-[70] w-[260px] rounded-lg border border-sky-200/80 bg-sky-50/95 p-2.5 text-xs shadow-lg backdrop-blur transition-all duration-150 dark:border-sky-800/70 dark:bg-zinc-950/95 ${tooltipPositionClass} ${
+            open ? 'translate-y-0 opacity-100' : `${closedOffsetClass} opacity-0`
           }`}
           role="tooltip"
           aria-hidden={!open}

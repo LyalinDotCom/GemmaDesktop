@@ -1,7 +1,11 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { Message, StreamingStatus } from '../../src/renderer/src/components/Message'
+import {
+  determineStreamingStatusTooltipPlacement,
+  Message,
+  StreamingStatus,
+} from '../../src/renderer/src/components/Message'
 import type { ChatMessage, LiveActivitySnapshot } from '../../src/renderer/src/types'
 
 function buildAssistantMessage(): ChatMessage {
@@ -64,6 +68,12 @@ describe('message actions', () => {
     expect(html).toContain('synthesis')
     expect(html).not.toContain('bg-gradient-to-r')
     expect(html).not.toContain('conic-gradient')
+  })
+
+  it('places the streaming status tooltip below only near the viewport top', () => {
+    expect(determineStreamingStatusTooltipPlacement(64, 900)).toBe('below')
+    expect(determineStreamingStatusTooltipPlacement(320, 900)).toBe('above')
+    expect(determineStreamingStatusTooltipPlacement(640, 900)).toBe('above')
   })
 
   it('hides all assistant action buttons while streaming', () => {
