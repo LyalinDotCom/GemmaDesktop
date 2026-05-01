@@ -1,4 +1,4 @@
-import type { Element, ElementContent, Root, Text } from 'hast'
+import type { Element, ElementContent, Root } from 'hast'
 import { SKIP, visit } from 'unist-util-visit'
 
 /**
@@ -6,11 +6,10 @@ import { SKIP, visit } from 'unist-util-visit'
  * li, blockquote) in a `<span data-sentence-key data-sentence-text>` so the
  * renderer can make individual sentences selectable / pinnable.
  *
- * v1 simplification — segmentation operates per text-node. If a sentence spans
- * multiple text nodes because of inline `<strong>` / `<em>` / `<a>`, each
- * text-node fragment becomes its own sentence span with a unique key. Clicking
- * any fragment pins that fragment's text. A follow-up can flatten the block to
- * unify cross-fragment sentences.
+ * Segmentation is computed against the block's flattened readable text, then
+ * applied back onto the original HAST children. That keeps markdown formatting
+ * intact while making one visual sentence one selectable unit, even when it
+ * crosses inline `<strong>` / `<em>` / `<a>` boundaries.
  *
  * The plugin is keyed on `sourceMessageId` + `contentBlockIndex` so sentence
  * keys are globally unique across multi-content-block messages.
@@ -32,16 +31,6 @@ const BLOCK_TAGS = new Set([
   'blockquote',
 ])
 
-// Elements we never descend into for sentence wrapping — code and
-// pre-formatted content should stay as-is.
-const SKIP_TAGS = new Set([
-  'code',
-  'pre',
-  'script',
-  'style',
-  'table',
-])
-
 // Cached segmenter — constructing is non-trivial and we reuse it per render.
 let cachedSegmenter: Intl.Segmenter | null = null
 function getSegmenter(): Intl.Segmenter {
@@ -51,10 +40,63 @@ function getSegmenter(): Intl.Segmenter {
 }
 
 interface SentenceSlice {
-  text: string
-  // Offset within the original text-node value (after a leading-space trim
-  // that Intl.Segmenter applies).
+  start: number
+  end: number
+  // Plain quote text for the selected range. Whitespace is collapsed because
+  // markdown line breaks are visual layout, not meaningful sentence content.
   trimmedText: string
+}
+
+const NUMBERED_PREFIX_PATTERN = /^\(?\d+[.)]\s*$/
+const SENTENCE_TERMINATOR_PATTERN = /[.!?…][)"'\]\u2019\u201d]*$/
+
+function normalizeSentenceText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function makeSentenceSlice(value: string, start: number, end: number): SentenceSlice | null {
+  const text = value.slice(start, end)
+  const trimmedText = normalizeSentenceText(text)
+  if (!trimmedText) return null
+  return {
+    start,
+    end,
+    trimmedText,
+  }
+}
+
+function shouldMergeWithNext(slice: SentenceSlice): boolean {
+  if (NUMBERED_PREFIX_PATTERN.test(slice.trimmedText)) {
+    return true
+  }
+
+  return !SENTENCE_TERMINATOR_PATTERN.test(slice.trimmedText)
+}
+
+function mergeSentenceFragments(value: string, slices: SentenceSlice[]): SentenceSlice[] {
+  const merged: SentenceSlice[] = []
+  let pending: SentenceSlice | null = null
+
+  for (const slice of slices) {
+    if (!pending) {
+      pending = slice
+      continue
+    }
+
+    if (shouldMergeWithNext(pending)) {
+      pending = makeSentenceSlice(value, pending.start, slice.end)
+      continue
+    }
+
+    merged.push(pending)
+    pending = slice
+  }
+
+  if (pending) {
+    merged.push(pending)
+  }
+
+  return merged
 }
 
 function splitSentences(value: string): SentenceSlice[] {
@@ -62,8 +104,8 @@ function splitSentences(value: string): SentenceSlice[] {
 
   // Intl.Segmenter may not be available in some older test environments.
   if (typeof Intl === 'undefined' || typeof Intl.Segmenter !== 'function') {
-    const trimmed = value.trim()
-    return trimmed ? [{ text: value, trimmedText: trimmed }] : []
+    const slice = makeSentenceSlice(value, 0, value.length)
+    return slice ? [slice] : []
   }
 
   const segmenter = getSegmenter()
@@ -71,21 +113,23 @@ function splitSentences(value: string): SentenceSlice[] {
   for (const segment of segmenter.segment(value)) {
     const raw = segment.segment
     if (!raw) continue
-    const trimmed = raw.trim()
-    if (!trimmed) continue
-    out.push({ text: raw, trimmedText: trimmed })
+    const slice = makeSentenceSlice(
+      value,
+      segment.index,
+      segment.index + raw.length,
+    )
+    if (slice) {
+      out.push(slice)
+    }
   }
-  return out
+  return mergeSentenceFragments(value, out)
 }
 
 function makeSentenceSpan(
   slice: SentenceSlice,
   sentenceKey: string,
+  children: ElementContent[],
 ): Element {
-  const textNode: Text = {
-    type: 'text',
-    value: slice.text,
-  }
   return {
     type: 'element',
     tagName: 'span',
@@ -93,8 +137,111 @@ function makeSentenceSpan(
       'data-sentence-key': sentenceKey,
       'data-sentence-text': slice.trimmedText,
     },
-    children: [textNode],
+    children,
   }
+}
+
+function cloneElement(node: Element, children: ElementContent[]): Element {
+  return {
+    ...node,
+    properties: {
+      ...node.properties,
+    },
+    children,
+  }
+}
+
+function getNodeSegmentText(node: ElementContent): string {
+  if (node.type === 'text') {
+    return node.value
+  }
+
+  if (node.type !== 'element') {
+    return ''
+  }
+
+  if (node.tagName === 'br') {
+    return '\n'
+  }
+
+  if (node.tagName === 'img') {
+    const alt = node.properties?.alt
+    return typeof alt === 'string' ? alt : ''
+  }
+
+  return node.children.map((child) => getNodeSegmentText(child)).join('')
+}
+
+function getNodesSegmentText(nodes: ElementContent[]): string {
+  return nodes.map((node) => getNodeSegmentText(node)).join('')
+}
+
+function sliceNodeByTextRange(
+  node: ElementContent,
+  rangeStart: number,
+  rangeEnd: number,
+  nodeStart: number,
+): ElementContent | null {
+  const nodeText = getNodeSegmentText(node)
+  const nodeEnd = nodeStart + nodeText.length
+  if (rangeEnd <= nodeStart || nodeEnd <= rangeStart) {
+    return null
+  }
+
+  if (node.type === 'text') {
+    const start = Math.max(0, rangeStart - nodeStart)
+    const end = Math.min(node.value.length, rangeEnd - nodeStart)
+    if (end <= start) return null
+    return {
+      ...node,
+      value: node.value.slice(start, end),
+    }
+  }
+
+  if (node.type !== 'element') {
+    return null
+  }
+
+  if (node.tagName === 'br' || node.tagName === 'img') {
+    return cloneElement(node, [...node.children])
+  }
+
+  const children: ElementContent[] = []
+  let childStart = nodeStart
+  for (const child of node.children) {
+    const childLength = getNodeSegmentText(child).length
+    const sliced = sliceNodeByTextRange(child, rangeStart, rangeEnd, childStart)
+    if (sliced) {
+      children.push(sliced)
+    }
+    childStart += childLength
+  }
+
+  if (children.length === 0) {
+    return null
+  }
+
+  return cloneElement(node, children)
+}
+
+function sliceNodesByTextRange(
+  nodes: ElementContent[],
+  rangeStart: number,
+  rangeEnd: number,
+): ElementContent[] {
+  const out: ElementContent[] = []
+  let nodeStart = 0
+
+  for (const node of nodes) {
+    const nodeLength = getNodeSegmentText(node).length
+    const sliced = sliceNodeByTextRange(node, rangeStart, rangeEnd, nodeStart)
+    if (sliced) {
+      out.push(sliced)
+    }
+    nodeStart += nodeLength
+  }
+
+  return out
 }
 
 function wrapBlockChildren(
@@ -107,39 +254,39 @@ function wrapBlockChildren(
   const nextKey = () =>
     `${sourceMessageId}:${contentBlockIndex}:${blockIndex}:${sentenceCounter++}`
 
-  const walk = (children: ElementContent[]): ElementContent[] => {
-    const out: ElementContent[] = []
-    for (const child of children) {
-      if (child.type === 'text') {
-        const slices = splitSentences(child.value)
-        if (slices.length === 0) {
-          // Pure whitespace — keep as-is to preserve layout.
-          out.push(child)
-          continue
-        }
-        for (const slice of slices) {
-          out.push(makeSentenceSpan(slice, nextKey()))
-        }
-        continue
-      }
-
-      if (child.type === 'element') {
-        if (SKIP_TAGS.has(child.tagName)) {
-          out.push(child)
-          continue
-        }
-        // Recurse into inline children (strong, em, a, etc).
-        child.children = walk(child.children)
-        out.push(child)
-        continue
-      }
-
-      out.push(child)
-    }
-    return out
+  const blockText = getNodesSegmentText(block.children)
+  const slices = splitSentences(blockText)
+  if (slices.length === 0) {
+    return
   }
 
-  block.children = walk(block.children)
+  const wrappedChildren: ElementContent[] = []
+  let previousEnd = 0
+  for (const slice of slices) {
+    if (slice.start > previousEnd) {
+      wrappedChildren.push(
+        ...sliceNodesByTextRange(block.children, previousEnd, slice.start),
+      )
+    }
+
+    const sentenceChildren = sliceNodesByTextRange(
+      block.children,
+      slice.start,
+      slice.end,
+    )
+    if (sentenceChildren.length > 0) {
+      wrappedChildren.push(makeSentenceSpan(slice, nextKey(), sentenceChildren))
+    }
+    previousEnd = slice.end
+  }
+
+  if (previousEnd < blockText.length) {
+    wrappedChildren.push(
+      ...sliceNodesByTextRange(block.children, previousEnd, blockText.length),
+    )
+  }
+
+  block.children = wrappedChildren
 }
 
 /**
@@ -166,6 +313,12 @@ function hasCodeDescendant(nodes: ElementContent[]): boolean {
     if (hasCodeDescendant(node.children)) return true
   }
   return false
+}
+
+function hasDirectBlockChild(nodes: ElementContent[]): boolean {
+  return nodes.some(
+    (node) => node.type === 'element' && BLOCK_TAGS.has(node.tagName),
+  )
 }
 
 /**
@@ -209,6 +362,10 @@ export function rehypeSentenceSpans(options: RehypeSentenceSpansOptions) {
         return
       }
 
+      if (hasDirectBlockChild(node.children)) {
+        return undefined
+      }
+
       const blockIndex = blockCounter++
 
       // If this block contains any code (inline `<code>` or fenced), treat
@@ -222,7 +379,7 @@ export function rehypeSentenceSpans(options: RehypeSentenceSpansOptions) {
       }
 
       wrapBlockChildren(node, sourceMessageId, contentBlockIndex, blockIndex)
-      return undefined
+      return SKIP
     })
   }
 }

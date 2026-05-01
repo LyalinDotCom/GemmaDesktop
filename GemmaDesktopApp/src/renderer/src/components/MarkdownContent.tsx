@@ -171,6 +171,7 @@ function SelectableSentence({
   return (
     <span
       data-sentence-key={sentenceKey}
+      data-sentence-text={sentenceText}
       className={classes.join(' ')}
       onClick={(event) => {
         if (!clickable) return

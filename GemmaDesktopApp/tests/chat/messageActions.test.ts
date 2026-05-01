@@ -35,6 +35,19 @@ function buildLiveActivity(): LiveActivitySnapshot {
   }
 }
 
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#x27;', "'")
+    .replaceAll('&amp;', '&')
+}
+
+function extractSentenceTexts(html: string): string[] {
+  return Array.from(html.matchAll(/data-sentence-text="([^"]*)"/g)).map((match) =>
+    decodeHtmlAttribute(match[1] ?? ''),
+  )
+}
+
 describe('message actions', () => {
   it('renders active streaming status as a compact ellipsis with hover details and the clock intact', () => {
     const html = renderToStaticMarkup(
@@ -133,6 +146,34 @@ describe('message actions', () => {
     )
 
     expect(html).toContain('data-sentence-key')
+  })
+
+  it('keeps formatted heading prefixes and inline emphasis in one selectable sentence', () => {
+    const html = renderToStaticMarkup(
+      createElement(Message, {
+        message: {
+          ...buildAssistantMessage(),
+          content: [
+            {
+              type: 'text',
+              text:
+                '**3. The Philosophical Definition (The "Why")**\n'
+                + "Many argue that being alive isn't just about biological functions or awareness, but about **agency** and meaning. "
+                + 'To be truly alive is to keep choosing.',
+            },
+          ],
+        },
+        selectionMode: true,
+        showSelectionAction: true,
+        onToggleSelectionMode: () => {},
+        onToggleSentence: () => {},
+      }),
+    )
+
+    expect(extractSentenceTexts(html)).toEqual([
+      '3. The Philosophical Definition (The "Why") Many argue that being alive isn\'t just about biological functions or awareness, but about agency and meaning.',
+      'To be truly alive is to keep choosing.',
+    ])
   })
 
   it('keeps runtime error messages shrink-safe', () => {
