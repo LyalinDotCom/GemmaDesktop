@@ -13,6 +13,7 @@ const BASE_BOOTSTRAP: BootstrapState = {
   status: 'loading_helper',
   ready: false,
   message: 'Loading helper model gemma4:e2b…',
+  helperModelEnabled: true,
   helperModelId: 'gemma4:e2b',
   helperRuntimeId: 'ollama-native',
   requiredPrimaryModelIds: ['gemma4:26b'],
@@ -110,6 +111,19 @@ describe('StartupLoadingOverlay', () => {
     expect(markup).toContain('1 of 2 ready')
     expect(markup).toContain('data-testid="startup-task-read-aloud"')
     expect(markup).toContain('Downloading Kokoro assets')
+  })
+
+  it('shows helper disabled instead of claiming the helper model is ready', () => {
+    const tasks = resolveStartupTasks({
+      bootstrap: {
+        ...READY_BOOTSTRAP,
+        helperModelEnabled: false,
+      },
+      readAloudEnabled: false,
+      readAloudStatus: null,
+    })
+
+    expect(tasks[0]?.detail).toBe('Helper model is disabled.')
   })
 
   it('hides when dismissed', () => {

@@ -13,6 +13,7 @@ export interface SessionPrimaryModelTarget {
 export interface AppModelSelectionSettings {
   mainModel: SessionPrimaryModelTarget
   helperModel: SessionPrimaryModelTarget
+  helperModelEnabled: boolean
 }
 
 export const DEFAULT_PRIMARY_RUNTIME_ID = 'ollama-native'
@@ -58,6 +59,7 @@ export function createDefaultModelSelectionSettings(
       modelId: DEFAULT_HELPER_MODEL_ID,
       runtimeId: DEFAULT_PRIMARY_RUNTIME_ID,
     },
+    helperModelEnabled: true,
   }
 }
 
@@ -95,6 +97,7 @@ export function normalizeAppModelSelectionSettings(
     return {
       mainModel: { ...fallback.mainModel },
       helperModel: { ...fallback.helperModel },
+      helperModelEnabled: fallback.helperModelEnabled,
     }
   }
 
@@ -109,6 +112,10 @@ export function normalizeAppModelSelectionSettings(
   return {
     mainModel: { ...mainModel },
     helperModel: { ...helperModel },
+    helperModelEnabled:
+      typeof record.helperModelEnabled === 'boolean'
+        ? record.helperModelEnabled
+        : fallback.helperModelEnabled,
   }
 }
 
@@ -140,4 +147,10 @@ export function resolveConfiguredHelperModelTarget(
 ): SessionPrimaryModelTarget {
   const normalized = normalizeAppModelSelectionSettings(modelSelection)
   return { ...normalized.helperModel }
+}
+
+export function resolveHelperModelEnabled(
+  modelSelection?: Partial<AppModelSelectionSettings> | null,
+): boolean {
+  return normalizeAppModelSelectionSettings(modelSelection).helperModelEnabled
 }

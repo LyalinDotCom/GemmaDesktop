@@ -136,6 +136,40 @@ function createWriteFileTool(
   };
 }
 
+function createWriteFilesTool(): RegisteredTool<{ files: Array<{ path: string; content: string }> }> {
+  return {
+    name: "write_files",
+    description: "Write multiple full files.",
+    inputSchema: {
+      type: "object",
+      required: ["files"],
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["path", "content"],
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    async execute(input) {
+      return {
+        output: `Wrote ${input.files.length} files`,
+        structuredOutput: {
+          files: input.files.map((file) => ({ path: file.path })),
+        },
+      };
+    },
+  };
+}
+
 function createPeekBackgroundProcessTool(
   result: ShellCommandResult & { processId?: string },
 ): RegisteredTool<{ processId: string }> {
@@ -314,6 +348,59 @@ describe("build mode verification enforcement", () => {
         await rm(target, { recursive: true, force: true });
       }
     }
+  });
+
+  it("starts build turns with required tools when an explicit required surface is configured", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-compact-web-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "",
+        toolName: "write_files",
+        toolInput: {
+          files: [{ path: "index.html", content: "<main>ok</main>" }],
+        },
+      }),
+      createTextResponse("Blocked because validation has not run yet."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFilesTool());
+    registry.register(createExecCommandTool(async (input) => ({
+      command: input.command,
+      exitCode: 0,
+      stdout: "validated",
+      stderr: "",
+      timedOut: false,
+    })));
+    registry.register(createFinalizeBuildTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: {
+        base: "build",
+        onlyTools: ["write_files", "exec_command", FINALIZE_BUILD_TOOL_NAME],
+        requiredTools: ["write_files"],
+      },
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 2,
+    });
+
+    await engine.run("Create a tiny static app.");
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[0]?.tools?.map((tool) => tool.name)).toEqual(["write_files"]);
+    expect(adapter.requests[1]?.tools?.map((tool) => tool.name)).toEqual([
+      "write_files",
+      "exec_command",
+      FINALIZE_BUILD_TOOL_NAME,
+    ]);
+    expect(collectSystemText(adapter.requests[0]?.messages ?? [])).toContain(
+      "Call one of these tools as soon as it can advance the task: write_files.",
+    );
   });
 
   it("records missing verification without auto-coaching the assistant", async () => {

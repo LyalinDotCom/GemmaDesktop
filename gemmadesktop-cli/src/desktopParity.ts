@@ -33,8 +33,10 @@ export interface DesktopParityRuntimeEndpoints {
   omlx?: string;
 }
 
-export interface DesktopParityRuntimeCredentials {
+export interface DesktopParityRuntimeOptions {
   omlxApiKey?: string;
+  ollamaResponseHeaderTimeoutMs?: number;
+  ollamaStreamIdleTimeoutMs?: number;
 }
 
 export interface ModelTarget {
@@ -55,13 +57,19 @@ export function resolveDesktopParityEndpoints(
 
 export function createDesktopParityRuntimeAdapters(
   endpoints: DesktopParityRuntimeEndpoints = {},
-  credentials: DesktopParityRuntimeCredentials = {},
+  options: DesktopParityRuntimeOptions = {},
 ): RuntimeAdapter[] {
   const resolved = resolveDesktopParityEndpoints(endpoints);
-  const omlxApiKey = credentials.omlxApiKey?.trim() || undefined;
+  const omlxApiKey = options.omlxApiKey?.trim() || undefined;
   return [
     createOllamaNativeAdapter({
       baseUrl: resolved.ollama,
+      ...(options.ollamaResponseHeaderTimeoutMs != null
+        ? { responseHeaderTimeoutMs: options.ollamaResponseHeaderTimeoutMs }
+        : {}),
+      ...(options.ollamaStreamIdleTimeoutMs != null
+        ? { streamIdleTimeoutMs: options.ollamaStreamIdleTimeoutMs }
+        : {}),
     }),
     createOllamaOpenAICompatibleAdapter({
       baseUrl: resolved.ollama,

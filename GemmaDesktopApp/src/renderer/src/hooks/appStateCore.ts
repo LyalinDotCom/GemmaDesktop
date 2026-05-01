@@ -306,6 +306,7 @@ const defaultSettings: AppSettings = {
   modelSelection: {
     mainModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.mainModel },
     helperModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.helperModel },
+    helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
   },
   compaction: {
     autoCompactEnabled: true,
@@ -433,6 +434,7 @@ export const initialState: AppState = {
     status: 'idle',
     ready: false,
     message: 'Preparing local models…',
+    helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
     helperModelId: DEFAULT_HELPER_GEMMA_TAG,
     helperRuntimeId: 'ollama-native',
     requiredPrimaryModelIds: [DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.modelId],

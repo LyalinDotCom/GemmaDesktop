@@ -113,6 +113,7 @@ describe('preload bridge', () => {
     await environment.loadDefaultModels({
       mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
       helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
+      helperModelEnabled: true,
     })
     await environment.reloadModels({ sessionId: 'session-1' })
     await system.openEmojiPanel()
@@ -144,6 +145,7 @@ describe('preload bridge', () => {
     expect(invoke).toHaveBeenCalledWith('environment:load-default-models', {
       mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
       helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
+      helperModelEnabled: true,
     })
     expect(invoke).toHaveBeenCalledWith('environment:reload-models', {
       sessionId: 'session-1',

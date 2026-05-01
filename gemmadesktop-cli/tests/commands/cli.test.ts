@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -195,6 +195,8 @@ describe("headless CLI", () => {
         "num_ctx=8192",
         "--ollama-keep-alive",
         "24h",
+        "--ollama-stream-idle-timeout-ms",
+        "45000",
         "--omlx-option",
         "temperature=0.8",
       ],
@@ -221,6 +223,7 @@ describe("headless CLI", () => {
       mode: {
         base: "build",
         tools: ["read_file"],
+        requiredTools: ["write_file", "edit_file", "exec_command"],
       },
     });
     expect(calls.sessionOptions[0]?.metadata).toMatchObject({
@@ -238,6 +241,193 @@ describe("headless CLI", () => {
         omlxOptions: { temperature: 0.8 },
       },
     });
+  });
+
+  it("creates the run working directory before tools can execute commands inside it", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-cwd-"));
+    const workingDirectory = path.join(tempDirectory, "new-project-root");
+    const calls = {
+      createOptions: [] as CreateGemmaDesktopOptions[],
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "run",
+          "hello",
+          "--model",
+          "gemma4:e2b",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          workingDirectory,
+        ],
+        cwd: "/tmp/gemma-project",
+        env: {},
+        stdin: new MemoryStream(),
+        stdout: new MemoryStream(),
+        stderr: new MemoryStream(),
+        dependencies: makeDependencies(calls),
+      });
+
+      expect((await stat(workingDirectory)).isDirectory()).toBe(true);
+      expect(code).toBe(0);
+      expect(calls.sessionOptions[0]?.workingDirectory).toBe(workingDirectory);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("emits machine-readable errors for JSON runs", async () => {
+    const stdout = new MemoryStream();
+    const stderr = new MemoryStream();
+
+    const code = await runCli({
+      argv: ["run", "hello", "--json"],
+      cwd: "/tmp/gemma-project",
+      env: {},
+      stdin: new MemoryStream(),
+      stdout,
+      stderr,
+      dependencies: {
+        createGemmaDesktop: () => {
+          throw new Error("runtime unavailable");
+        },
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(stderr.text()).toBe("");
+    expect(JSON.parse(stdout.text()) as unknown).toEqual({
+      error: {
+        kind: "runtime",
+        message: "runtime unavailable",
+      },
+    });
+  });
+
+  it("includes collected events and runtime debug records in JSON run failures", async () => {
+    const snapshot = makeSnapshot();
+    const stdout = new MemoryStream();
+    const stderr = new MemoryStream();
+    const event = createEvent(
+      "turn.started",
+      { input: "hello", estimatedInputTokens: 1 },
+      {
+        sessionId: snapshot.sessionId,
+        turnId: "turn-1",
+        runtimeId: snapshot.runtimeId,
+        modelId: snapshot.modelId,
+      },
+    );
+
+    const code = await runCli({
+      argv: ["run", "hello", "--json", "--show-events", "--debug-runtime"],
+      cwd: "/tmp/gemma-project",
+      env: {},
+      stdin: new MemoryStream(),
+      stdout,
+      stderr,
+      dependencies: {
+        createGemmaDesktop: () => Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: () => Promise.resolve({
+              id: snapshot.sessionId,
+              snapshot: () => snapshot,
+              runStreamed: (_input, options) => {
+                options?.debug?.({
+                  stage: "request",
+                  transport: "test-runtime",
+                  url: "http://runtime.test",
+                  method: "POST",
+                });
+                return Promise.resolve({
+                  turnId: "turn-1",
+                  events: (async function* () {
+                    await Promise.resolve();
+                    yield event;
+                  })(),
+                  completed: Promise.reject(new Error("stream failed")),
+                });
+              },
+            }),
+          },
+        }),
+      },
+    });
+
+    const output = JSON.parse(stdout.text()) as {
+      error: { kind: string; message: string };
+      partialText?: string;
+      events: Array<{ type: string }>;
+      runtimeDebug: Array<{ transport: string }>;
+    };
+
+    expect(code).toBe(1);
+    expect(output.error).toEqual({ kind: "runtime", message: "stream failed" });
+    expect(output.partialText).toBeUndefined();
+    expect(output.events.map((entry) => entry.type)).toEqual(["turn.started"]);
+    expect(output.runtimeDebug).toEqual([
+      expect.objectContaining({ transport: "test-runtime" }),
+    ]);
+    expect(stderr.text()).toContain('"type": "runtime.debug"');
+  });
+
+  it("includes partial assistant text in JSON run failures when available", async () => {
+    const snapshot = makeSnapshot();
+    const stdout = new MemoryStream();
+    const event = createEvent(
+      "content.delta",
+      { channel: "assistant", delta: "I will do it later." },
+      {
+        sessionId: snapshot.sessionId,
+        turnId: "turn-1",
+        runtimeId: snapshot.runtimeId,
+        modelId: snapshot.modelId,
+      },
+    );
+
+    const code = await runCli({
+      argv: ["run", "hello", "--json", "--show-events"],
+      cwd: "/tmp/gemma-project",
+      env: {},
+      stdin: new MemoryStream(),
+      stdout,
+      stderr: new MemoryStream(),
+      dependencies: {
+        createGemmaDesktop: () => Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: () => Promise.resolve({
+              id: snapshot.sessionId,
+              snapshot: () => snapshot,
+              runStreamed: () => Promise.resolve({
+                turnId: "turn-1",
+                events: (async function* () {
+                  await Promise.resolve();
+                  yield event;
+                })(),
+                completed: Promise.reject(new Error("required tool missing")),
+              }),
+            }),
+          },
+        }),
+      },
+    });
+
+    const output = JSON.parse(stdout.text()) as {
+      error: { kind: string; message: string };
+      partialText: string;
+    };
+
+    expect(code).toBe(1);
+    expect(output.error.message).toBe("required tool missing");
+    expect(output.partialText).toBe("I will do it later.");
   });
 
   it("prints missing-verification build summaries without treating them as CLI failures", async () => {
@@ -498,7 +688,13 @@ describe("headless CLI", () => {
         workingDirectory: tempDirectory,
         buildPolicy: {
           samplingTurns: 6,
+          requireFinalizationAfterMutation: true,
           completionVerifier: "off",
+        },
+      });
+      expect(calls.sessionOptions[0]?.metadata).toMatchObject({
+        [REQUEST_PREFERENCES_METADATA_KEY]: {
+          reasoningMode: "off",
         },
       });
       expect(JSON.parse(stdout.text()) as unknown).toMatchObject({
@@ -517,6 +713,94 @@ describe("headless CLI", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("stops a multi-turn scenario after a turn failure", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-cli-scenario-fail-"));
+    const calls = {
+      createOptions: [] as CreateGemmaDesktopOptions[],
+      sessionOptions: [] as CreateSessionOptions[],
+      inputs: [] as unknown[],
+    };
+    const stdout = new MemoryStream();
+
+    const dependencies: CliDependencies = {
+      createGemmaDesktop: (options) => {
+        calls.createOptions.push(options);
+        const snapshot = makeSnapshot({ workingDirectory: tempDirectory });
+        const session: SessionLike = {
+          id: snapshot.sessionId,
+          snapshot: () => snapshot,
+          runStreamed: (input) => {
+            calls.inputs.push(input);
+            return Promise.resolve({
+              turnId: "turn-failed",
+              events: (async function* () {})(),
+              completed: Promise.reject(new Error("simulated scenario turn failure")),
+            });
+          },
+        };
+        return Promise.resolve({
+          inspectEnvironment: () => Promise.resolve(makeInspection()),
+          describeSession: (targetSnapshot) => makeDebugSnapshot(targetSnapshot),
+          sessions: {
+            create: (sessionOptions) => {
+              calls.sessionOptions.push(sessionOptions);
+              return Promise.resolve(session);
+            },
+          },
+        });
+      },
+    };
+
+    try {
+      const code = await runCli({
+        argv: [
+          "scenario",
+          "run",
+          "act-webapp-black-hole",
+          "--model",
+          "gemma4:31b-mlx-bf16",
+          "--runtime",
+          "ollama-native",
+          "--cwd",
+          tempDirectory,
+          "--json",
+        ],
+        cwd: "/tmp/gemma-project",
+        env: {},
+        stdin: new MemoryStream(),
+        stdout,
+        stderr: new MemoryStream(),
+        dependencies,
+      });
+
+      expect(code).toBe(1);
+      expect(calls.inputs).toHaveLength(1);
+      const output = JSON.parse(stdout.text()) as {
+        evaluation: {
+          issues: string[];
+        };
+      };
+      expect(output).toMatchObject({
+        scenarioId: "act-webapp-black-hole",
+        turns: [
+          {
+            index: 1,
+            error: "simulated scenario turn failure",
+          },
+        ],
+        evaluation: {
+          success: false,
+          checks: {
+            turnsCompleted: false,
+          },
+        },
+      });
+      expect(output.evaluation.issues).toContain("turnsCompleted");
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it("runs a web catalog scenario with explore-mode tools and reports evaluator success", async () => {
     const calls = {

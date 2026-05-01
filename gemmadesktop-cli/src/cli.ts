@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   evaluateBuildExecCommandPolicy,
@@ -73,6 +73,7 @@ export interface CliRuntime {
 interface RunJsonOutput {
   result: TurnResult;
   events?: GemmaDesktopEvent[];
+  runtimeDebug?: RuntimeDebugEvent[];
 }
 
 const DEFAULT_DEPENDENCIES: CliDependencies = {
@@ -183,6 +184,12 @@ function createDesktop(command: Exclude<CliCommand, { command: "help" }>, runtim
     workingDirectory: command.workingDirectory,
     adapters: createDesktopParityRuntimeAdapters(command.endpoints, {
       omlxApiKey: command.omlxApiKey ?? resolveOptionalEnvValue(runtime.env.OMLX_API_KEY),
+      ...(command.ollamaResponseHeaderTimeoutMs != null
+        ? { ollamaResponseHeaderTimeoutMs: command.ollamaResponseHeaderTimeoutMs }
+        : {}),
+      ...(command.ollamaStreamIdleTimeoutMs != null
+        ? { ollamaStreamIdleTimeoutMs: command.ollamaStreamIdleTimeoutMs }
+        : {}),
     }),
     extraTools: [createCliBrowserTool()],
     geminiApiKey: command.geminiApiKey ?? resolveOptionalEnvValue(runtime.env.GEMINI_API_KEY),
@@ -319,7 +326,12 @@ function collectAssistantDelta(event: GemmaDesktopEvent): string {
   return channel === "assistant" || channel === undefined ? delta : "";
 }
 
+function collectAssistantText(events: readonly GemmaDesktopEvent[]): string {
+  return events.map((event) => collectAssistantDelta(event)).join("");
+}
+
 async function executePreview(command: SessionCliOptions, runtime: CliRuntime): Promise<number> {
+  await mkdir(command.workingDirectory, { recursive: true });
   const desktop = await createDesktop(command, runtime);
   const session = await desktop.sessions.create(createSessionOptions(command));
   const debugSnapshot = desktop.describeSession(session.snapshot());
@@ -343,62 +355,83 @@ async function executePreview(command: SessionCliOptions, runtime: CliRuntime): 
 
 async function executeRun(command: SessionCliOptions, runtime: CliRuntime): Promise<number> {
   const prompt: SessionInput = await resolvePrompt(command, runtime);
+  await mkdir(command.workingDirectory, { recursive: true });
   const desktop = await createDesktop(command, runtime);
   const session = await desktop.sessions.create(createSessionOptions(command));
   const events: GemmaDesktopEvent[] = [];
+  const runtimeDebug: RuntimeDebugEvent[] = [];
   let wroteAssistantText = false;
 
-  const streamed = await session.runStreamed(prompt, {
-    ...(runtime.signal ? { signal: runtime.signal } : {}),
-    ...(command.maxSteps ? { maxSteps: command.maxSteps } : {}),
-    ...(command.buildPolicy ? { buildPolicy: command.buildPolicy } : {}),
-    ...(command.debugRuntime
-      ? {
-          debug: (event: RuntimeDebugEvent) => {
-            writeLine(runtime.stderr, stringifyJson({ type: "runtime.debug", event }));
-          },
-        }
-      : {}),
-  });
+  try {
+    const streamed = await session.runStreamed(prompt, {
+      ...(runtime.signal ? { signal: runtime.signal } : {}),
+      ...(command.maxSteps ? { maxSteps: command.maxSteps } : {}),
+      ...(command.buildPolicy ? { buildPolicy: command.buildPolicy } : {}),
+      ...(command.debugRuntime
+        ? {
+            debug: (event: RuntimeDebugEvent) => {
+              runtimeDebug.push(event);
+              writeLine(runtime.stderr, stringifyJson({ type: "runtime.debug", event }));
+            },
+          }
+        : {}),
+    });
 
-  for await (const event of streamed.events) {
-    if (command.showEvents || command.outputJson) {
-      events.push(event);
-    }
-    if (command.showEvents && !command.outputJson) {
-      writeLine(runtime.stderr, stringifyJson({ type: "sdk.event", event }));
-    }
-    if (!command.outputJson) {
-      const delta = collectAssistantDelta(event);
-      if (delta.length > 0) {
-        wroteAssistantText = true;
-        runtime.stdout.write(delta);
+    for await (const event of streamed.events) {
+      if (command.showEvents || command.outputJson) {
+        events.push(event);
+      }
+      if (command.showEvents && !command.outputJson) {
+        writeLine(runtime.stderr, stringifyJson({ type: "sdk.event", event }));
+      }
+      if (!command.outputJson) {
+        const delta = collectAssistantDelta(event);
+        if (delta.length > 0) {
+          wroteAssistantText = true;
+          runtime.stdout.write(delta);
+        }
       }
     }
-  }
 
-  const result = await streamed.completed;
+    const result = await streamed.completed;
 
-  if (command.outputJson) {
-    const output: RunJsonOutput = {
-      result,
-      ...(command.showEvents ? { events } : {}),
-    };
-    writeLine(runtime.stdout, stringifyJson(output));
+    if (command.outputJson) {
+      const output: RunJsonOutput = {
+        result,
+        ...(command.showEvents ? { events } : {}),
+        ...(command.debugRuntime ? { runtimeDebug } : {}),
+      };
+      writeLine(runtime.stdout, stringifyJson(output));
+      return 0;
+    }
+
+    if (wroteAssistantText) {
+      writeLine(runtime.stdout);
+    } else {
+      writeLine(runtime.stdout, result.text);
+    }
+
+    for (const warning of result.warnings) {
+      writeLine(runtime.stderr, `warning: ${warning}`);
+    }
+
     return 0;
+  } catch (error) {
+    if (command.outputJson) {
+      const partialText = collectAssistantText(events);
+      writeLine(runtime.stdout, stringifyJson({
+        error: {
+          message: formatError(error),
+          kind: "runtime",
+        },
+        ...(partialText.length > 0 ? { partialText } : {}),
+        ...(command.showEvents ? { events } : {}),
+        ...(command.debugRuntime ? { runtimeDebug } : {}),
+      }));
+      return 1;
+    }
+    throw error;
   }
-
-  if (wroteAssistantText) {
-    writeLine(runtime.stdout);
-  } else {
-    writeLine(runtime.stdout, result.text);
-  }
-
-  for (const warning of result.warnings) {
-    writeLine(runtime.stderr, `warning: ${warning}`);
-  }
-
-  return 0;
 }
 
 async function executeScenario(command: ScenarioCliOptions, runtime: CliRuntime): Promise<number> {
@@ -437,11 +470,25 @@ async function executeCommand(command: CliCommand, runtime: CliRuntime): Promise
   }
 }
 
+function wantsJsonOutput(argv: readonly string[]): boolean {
+  return argv.includes("--json");
+}
+
 export async function runCli(runtime: CliRuntime): Promise<number> {
   try {
     const command = parseCliCommand(runtime.argv, runtime.cwd);
     return await executeCommand(command, runtime);
   } catch (error) {
+    if (wantsJsonOutput(runtime.argv)) {
+      writeLine(runtime.stdout, stringifyJson({
+        error: {
+          message: formatError(error),
+          kind: error instanceof CliArgumentError ? "argument" : "runtime",
+        },
+      }));
+      return error instanceof CliArgumentError ? 2 : 1;
+    }
+
     if (error instanceof CliArgumentError) {
       writeLine(runtime.stderr, `error: ${error.message}`);
       writeLine(runtime.stderr);

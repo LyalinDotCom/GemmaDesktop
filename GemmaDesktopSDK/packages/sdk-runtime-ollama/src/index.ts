@@ -35,9 +35,11 @@ import {
 export interface OllamaAdapterOptions {
   baseUrl?: string;
   apiKey?: string;
+  responseHeaderTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
 }
 
+const DEFAULT_OLLAMA_RESPONSE_HEADER_TIMEOUT_MS = 300_000;
 const DEFAULT_OLLAMA_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 function headersToObject(headers: Headers): Record<string, string> {
@@ -113,6 +115,37 @@ function normalizeOllamaStreamError(modelId: string, error: unknown): Error {
   }
 
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function createTimeoutLinkedSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  message: string,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const onAbort = () => {
+    controller.abort(signal?.reason);
+  };
+
+  signal?.addEventListener("abort", onAbort, { once: true });
+  timeout = setTimeout(() => {
+    controller.abort(new GemmaDesktopError("timeout", message, {
+      details: { timeoutMs },
+    }));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+    },
+  };
 }
 
 function createCapabilities(): CapabilityRecord[] {
@@ -694,6 +727,12 @@ function normalizeModel(raw: Record<string, unknown>, show?: Record<string, unkn
 
 export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): RuntimeAdapter {
   const baseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const responseHeaderTimeoutMs =
+    typeof options.responseHeaderTimeoutMs === "number"
+      && Number.isFinite(options.responseHeaderTimeoutMs)
+      && options.responseHeaderTimeoutMs > 0
+      ? options.responseHeaderTimeoutMs
+      : DEFAULT_OLLAMA_RESPONSE_HEADER_TIMEOUT_MS;
   const streamIdleTimeoutMs =
     typeof options.streamIdleTimeoutMs === "number"
       && Number.isFinite(options.streamIdleTimeoutMs)
@@ -878,6 +917,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         body.format = request.responseFormat.schema;
       }
       const url = `${baseUrl}/api/chat`;
+      const startedAtMs = Date.now();
       request.debug?.({
         stage: "request",
         transport: "ollama-native.stream",
@@ -886,14 +926,25 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         payload: sanitizeDebugPayload(body),
       });
 
-      const response = await fetchWithRetry(url, {
-        method: "POST",
-        signal: request.signal,
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
+      const responseTimeout = createTimeoutLinkedSignal(
+        request.signal,
+        responseHeaderTimeoutMs,
+        `Ollama accepted the ${request.model} request but did not send response headers for ${Math.round(responseHeaderTimeoutMs / 1000)} seconds.`,
+      );
+      let response: Response;
+      try {
+        response = await fetchWithRetry(url, {
+          method: "POST",
+          signal: responseTimeout.signal,
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+      } finally {
+        responseTimeout.cleanup();
+      }
+      const responseElapsedMs = Date.now() - startedAtMs;
 
       request.debug?.({
         stage: response.ok ? "response" : "error",
@@ -902,6 +953,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
         method: "POST",
         status: response.status,
         headers: headersToObject(response.headers),
+        raw: { elapsedMs: responseElapsedMs },
       });
 
       if (!response.ok || !response.body) {
@@ -912,6 +964,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
       let reasoning = "";
       let toolCalls: ChatResponse["toolCalls"] = [];
       let finalChunk: Record<string, unknown> | undefined;
+      let sawFirstChunk = false;
 
       try {
         for await (const chunk of parseJsonLines(response.body, request.signal, {
@@ -921,6 +974,20 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
             + "The local runner may have stalled; Gemma Desktop is ending the turn instead of waiting indefinitely.",
         })) {
           finalChunk = chunk;
+          if (!sawFirstChunk) {
+            sawFirstChunk = true;
+            request.debug?.({
+              stage: "stream",
+              transport: "ollama-native.stream.first_chunk",
+              url,
+              method: "POST",
+              raw: {
+                elapsedMs: Date.now() - startedAtMs,
+                done: chunk.done,
+                hasMessage: typeof chunk.message === "object" && chunk.message !== null,
+              },
+            });
+          }
           const parsed = parseNativeMessage(chunk.message);
           const rawText = nativeMessageRawText(chunk.message);
           if (parsed.reasoning) {

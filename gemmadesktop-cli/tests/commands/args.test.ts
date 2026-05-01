@@ -33,6 +33,10 @@ describe("CLI argument parsing", () => {
       "num_ctx=8192",
       "--ollama-keep-alive",
       "24h",
+      "--ollama-response-header-timeout-ms",
+      "30000",
+      "--ollama-stream-idle-timeout-ms",
+      "45000",
       "--omlx-option",
       "temperature=0.8",
       "--omlx-endpoint",
@@ -52,10 +56,13 @@ describe("CLI argument parsing", () => {
     expect(command.approvalMode).toBe("yolo");
     expect(command.endpoints.omlx).toBe("http://localhost:8001");
     expect(command.omlxApiKey).toBe("1234");
+    expect(command.ollamaResponseHeaderTimeoutMs).toBe(30000);
+    expect(command.ollamaStreamIdleTimeoutMs).toBe(45000);
     expect(command.mode).toEqual({
       base: "build",
       tools: ["read_file"],
       withoutTools: ["exec_command"],
+      requiredTools: ["write_file", "edit_file", "exec_command"],
     });
     expect(command.requestPreferences).toEqual({
       reasoningMode: "on",
@@ -97,6 +104,28 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  it("parses restrictive tool selections without changing mode semantics", () => {
+    const command = parseSession([
+      "run",
+      "build it",
+      "--mode",
+      "build",
+      "--only-tool",
+      "write_files",
+      "--only-tool",
+      "exec_command",
+      "--require-tool",
+      "write_files",
+    ]);
+
+    expect(command.mode).toEqual({
+      base: "build",
+      onlyTools: ["write_files", "exec_command"],
+      requiredTools: ["write_files"],
+    });
+    expect(command.selectedToolNames).toEqual(["write_files", "exec_command"]);
+  });
+
   it("parses ACT build policy and scenario runner flags", () => {
     const runCommand = parseSession([
       "run",
@@ -123,6 +152,7 @@ describe("CLI argument parsing", () => {
 
     expect(runCommand.buildPolicy).toEqual({
       samplingTurns: 30,
+      requireFinalizationAfterMutation: true,
       completionVerifier: "deterministic",
     });
     expect(scenarioCommand).toMatchObject({
@@ -132,9 +162,33 @@ describe("CLI argument parsing", () => {
       modelId: "gemma4:31b",
       buildPolicy: {
         samplingTurns: 32,
+        requireFinalizationAfterMutation: true,
         completionVerifier: "off",
       },
       outputJson: true,
+    });
+  });
+
+  it("requires finalization evidence for ACT run commands even without extra build flags", () => {
+    const command = parseSession(["run", "build it", "--mode", "build"]);
+
+    expect(command.mode).toEqual({
+      base: "build",
+      requiredTools: ["write_file", "edit_file", "exec_command"],
+    });
+    expect(command.buildPolicy).toEqual({
+      requireFinalizationAfterMutation: true,
+    });
+    expect(command.requestPreferences).toMatchObject({
+      reasoningMode: "off",
+    });
+  });
+
+  it("preserves explicit reasoning preferences for ACT run commands", () => {
+    const command = parseSession(["run", "build it", "--mode", "build", "--reasoning", "on"]);
+
+    expect(command.requestPreferences).toMatchObject({
+      reasoningMode: "on",
     });
   });
 

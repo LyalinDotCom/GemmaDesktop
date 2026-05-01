@@ -24,6 +24,7 @@ import {
 import {
   resolveConfiguredHelperModelTarget,
   resolveConfiguredSessionPrimaryTarget,
+  resolveHelperModelEnabled,
   resolveSavedDefaultSessionPrimaryTarget,
   type AppModelSelectionSettings,
 } from '../shared/sessionModelDefaults'
@@ -1092,7 +1093,8 @@ function buildDoctorIssues(input: {
   }
 
   if (
-    input.settings.runtimes.ollama.maxLoadedModels <= 1
+    resolveHelperModelEnabled(input.settings.modelSelection)
+    && input.settings.runtimes.ollama.maxLoadedModels <= 1
     && isOllamaModelRuntime(helperTarget.runtimeId)
     && configuredPrimaryModelIds.some((modelId) => modelId !== helperModelId)
   ) {

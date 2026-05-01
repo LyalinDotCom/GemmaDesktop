@@ -113,9 +113,58 @@ function formatWriteFailureMessage(
     return `Write failed for ${filePath}: permission denied. Choose a writable path or adjust permissions before retrying.`;
   }
 
+  if (code === "ENOTDIR" || code === "EEXIST") {
+    return `Write failed for ${filePath}: a parent path is not a directory. Choose a valid file path and retry.`;
+  }
+
   return error instanceof Error
     ? `Write failed for ${filePath}: ${error.message}`
     : `Write failed for ${filePath}.`;
+}
+
+async function createParentDirectoryForWrite(filePath: string): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+  } catch (error) {
+    throw new GemmaDesktopError(
+      "tool_execution_failed",
+      formatWriteFailureMessage(filePath, error, true),
+    );
+  }
+}
+
+async function writeOneVerifiedFile(input: {
+  filePath: string;
+  content: string;
+}): Promise<{
+  path: string;
+  bytes: number;
+  verified: true;
+  edit?: ReturnType<typeof buildFileEditArtifact>;
+  action: "Created" | "Overwrote";
+}> {
+  const before = await readDiffSourceFile(input.filePath);
+  await createParentDirectoryForWrite(input.filePath);
+  await writeUtf8FileAndVerify(input.filePath, input.content, {
+    createDirectoriesRequested: true,
+  });
+  const edit =
+    before.content !== undefined
+      ? buildFileEditArtifact({
+          path: input.filePath,
+          beforeText: before.content,
+          afterText: input.content,
+          changeType: before.exists ? "edited" : "created",
+        })
+      : undefined;
+
+  return {
+    path: input.filePath,
+    bytes: input.content.length,
+    verified: true,
+    ...(edit ? { edit } : {}),
+    action: before.exists ? "Overwrote" : "Created",
+  };
 }
 
 async function writeUtf8FileAndVerify(
@@ -759,7 +808,7 @@ export function createHostTools(): RegisteredTool[] {
     },
     {
       name: "write_file",
-      description: "Direct tool. Write or overwrite a file when you already know the target path and contents, then verify the write by reading the file back.",
+      description: "Direct tool. Write or overwrite a file when you already know the target path and contents, creating missing parent directories and verifying the write by reading the file back.",
       inputSchema: {
         type: "object",
         required: ["path", "content"],
@@ -772,30 +821,70 @@ export function createHostTools(): RegisteredTool[] {
       },
       async execute(input: { path: string; content: string; createDirectories?: boolean }, context) {
         const resolved = resolvePath(context, input.path);
-        const before = await readDiffSourceFile(resolved);
-        if (input.createDirectories) {
-          await fs.mkdir(path.dirname(resolved), { recursive: true });
-        }
-        await writeUtf8FileAndVerify(resolved, input.content, {
-          createDirectoriesRequested: input.createDirectories,
+        const write = await writeOneVerifiedFile({
+          filePath: resolved,
+          content: input.content,
         });
-        const edit =
-          before.content !== undefined
-            ? buildFileEditArtifact({
-                path: resolved,
-                beforeText: before.content,
-                afterText: input.content,
-                changeType: before.exists ? "edited" : "created",
-              })
-            : undefined;
-        const action = before.exists ? "Overwrote" : "Created";
         return {
-          output: `${action} and verified ${resolved} (${input.content.length} bytes).`,
+          output: `${write.action} and verified ${resolved} (${input.content.length} bytes).`,
           structuredOutput: {
-            path: resolved,
-            bytes: input.content.length,
+            path: write.path,
+            bytes: write.bytes,
+            verified: write.verified,
+            ...(write.edit ? { edit: write.edit } : {}),
+          },
+        };
+      },
+    },
+    {
+      name: "write_files",
+      description: "Direct tool. Write or overwrite multiple complete files in one call when you already know their target paths and contents, creating missing parent directories and verifying every file by reading it back.",
+      inputSchema: {
+        type: "object",
+        required: ["files"],
+        properties: {
+          files: {
+            type: "array",
+            minItems: 1,
+            maxItems: 20,
+            items: {
+              type: "object",
+              required: ["path", "content"],
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+      async execute(input: { files: Array<{ path: string; content: string }> }, context) {
+        const files = [];
+        for (const file of input.files) {
+          const resolved = resolvePath(context, file.path);
+          const write = await writeOneVerifiedFile({
+            filePath: resolved,
+            content: file.content,
+          });
+          files.push({
+            path: write.path,
+            bytes: write.bytes,
+            verified: write.verified,
+            ...(write.edit ? { edit: write.edit } : {}),
+          });
+        }
+
+        return {
+          output: [
+            `Wrote and verified ${files.length} files.`,
+            ...files.map((file) => `- ${file.path} (${file.bytes} bytes)`),
+          ].join("\n"),
+          structuredOutput: {
+            files,
+            count: files.length,
             verified: true,
-            ...(edit ? { edit } : {}),
           },
         };
       },

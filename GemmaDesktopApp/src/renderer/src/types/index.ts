@@ -97,6 +97,7 @@ export interface BootstrapState {
   status: 'idle' | 'checking' | 'starting_ollama' | 'pulling_models' | 'loading_helper' | 'ready' | 'warning' | 'error'
   ready: boolean
   message: string
+  helperModelEnabled: boolean
   helperModelId: string
   helperRuntimeId: string
   requiredPrimaryModelIds: string[]

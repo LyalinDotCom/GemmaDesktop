@@ -2626,8 +2626,8 @@ export function App() {
           modelTokenUsage={state.modelTokenUsage}
           activeModelId={state.activeSession?.modelId ?? null}
           activeRuntimeId={state.activeSession?.runtimeId ?? null}
-          helperModelId={state.bootstrapState.helperModelId}
-          helperRuntimeId={state.bootstrapState.helperRuntimeId}
+          helperModelId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperModelId : null}
+          helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
           reloadModelsDisabledReason={modelReloadDisabledReason}
           onReloadModels={async () => {
             if (window.gemmaDesktopBridge.environment.reloadModels) {
@@ -2651,6 +2651,7 @@ export function App() {
                 ? activeMainModel
                 : state.settings.modelSelection.mainModel,
               helperModel: state.settings.modelSelection.helperModel,
+              helperModelEnabled: state.settings.modelSelection.helperModelEnabled,
             }
 
             if (window.gemmaDesktopBridge.environment.loadDefaultModels) {

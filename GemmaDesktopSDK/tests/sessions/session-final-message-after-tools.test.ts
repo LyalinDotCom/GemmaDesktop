@@ -286,13 +286,11 @@ describe("final assistant message after tool use", () => {
       "I wrote index.html, but I reached the tool-step budget before any further verification.",
     );
     expect(result.toolResults).toHaveLength(1);
-    expect(result.warnings).toContain(
-      "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.",
-    );
+    expect(result.warnings).toEqual([]);
     expect(adapter.requests).toHaveLength(2);
     expect(adapter.requests[1]?.tools).toEqual([]);
     expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
-      "You no longer have tool access for this finalization pass.",
+      "You no longer have tool access. Do not call any more tools.",
     );
   });
 

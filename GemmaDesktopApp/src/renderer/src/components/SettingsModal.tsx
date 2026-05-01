@@ -400,12 +400,14 @@ export function DefaultModelTargetPicker({
   groups,
   onSelect,
   initialOpen = false,
+  disabled = false,
 }: {
   ariaLabel: string
   value: { modelId: string; runtimeId: string }
   groups: Array<{ providerLabel: string; options: DefaultModelOption[] }>
   onSelect: (target: { modelId: string; runtimeId: string }) => void
   initialOpen?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(initialOpen)
   const [query, setQuery] = useState('')
@@ -427,6 +429,12 @@ export function DefaultModelTargetPicker({
     : groups
 
   useEffect(() => {
+    if (disabled) {
+      setOpen(false)
+    }
+  }, [disabled])
+
+  useEffect(() => {
     const handler = (event: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
         setOpen(false)
@@ -437,12 +445,12 @@ export function DefaultModelTargetPicker({
   }, [])
 
   useEffect(() => {
-    if (!open) {
+    if (!open || disabled) {
       setQuery('')
       return
     }
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [open])
+  }, [disabled, open])
 
   return (
     <div ref={rootRef} className={`relative ${open ? 'z-30' : 'z-0'}`}>
@@ -451,8 +459,17 @@ export function DefaultModelTargetPicker({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-sm text-zinc-700 outline-none transition-colors hover:border-zinc-300 focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-700 dark:focus:border-indigo-700"
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            setOpen((current) => !current)
+          }
+        }}
+        className={`flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm outline-none transition-colors focus:border-indigo-300 focus:ring-1 focus:ring-indigo-300/50 dark:focus:border-indigo-700 ${
+          disabled
+            ? 'cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-600'
+            : 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-700'
+        }`}
       >
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
@@ -823,17 +840,28 @@ export function SettingsModal({
     setLocal({ ...local, modelSelection })
     commitUpdate({ modelSelection })
   }
+  const updateHelperModelEnabled = (helperModelEnabled: boolean) => {
+    const modelSelection = {
+      ...local.modelSelection,
+      helperModelEnabled,
+    }
+    setDefaultModelLoadFeedback(null)
+    setLocal({ ...local, modelSelection })
+    commitUpdate({ modelSelection })
+  }
 
   const modelSelectionMatchesBuiltIn =
     local.modelSelection.mainModel.modelId === defaultModelSelection.mainModel.modelId
     && local.modelSelection.mainModel.runtimeId === defaultModelSelection.mainModel.runtimeId
     && local.modelSelection.helperModel.modelId === defaultModelSelection.helperModel.modelId
     && local.modelSelection.helperModel.runtimeId === defaultModelSelection.helperModel.runtimeId
+    && local.modelSelection.helperModelEnabled === defaultModelSelection.helperModelEnabled
 
   const resetModelSelection = () => {
     const modelSelection = {
       mainModel: { ...defaultModelSelection.mainModel },
       helperModel: { ...defaultModelSelection.helperModel },
+      helperModelEnabled: defaultModelSelection.helperModelEnabled,
     }
     setDefaultModelLoadFeedback(null)
     setLocal({ ...local, modelSelection })
@@ -850,6 +878,7 @@ export function SettingsModal({
         ...local.modelSelection.helperModel,
         runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
       },
+      helperModelEnabled: local.modelSelection.helperModelEnabled,
     }
 
     setDefaultModelsLoading(true)
@@ -980,7 +1009,7 @@ export function SettingsModal({
 
                   <SettingsSection
                     title="Default Models"
-                    description="Main is the saved default for new conversations, research, and automations. Helper is the saved default for lightweight background work."
+                    description="Main is the saved default for new conversations, research, and automations. Helper can be disabled when you want all background helper work off."
                     trailing={
                       <div className="flex flex-wrap justify-end gap-2">
                         <Button
@@ -1006,6 +1035,22 @@ export function SettingsModal({
                       </div>
                     }
                   >
+                    <SettingsRow
+                      label="Helper model"
+                      description={
+                        local.modelSelection.helperModelEnabled
+                          ? 'Background helper turns, title generation, startup welcomes, and helper warmup are enabled.'
+                          : 'Background helper turns, title generation, startup welcomes, and helper warmup are disabled.'
+                      }
+                      control={
+                        <Toggle
+                          ariaLabel="Toggle helper model"
+                          checked={local.modelSelection.helperModelEnabled}
+                          onChange={() =>
+                            updateHelperModelEnabled(!local.modelSelection.helperModelEnabled)}
+                        />
+                      }
+                    />
                     <div className="grid gap-4 sm:grid-cols-2">
                       <SettingsField
                         label="Main Model"
@@ -1026,15 +1071,20 @@ export function SettingsModal({
                       <SettingsField
                         label="Helper Model"
                         hint={
-                          <>
-                            Used for titles and helper turns. Bootstrap target:
-                            {' '}
-                            <code>{bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>.
-                          </>
+                          local.modelSelection.helperModelEnabled
+                            ? (
+                                <>
+                                  Used for titles and helper turns. Bootstrap target:
+                                  {' '}
+                                  <code>{bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>.
+                                </>
+                              )
+                            : 'Saved for later, but no helper work will run while the helper model is disabled.'
                         }
                       >
                         <DefaultModelTargetPicker
                           ariaLabel="Default helper model"
+                          disabled={!local.modelSelection.helperModelEnabled}
                           value={{
                             ...local.modelSelection.helperModel,
                             runtimeId: normalizeProviderRuntimeId(local.modelSelection.helperModel.runtimeId),
@@ -1134,7 +1184,11 @@ export function SettingsModal({
                         <>
                           Current target:
                           {' '}
-                          <code>helper={bootstrapState.helperRuntimeId}/{bootstrapState.helperModelId}</code>
+                          <code>
+                            {local.modelSelection.helperModelEnabled
+                              ? `helper=${bootstrapState.helperRuntimeId}/${bootstrapState.helperModelId}`
+                              : 'helper=disabled'}
+                          </code>
                           {', '}
                           <code>numParallel={local.runtimes.ollama?.numParallel ?? 1}</code>
                           {', '}

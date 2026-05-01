@@ -88,6 +88,14 @@ Agents should optimize for long-term engineering speed, not short-term code volu
 
 This repository is greenfield. Prefer direct, clean fixes over backward-compatibility layers unless the user explicitly asks for compatibility support or a migration path.
 
+### P0 Release-Notes-Level Commit Notes
+
+Commit messages are product history. Every commit must carry release-notes-level notes that explain the user-visible behavior, SDK/CLI/App contract changes, important infrastructure changes, validation performed, and any remaining known risk.
+
+Do not use terse checkpoint messages for substantive work. Prefer a concise subject plus a detailed body with grouped bullets that future maintainers can read as a useful changelog entry.
+
+When a commit includes multiple coordinated workstreams, the commit body should name each workstream clearly instead of hiding secondary changes under a generic summary.
+
 ### P0 SDK/Desktop/CLI Parity
 
 `gemmadesktop-cli` parity is P0. When changing `GemmaDesktopApp` in a way that adds, removes, or materially changes SDK-backed behavior, update the headless CLI in the same change unless there is a concrete reason it cannot apply.
@@ -201,6 +209,31 @@ Helpful hints:
 The repo has local models available, so do not under-test major changes just to save runtime. Slow validation is preferable to shipping regressions in real app behavior.
 
 Live scenario results require human review of the generated artifacts, not just a green process exit. When running live scenario tests, inspect the saved JSON, tool trace, final answer, evaluator notes, and any attachments or generated files against the scenario's actual goal. Report whether the run was practically useful, partially useful, or misleading, even if the automated evaluator passed.
+
+## Gemma-Centered Agent Design
+
+Gemma is the product's namesake model family, so optimize the SDK, CLI, app prompts, and tool surfaces for how Gemma actually behaves, not for how an idealized frontier tool user might behave.
+
+When hardening coding-agent behavior with Gemma models, assume these limitations are real product constraints:
+
+- Gemma can struggle when a turn exposes too many tools at once, especially when several tools have overlapping intent
+- Gemma can struggle with complex JSON schemas, nested tool arguments, large batch tool calls, and tool names that do not resemble common coding actions
+- native Ollama tool-calling may buffer large tool-call payloads before response headers arrive, so a slow or silent first response can be a request-shape problem rather than simple model slowness
+- Gemma often does better with short, literal instructions, one obvious next action, simple file-write tools, and validation commands that look like normal developer workflow
+- Gemma should not be expected to infer quality bars from vague "make it good" language during live validation; acceptance criteria should be concrete and repeated in the prompt and verifier
+
+Prefer tool and prompt designs that make the successful path obvious:
+
+- expose the fewest tools that can complete the current phase; add tools back only when the phase needs them
+- prefer direct, familiar actions such as `write_file`, `exec_command`, and explicit finalization over broad multi-purpose tools when validating Gemma coding behavior
+- use incremental file writes for larger apps unless live evidence shows a batch write is stable for that model/runtime/request shape
+- keep tool schemas shallow and field names literal; avoid making Gemma construct large nested payloads when ordinary sequential actions are acceptable
+- make validators deterministic, local, and easy for the model to run repeatedly, usually `npm test` wrapping a focused script for generated web apps
+- treat tool errors, missing directories, stale paths, malformed arguments, repeated no-op calls, and unvalidated final answers as SDK/tooling bugs or prompt-surface bugs to study, not as noise to ignore
+
+For web-coding live work, use fixed acceptance targets before tuning prompts or tools. A useful small matrix is five different apps with explicit success criteria: a static product page, a basic canvas game, a data-entry CRUD app, a responsive dashboard, and a Web Components widget. The agent should build, validate, and finalize each target; then the human or supervising agent should inspect the artifact, validator, tool trace, and result JSON. Improve prompts, tools, validators, and recovery behavior based on those concrete failures instead of changing the goal midstream.
+
+The goal is not to make local models magically fast. The goal is to live within their limits and still get reliable outcomes: stable prompts, simple tools, recoverable errors, real validation, and repeatable acceptance scenarios that show whether Gemma can build useful software end to end.
 
 ## Git And GitHub Flow
 

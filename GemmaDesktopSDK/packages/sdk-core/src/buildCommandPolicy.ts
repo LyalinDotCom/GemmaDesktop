@@ -366,7 +366,7 @@ export function evaluateBuildExecCommandPolicy(command: string): BuildExecComman
       normalizedCommand,
       rootCommand,
       reason:
-        'Build mode requires approval for in-place shell edits. Prefer write_file or edit_file for direct file mutations when possible.',
+        'Build mode requires approval for in-place shell edits. Prefer write_file, write_files, or edit_file for direct file mutations when possible.',
     }
   }
 

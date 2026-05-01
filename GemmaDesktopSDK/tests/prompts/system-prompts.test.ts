@@ -160,6 +160,43 @@ describe("system prompt profiles", () => {
     expect(planPrompt).not.toContain(guidance);
   });
 
+  it("adds Act-mode guidance for efficient self-contained web app builds", () => {
+    const prompt = composeSystemPrompt(resolveSessionSystemInstructions({
+      modelId: "gemma4:31b",
+      mode: {
+        base: "build",
+        requiredTools: ["write_files", "exec_command", "missing_tool"],
+      },
+      workingDirectory: "/tmp/gemma-desktop",
+      availableTools: [
+        "list_tree",
+        "read_file",
+        "write_file",
+        "write_files",
+        "exec_command",
+        "finalize_build",
+      ],
+      now: new Date("2026-04-07T15:30:00Z"),
+      timeZone: "America/New_York",
+    }));
+
+    expect(prompt).toContain("This turn requires at least one concrete tool call before the final answer");
+    expect(prompt).toContain("write_files, exec_command");
+    expect(prompt).toContain("make the first assistant action the required tool call");
+    expect(prompt).not.toContain("missing_tool");
+    expect(prompt).toContain("write_file creates missing parent directories automatically");
+    expect(prompt).toContain("Use write_files when creating or replacing several complete files");
+    expect(prompt).toContain("write the complete files in consecutive tool calls");
+    expect(prompt).toContain("make it assert every important requested behavior and constraint");
+    expect(prompt).toContain("do not prefix the project folder again inside the validator");
+    expect(prompt).toContain("allow inline SVG namespace URLs");
+    expect(prompt).toContain("Prefer self-contained local assets");
+    expect(prompt).toContain("Do not use alert(), confirm(), or prompt() as the main interaction feedback");
+    expect(prompt).toContain("make the validator check that evidence when responsiveness is requested");
+    expect(prompt).toContain("call the finalize_build tool");
+    expect(prompt).toContain("Do not merely write that you will call it");
+  });
+
   it("leaves single custom worker prompts raw for minimal child sessions", () => {
     const prompt = composeSystemPrompt([
       {
@@ -310,7 +347,7 @@ describe("system prompt profiles", () => {
         modelId: "gemma4:31b",
         mode: "build",
         workingDirectory: "/tmp/gemma-desktop",
-        availableTools: ["list_tree", "search_paths", "search_text", "read_file", "read_files", "write_file", "exec_command", "workspace_inspector_agent"],
+        availableTools: ["list_tree", "search_paths", "search_text", "read_file", "read_files", "write_file", "write_files", "exec_command", "workspace_inspector_agent"],
         now: new Date("2026-04-07T15:30:00Z"),
         timeZone: "America/New_York",
       })),
@@ -490,6 +527,35 @@ describe("system prompt profiles", () => {
 
     expect(prompt).not.toContain("Exact path strings mentioned earlier by the user in this session:");
     expect(prompt).not.toContain("date/time");
+  });
+
+  it("does not treat slash-separated forbidden API lists as exact paths", () => {
+    const history: SessionMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Build the web app with no alert/confirm/prompt UI feedback.",
+          },
+        ],
+        createdAt: "2026-04-08T22:10:01.000Z",
+      },
+    ];
+
+    const prompt = composeSystemPrompt(resolveSessionSystemInstructions({
+      modelId: "gemma4:31b",
+      mode: "build",
+      workingDirectory: "/tmp/gemma-desktop",
+      availableTools: ["write_files", "exec_command"],
+      history,
+      now: new Date("2026-04-07T15:30:00Z"),
+      timeZone: "America/New_York",
+    }));
+
+    expect(prompt).not.toContain("Exact path strings mentioned earlier by the user in this session:");
+    expect(prompt).not.toContain("alert/confirm/prompt");
   });
 
   it("does not inject gemma4 model-specific guidance for unrelated models", async () => {

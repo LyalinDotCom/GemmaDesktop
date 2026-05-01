@@ -46,6 +46,45 @@ async function createHangingNdjsonServer(): Promise<{
   };
 }
 
+async function createNoHeaderServer(): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer((request, response) => {
+    if (request.url === "/api/chat") {
+      request.resume();
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end("not found");
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to bind mock server.");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: async () =>
+      await new Promise<void>((resolve, reject) => {
+        server.closeAllConnections();
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      }),
+  };
+}
+
 describe("ollama native debug events", () => {
   const cleanup: Array<() => Promise<void>> = [];
 
@@ -146,6 +185,31 @@ describe("ollama native debug events", () => {
     expect(thrown).toMatchObject({ kind: "timeout" });
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toContain("Ollama accepted the gemma4:31b stream but produced no data");
+  });
+
+  it("ends requests that do not produce response headers with an actionable timeout", async () => {
+    const server = await createNoHeaderServer();
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({
+      baseUrl: server.url,
+      responseHeaderTimeoutMs: 10,
+    });
+    const iterator = adapter.stream({
+      model: "gemma4:31b",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Hello?" }], createdAt: new Date().toISOString() }],
+    })[Symbol.asyncIterator]();
+
+    let thrown: unknown;
+    try {
+      await iterator.next();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({ kind: "timeout" });
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("did not send response headers");
   });
 
   it("sends Ollama-native tool definitions and tool result history in the expected shape", async () => {
@@ -381,7 +445,6 @@ describe("ollama native debug events", () => {
       messages: [
         {
           role: "system",
-          content: expect.stringContaining("<gemma_desktop_system_prompt>"),
         },
         {
           role: "user",
@@ -412,6 +475,7 @@ describe("ollama native debug events", () => {
 
     const messages = capturedBody?.messages as Array<Record<string, unknown>> | undefined;
     const systemContent = String(messages?.[0]?.content ?? "");
+    expect(systemContent).toContain("<gemma_desktop_system_prompt>");
     expect(systemContent).toContain("<|think|>");
     expect(systemContent).not.toContain("<|turn>system");
     expect(systemContent).not.toContain("<turn|>");

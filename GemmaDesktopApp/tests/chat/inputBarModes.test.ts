@@ -126,7 +126,8 @@ describe('InputBar mode rendering', () => {
     expect(buildMarkup).toContain('title="Switch to act mode"')
     expect(buildMarkup).toContain('title="Switch to plan mode"')
     expect(buildMarkup).toContain('aria-label="Session model size"')
-    expect(buildMarkup).toContain('Session model size: High')
+    expect(buildMarkup).toContain('Session model: Gemma 4 26B')
+    expect(buildMarkup).toContain('Ollama Native')
     expect(buildMarkup).toContain('aria-label="Switch to YOLO approval mode"')
     expect(buildMarkup).toContain('>Ask<')
     expect(exploreMarkup).toContain('aria-label="Switch between Explore, Act, and Plan"')
@@ -159,7 +160,7 @@ describe('InputBar mode rendering', () => {
     expect(researchMarkup).toContain('title="Deep research conversation"')
     expect(researchMarkup).toContain('>Research<')
     expect(researchMarkup).toContain('aria-label="Session model size"')
-    expect(researchMarkup).toContain('Session model size: High')
+    expect(researchMarkup).toContain('Session model: Gemma 4 26B')
   })
 
   it('renders tool toggles as disabled in research conversations', () => {

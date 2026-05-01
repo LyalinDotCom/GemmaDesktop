@@ -29,6 +29,7 @@ function makeSettings(): AppSettings {
     modelSelection: {
       mainModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.mainModel },
       helperModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.helperModel },
+      helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
     },
     compaction: {
       autoCompactEnabled: true,
@@ -119,6 +120,7 @@ const bootstrapState: BootstrapState = {
   status: 'ready',
   ready: true,
   message: 'Ready',
+  helperModelEnabled: true,
   helperModelId: 'gemma4:e2b',
   helperRuntimeId: 'ollama-native',
   requiredPrimaryModelIds: ['gemma4:26b'],
@@ -136,6 +138,7 @@ function renderSettingsModal(
       defaultModelSelection: {
         mainModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.mainModel },
         helperModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.helperModel },
+        helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
       },
       models,
       gemmaInstallStates: [],
@@ -223,6 +226,7 @@ describe('SettingsModal layout', () => {
 
     expect(markup).toContain('aria-label="Default main model"')
     expect(markup).toContain('aria-label="Default helper model"')
+    expect(markup).toContain('aria-label="Toggle helper model"')
     expect(markup).toContain('aria-haspopup="listbox"')
     expect(markup).toContain('Load Models')
     expect(markup).toContain('Unload other supported runtime models and load the saved defaults')

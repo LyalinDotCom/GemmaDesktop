@@ -43,7 +43,9 @@ function resolveBootstrapTask(bootstrap: BootstrapState): StartupTask {
         : 'in-progress'
   const detail =
     status === 'ready'
-      ? `Helper model ${bootstrap.helperModelId} is ready.`
+      ? bootstrap.helperModelEnabled
+        ? `Helper model ${bootstrap.helperModelId} is ready.`
+        : 'Helper model is disabled.'
       : bootstrap.message
   return {
     id: 'bootstrap',

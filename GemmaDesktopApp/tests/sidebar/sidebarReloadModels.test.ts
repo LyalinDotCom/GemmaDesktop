@@ -32,6 +32,7 @@ const LOAD_RESULT: LoadDefaultModelsResult = {
   selection: {
     mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
     helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
+    helperModelEnabled: true,
   },
   targets: [],
   unloaded: [],

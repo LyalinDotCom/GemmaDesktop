@@ -222,6 +222,11 @@ function resolveRequiredTools(mode: ModeSelection): string[] {
   return typeof mode === "string" ? [] : [...(mode.requiredTools ?? [])];
 }
 
+function shouldStartWithRequiredToolSurface(mode: ModeSelection): boolean {
+  return resolveModeBase(mode) === "build"
+    && resolveRequiredTools(mode).length > 0;
+}
+
 function renderPromptBullets(title: string, bullets: Array<string | undefined>): string | undefined {
   const filtered = bullets.filter(
     (bullet): bullet is string => Boolean(bullet && bullet.trim().length > 0),
@@ -351,6 +356,9 @@ function buildToolContextInstructions(
     availableTools.includes("write_file")
       ? "Use write_file when creating or replacing a file with complete known content."
       : undefined,
+    availableTools.includes("write_files")
+      ? "Use write_files when creating or replacing several complete files whose contents are already known, especially small web apps with HTML, CSS, JavaScript, package metadata, and validators."
+      : undefined,
     availableTools.includes("edit_file")
       ? "Use edit_file for precise edits to existing files after reading the relevant context."
       : undefined,
@@ -437,11 +445,21 @@ function buildModeInstructions(
     || toolSet.has("web_research_agent");
   const canEditFiles =
     toolSet.has("write_file")
+    || toolSet.has("write_files")
     || toolSet.has("edit_file")
     || toolSet.has("workspace_editor_agent");
   const canRunCommands =
     toolSet.has("exec_command")
     || toolSet.has("workspace_command_agent");
+  const requiredTools = resolveRequiredTools(mode).filter((toolName) => toolSet.has(toolName));
+  const requiredToolInstruction =
+    requiredTools.length > 0
+      ? [
+          "This turn requires at least one concrete tool call before the final answer.",
+          `Call one of these tools as soon as it can advance the task: ${requiredTools.join(", ")}.`,
+          "When the user asks for clear file creation, editing, or command execution, make the first assistant action the required tool call instead of a plan or status sentence.",
+        ].join(" ")
+      : undefined;
 
   switch (base) {
     case "assistant":
@@ -513,15 +531,16 @@ function buildModeInstructions(
         renderPromptBullets("Execution & File Mutation Rules", [
           "Act like a builder and complete the task end-to-end when feasible.",
           "If the conversation already contains an approved plan or planning handoff, treat it as the current execution spec and start implementing instead of re-planning unless a missing requirement blocks work.",
+          requiredToolInstruction,
           "Use the tools available in this turn to inspect, edit, run commands, and verify work when those capabilities are present.",
           canEditFiles || canRunCommands
-            ? "Before creating, initializing, or scaffolding a project in a user-named directory, perform one read-only orientation step: inspect the target path if it exists, otherwise inspect its parent directory. Do not start broad writes, dependency installation, or scaffolding until you know whether the target is missing, empty, or already contains project files."
+            ? "Before creating, initializing, or scaffolding a project in a user-named directory, perform one read-only orientation step: inspect the parent directory when the target is probably new, or inspect the target path when it may already exist. Do not start broad writes, dependency installation, or scaffolding until you know whether the target is missing, empty, or already contains project files."
             : undefined,
           canEditFiles
             ? "If the user asks you to create a named file or path, create it on disk instead of only drafting it in the reply unless they explicitly asked for inline content."
             : "This turn does not include file-writing tools. If the user asks you to create a named file or path, say plainly that you cannot create it in the workspace from this turn.",
           canEditFiles || canRunCommands
-            ? "Printing file contents, markdown code fences, shell snippets, or commands such as cat > file is not file creation. To create files, call write_file, edit_file, workspace_editor_agent, or execute the command with exec_command."
+            ? "Printing file contents, markdown code fences, shell snippets, or commands such as cat > file is not file creation. To create files, call write_file, write_files, edit_file, workspace_editor_agent, or execute the command with exec_command."
             : undefined,
           canEditFiles
             ? "When the user asks to work in the current working directory or workspace root, put the project files there. Do not create an extra wrapper directory unless the user asks for one or the existing workspace structure clearly requires it."
@@ -529,6 +548,12 @@ function buildModeInstructions(
           canEditFiles
             ? "Read before editing existing files. Use exact edits for partial changes and full writes for new files or complete rewrites."
             : "This turn does not include file-writing tools. If edits are needed, say so plainly instead of implying they happened.",
+          toolSet.has("write_file")
+            ? "write_file creates missing parent directories automatically, so provide only the path and complete content unless the schema explicitly requires more."
+            : undefined,
+          canEditFiles
+            ? "For small multi-file apps where the file contents are already known, use write_files when available; otherwise write the complete files in consecutive tool calls before long explanation or design narration."
+            : undefined,
         ]),
         renderPromptBullets("Validation & Dependencies", [
           canRunCommands
@@ -544,8 +569,17 @@ function buildModeInstructions(
           "For project initialization or scaffolding, prefer non-interactive commands and flags. If a setup command is cancelled, hangs, or waits for input, do not repeat it unchanged.",
           "Do not treat dependency installation, a partial scaffold, or one file write as a finished setup. Before you stop, make sure declared scripts, referenced entry files, and basic verification actually work.",
           "For generated artifacts such as SVG, HTML, JSON, XML, or config files, validate the artifact with a real parser, renderer, or focused script instead of relying on visual inspection of the text.",
+          "When you create a validator or test script, make it assert every important requested behavior and constraint, not just file existence or a few generic forbidden strings.",
+          "When a package script runs from the project directory, make validator paths relative to that script working directory or import.meta.url; do not prefix the project folder again inside the validator.",
+          "When checking for remote assets, inspect URL-bearing attributes, imports, and CSS url() references, and allow inline SVG namespace URLs such as http://www.w3.org/2000/svg.",
           "After you change files, do not stop until you have run a meaningful verification command or explained the concrete blocker.",
           "A failing or timed-out verification command means the task is not complete yet.",
+        ]),
+        renderPromptBullets("Generated Web App Quality", [
+          "Prefer self-contained local assets, CSS, canvas, gradients, inline SVG, or placeholders for generated offline web projects. Do not hotlink remote images or scripts unless the user asks for external assets.",
+          "Do not use alert(), confirm(), or prompt() as the main interaction feedback. Show state, errors, scores, confirmations, and progress in the DOM.",
+          "For interactive web projects, include accessible controls, visible state changes, responsive layout rules, and a deterministic validation script when the workspace has no existing tests.",
+          "For responsive web projects, include explicit responsive CSS evidence such as @media, minmax(), clamp(), container queries, or auto-fit grid tracks, and make the validator check that evidence when responsiveness is requested.",
         ]),
         renderPromptBullets("Communication Workflow", [
           canEditFiles || canRunCommands
@@ -558,6 +592,9 @@ function buildModeInstructions(
           "If the work takes longer, send one short progress update.",
           "Do not stop at promises or next steps when the task is actionable and tools are available.",
           "Before destructive commands or unrequested overwrites, confirm intent and prefer safe alternatives.",
+          toolSet.has("finalize_build")
+            ? "When validation passes and finalize_build is available, call the finalize_build tool. Do not merely write that you will call it or claim finalization in text."
+            : undefined,
         ]),
       ]
         .filter(Boolean)
@@ -718,15 +755,12 @@ const COMPLETE_WITH_GROUNDED_RESULT_OR_BLOCKER_INSTRUCTION = [
 ].join("\n");
 
 const FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION = [
-  "The previous step used tools and the turn has reached its tool-step budget.",
-  "You no longer have tool access for this finalization pass. Do not call any more tools.",
+  "The previous step used tools and this is a final no-tools response pass.",
+  "You no longer have tool access. Do not call any more tools.",
   "Using only the user request, conversation context, and tool results already visible in the session, send the best user-facing final answer now.",
   "Be specific about what was confirmed, what could not be confirmed, and any lookup or verification that was blocked.",
   "Do not promise to keep checking or say you will try another tool.",
 ].join("\n");
-
-const MAX_STEP_FINALIZATION_WARNING =
-  "Turn reached the step budget after tool use. Running one no-tools finalization pass so the assistant can summarize the available evidence.";
 const REPEATED_TOOL_FAILURE_THRESHOLD = 3;
 const REPEATED_TOOL_CALL_THRESHOLD = 3;
 
@@ -1068,9 +1102,8 @@ function extractLikelyPaths(text: string): string[] {
       return true;
     }
 
-    const slashCount = (candidate.match(/\//g) ?? []).length;
     const lastSegment = candidate.split("/").at(-1) ?? "";
-    return slashCount >= 2 || lastSegment.includes(".");
+    return lastSegment.includes(".");
   }))];
 }
 
@@ -1785,7 +1818,9 @@ export class SessionEngine {
           ),
         ]
       : [];
-    const messages = systemMessages.length > 0 ? [...systemMessages, ...this.history] : [...this.history];
+    const messages = systemMessages.length > 0
+      ? [...systemMessages, ...this.history]
+      : [...this.history];
 
     return {
       model: this.model,
@@ -1969,13 +2004,16 @@ export class SessionEngine {
     let latestBuildVerifierResult: BuildCompletionVerifierResult | undefined;
     let latestBuildSummary: BuildTurnSummary | undefined;
     let completedFromFinalizationToolResponse = false;
-    let nextStepAvailableTools: ToolDefinition[] | undefined;
-    const failedToolSignatureCounts = new Map<string, number>();
-    let consecutiveToolCallSignatureKey: string | undefined;
-    let consecutiveToolCallSignatureCount = 0;
     const requiredTools = resolveRequiredTools(this.mode).filter((toolName) =>
       this.availableTools.some((tool) => tool.name === toolName),
     );
+    let nextStepAvailableTools: ToolDefinition[] | undefined =
+      shouldStartWithRequiredToolSurface(this.mode)
+        ? this.availableTools.filter((tool) => requiredTools.includes(tool.name))
+        : undefined;
+    const failedToolSignatureCounts = new Map<string, number>();
+    let consecutiveToolCallSignatureKey: string | undefined;
+    let consecutiveToolCallSignatureCount = 0;
     let requiredToolSatisfied = requiredTools.length === 0;
     const availableToolNames = this.availableTools.map((tool) => tool.name);
     const buildTurnState = createBuildTurnState(
@@ -2784,11 +2822,6 @@ export class SessionEngine {
 
     if (finalResponse.toolCalls.length > 0 && !completedFromFinalizationToolResponse) {
       const finalizationStep = maxSteps + 1;
-      warnings.push(MAX_STEP_FINALIZATION_WARNING);
-      this.emit(queue, turnId, "warning.raised", {
-        step: finalizationStep,
-        warning: MAX_STEP_FINALIZATION_WARNING,
-      });
       this.emit(queue, turnId, "turn.step.started", {
         step: finalizationStep,
         finalization: true,

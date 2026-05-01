@@ -9,6 +9,7 @@ import {
   resolveDefaultPrimaryModelIdForMemory,
   resolveConfiguredHelperModelTarget,
   resolveConfiguredSessionPrimaryTarget,
+  resolveHelperModelEnabled,
   resolveSavedDefaultSessionPrimaryTarget,
 } from '../../src/shared/sessionModelDefaults'
 
@@ -54,6 +55,7 @@ describe('session model defaults', () => {
       modelId: 'gemma4:e2b',
       runtimeId: 'ollama-native',
     })
+    expect(resolveHelperModelEnabled()).toBe(true)
   })
 
   it('uses the saved default main model across conversation kinds', () => {
@@ -115,7 +117,22 @@ describe('session model defaults', () => {
         modelId: 'gemma4:e4b',
         runtimeId: 'ollama-native',
       },
+      helperModelEnabled: true,
     })
+
+    expect(
+      normalizeAppModelSelectionSettings({
+        mainModel: {
+          modelId: 'qwen3:8b',
+          runtimeId: 'lmstudio-openai',
+        },
+        helperModel: {
+          modelId: 'gemma4:e4b',
+          runtimeId: 'ollama-native',
+        },
+        helperModelEnabled: false,
+      }).helperModelEnabled,
+    ).toBe(false)
   })
 
   it('normalizes saved provider defaults onto each provider canonical API', () => {
@@ -170,9 +187,11 @@ describe('session model defaults', () => {
         modelId: 'gemma4:e4b',
         runtimeId: 'ollama-native',
       },
+      helperModelEnabled: false,
     }
 
     expect(resolveSavedDefaultSessionPrimaryTarget(modelSelection)).toEqual(modelSelection.mainModel)
     expect(resolveConfiguredHelperModelTarget(modelSelection)).toEqual(modelSelection.helperModel)
+    expect(resolveHelperModelEnabled(modelSelection)).toBe(false)
   })
 })

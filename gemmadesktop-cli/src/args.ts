@@ -39,6 +39,8 @@ export interface CommonCliOptions {
   command: CliCommandName;
   outputJson: boolean;
   endpoints: DesktopParityRuntimeEndpoints;
+  ollamaResponseHeaderTimeoutMs?: number;
+  ollamaStreamIdleTimeoutMs?: number;
   omlxApiKey?: string;
   workingDirectory: string;
   geminiApiKey?: string;
@@ -98,6 +100,7 @@ interface ParseState {
   runtimeId: string;
   modelId: string;
   modeBase: string;
+  onlyTools: string[];
   tools: string[];
   withoutTools: string[];
   requiredTools: string[];
@@ -114,6 +117,8 @@ interface ParseState {
   approvalMode: ConversationApprovalMode;
   geminiApiKey?: string;
   geminiApiModel?: string;
+  ollamaResponseHeaderTimeoutMs?: number;
+  ollamaStreamIdleTimeoutMs?: number;
   omlxApiKey?: string;
   requestPreferences: RequestPreferences;
   extraMetadata?: Record<string, unknown>;
@@ -147,6 +152,7 @@ const MODE_PRESETS = new Set([
   "minimal",
   "tool-worker",
 ]);
+const DEFAULT_BUILD_REQUIRED_TOOLS = ["write_file", "edit_file", "exec_command"] as const;
 
 export function usage(): string {
   return [
@@ -174,6 +180,7 @@ export function usage(): string {
     "  --build-turns <count>         Build/ACT sampling turn budget; defaults to the SDK build policy.",
     "  --turn-timeout-ms <count>     Per-scenario-turn timeout in milliseconds; defaults to 360000.",
     "  --build-verifier <mode>       Build/ACT completion verifier: hybrid, deterministic, or off.",
+    "  --only-tool <name>            Restrict the SDK mode selection to this tool. Can repeat.",
     "  --tool <name>                 Add a tool to the SDK mode selection. Can repeat.",
     "  --without-tool <name>         Remove a tool from the SDK mode selection. Can repeat.",
     "  --require-tool <name>         Require a tool call in the SDK mode selection. Can repeat.",
@@ -182,6 +189,10 @@ export function usage(): string {
     "  --reasoning <auto|on|off>      Request reasoning control through desktop-style metadata.",
     "  --ollama-option <key=value>   Numeric Ollama request option. Can repeat.",
     "  --ollama-keep-alive <value>   Ollama request keep_alive value.",
+    "  --ollama-response-header-timeout-ms <count>",
+    "                                Abort an Ollama request if response headers do not arrive within this many milliseconds.",
+    "  --ollama-stream-idle-timeout-ms <count>",
+    "                                Abort an accepted Ollama stream if no chunk arrives within this many milliseconds.",
     "  --lmstudio-option <key=value> Numeric LM Studio request option. Can repeat.",
     "  --omlx-option <key=value>     Numeric oMLX request option. Can repeat.",
     "  --metadata-json <object>      Extra top-level session metadata.",
@@ -224,6 +235,7 @@ function initialState(argv: string[], cwd: string): ParseState {
     runtimeId: defaultTarget.runtimeId,
     modelId: defaultTarget.modelId,
     modeBase: "explore",
+    onlyTools: [],
     tools: [],
     withoutTools: [],
     requiredTools: [],
@@ -289,32 +301,53 @@ function buildModeSelection(state: ParseState): ModeSelection {
   if (!MODE_PRESETS.has(state.modeBase)) {
     throw new CliArgumentError(`Unsupported mode "${state.modeBase}".`);
   }
+  const requiredTools =
+    state.requiredTools.length > 0
+      ? state.requiredTools
+      : state.modeBase === "build"
+        ? [...DEFAULT_BUILD_REQUIRED_TOOLS]
+        : [];
 
   if (
-    state.tools.length === 0
+    state.onlyTools.length === 0
+    && state.tools.length === 0
     && state.withoutTools.length === 0
-    && state.requiredTools.length === 0
+    && requiredTools.length === 0
   ) {
     return state.modeBase as ModeSelection;
   }
 
   return {
     base: state.modeBase as Extract<ModeSelection, string>,
+    ...(state.onlyTools.length > 0 ? { onlyTools: [...state.onlyTools] } : {}),
     ...(state.tools.length > 0 ? { tools: [...state.tools] } : {}),
     ...(state.withoutTools.length > 0 ? { withoutTools: [...state.withoutTools] } : {}),
-    ...(state.requiredTools.length > 0 ? { requiredTools: [...state.requiredTools] } : {}),
+    ...(requiredTools.length > 0 ? { requiredTools: [...requiredTools] } : {}),
   };
 }
 
 function buildBuildPolicy(state: ParseState): BuildTurnPolicyInput | undefined {
-  if (state.buildTurns == null && state.buildVerifier == null) {
+  const isBuildMode = state.modeBase === "build";
+  if (!isBuildMode && state.buildTurns == null && state.buildVerifier == null) {
     return undefined;
   }
 
   return {
     ...(state.buildTurns != null ? { samplingTurns: state.buildTurns } : {}),
+    ...(isBuildMode ? { requireFinalizationAfterMutation: true } : {}),
     ...(state.buildVerifier != null ? { completionVerifier: state.buildVerifier } : {}),
   };
+}
+
+function buildRequestPreferences(
+  state: ParseState,
+  options?: { defaultReasoningOff?: boolean },
+): RequestPreferences {
+  const preferences = { ...state.requestPreferences };
+  if (!preferences.reasoningMode && options?.defaultReasoningOff) {
+    preferences.reasoningMode = "off";
+  }
+  return preferences;
 }
 
 function readApprovalMode(value: string): ConversationApprovalMode {
@@ -388,6 +421,12 @@ function applyFlag(state: ParseState, flag: string): void {
       state.buildVerifier = value as BuildVerifierMode;
       return;
     }
+    case "--only-tool": {
+      const tool = readFlagValue(state, flag);
+      state.onlyTools.push(tool);
+      state.selectedToolNames.push(tool);
+      return;
+    }
     case "--tool": {
       const tool = readFlagValue(state, flag);
       state.tools.push(tool);
@@ -441,6 +480,12 @@ function applyFlag(state: ParseState, flag: string): void {
     case "--ollama-keep-alive":
       state.requestPreferences.ollamaKeepAlive = readFlagValue(state, flag);
       return;
+    case "--ollama-response-header-timeout-ms":
+      state.ollamaResponseHeaderTimeoutMs = readPositiveInteger(readFlagValue(state, flag), flag);
+      return;
+    case "--ollama-stream-idle-timeout-ms":
+      state.ollamaStreamIdleTimeoutMs = readPositiveInteger(readFlagValue(state, flag), flag);
+      return;
     case "--lmstudio-option":
       state.requestPreferences.lmstudioOptions = addNumericOption(
         state.requestPreferences.lmstudioOptions,
@@ -487,6 +532,12 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
   const common: Omit<CommonCliOptions, "command"> = {
     outputJson: state.outputJson,
     endpoints: state.endpoints,
+    ...(state.ollamaResponseHeaderTimeoutMs != null
+      ? { ollamaResponseHeaderTimeoutMs: state.ollamaResponseHeaderTimeoutMs }
+      : {}),
+    ...(state.ollamaStreamIdleTimeoutMs != null
+      ? { ollamaStreamIdleTimeoutMs: state.ollamaStreamIdleTimeoutMs }
+      : {}),
     ...(state.omlxApiKey ? { omlxApiKey: state.omlxApiKey } : {}),
     workingDirectory: state.workingDirectory,
     ...(state.geminiApiKey ? { geminiApiKey: state.geminiApiKey } : {}),
@@ -523,12 +574,15 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
       turnTimeoutMs: state.turnTimeoutMs ?? 360_000,
       buildPolicy: {
         samplingTurns: state.buildTurns ?? state.maxSteps ?? 6,
+        requireFinalizationAfterMutation: true,
         completionVerifier: state.buildVerifier ?? "off",
       },
       showEvents: state.showEvents,
       debugRuntime: state.debugRuntime,
       approvalMode: state.approvalMode,
-      requestPreferences: state.requestPreferences,
+      requestPreferences: buildRequestPreferences(state, {
+        defaultReasoningOff: rawScenarioId.startsWith("act-"),
+      }),
     };
   }
 
@@ -548,7 +602,9 @@ export function parseCliCommand(argv: string[], cwd = process.cwd()): CliCommand
     debugRuntime: state.debugRuntime,
     approvalMode: state.approvalMode,
     selectedToolNames: [...new Set(state.selectedToolNames)],
-    requestPreferences: state.requestPreferences,
+    requestPreferences: buildRequestPreferences(state, {
+      defaultReasoningOff: state.modeBase === "build",
+    }),
     ...(state.extraMetadata ? { extraMetadata: state.extraMetadata } : {}),
   };
 }

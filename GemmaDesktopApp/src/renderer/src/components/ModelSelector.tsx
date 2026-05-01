@@ -10,8 +10,10 @@ import { ModelPickerList } from '@/components/ModelPickerList'
 import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
-  describeGuidedGemmaMeta,
+  describeRuntimeModelMeta,
   resolveGuidedGemmaModelTarget,
+  resolveGuidedGemmaCapabilityBadges,
+  resolveGuidedGemmaDisplayName,
   resolveGuidedModelSelectionState,
 } from '@/lib/guidedModels'
 
@@ -182,10 +184,10 @@ export function ModelSelector({
               <>
                 <div className="min-w-0">
                   <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
-                    {selection.gemma.label}
+                    {resolveGuidedGemmaDisplayName(selection.gemma)}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                    {describeGuidedGemmaMeta(selection.gemma)}
+                    {describeRuntimeModelMeta(selection.gemma.model, selection.gemma)}
                   </div>
                 </div>
                 <ChevronDown size={14} className="text-zinc-400" />
@@ -267,7 +269,7 @@ export function ModelSelector({
                   selection.family === 'gemma'
                   && selection.gemma?.tag === entry.tag
 
-                const capabilityIcons = entry.capabilityBadges
+                const capabilityIcons = resolveGuidedGemmaCapabilityBadges(entry)
                   .filter((badge) => badge in CAPABILITY_ICONS)
 
                 return (
@@ -294,7 +296,7 @@ export function ModelSelector({
                         isSelected ? 'text-white' : 'text-zinc-900 dark:text-zinc-100'
                       }`}
                     >
-                      {entry.shortLabel}
+                      {entry.model?.parameterCount ?? entry.shortLabel}
                     </span>
                     <span
                       className={`w-[72px] shrink-0 text-center rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] ${
@@ -303,7 +305,7 @@ export function ModelSelector({
                           : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200'
                       }`}
                     >
-                      {entry.tierLabel}
+                      {entry.model?.quantization ?? entry.tierLabel}
                     </span>
                     <div
                       className={`flex items-center gap-1 ${
@@ -321,7 +323,9 @@ export function ModelSelector({
                         isSelected ? 'text-indigo-200' : 'text-zinc-400 dark:text-zinc-500'
                       }`}
                     >
-                      {entry.contextBadge}
+                      {entry.model?.contextLength
+                        ? `${Math.round(entry.model.contextLength / 1024)}K`
+                        : entry.contextBadge}
                     </span>
                     <div className="flex-1" />
                     <div

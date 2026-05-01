@@ -41,6 +41,7 @@ export interface AppSessionConfig {
   baseMode: BaseSessionMode
   planMode: boolean
   preferredRuntimeId: string
+  primaryModelSource?: 'default' | 'custom'
   selectedSkillIds: string[]
   selectedSkillNames: string[]
   selectedToolIds: string[]
@@ -68,6 +69,10 @@ export function normalizeSessionConfig(config: AppSessionConfig): AppSessionConf
         ? Boolean(config.planMode)
         : false,
     preferredRuntimeId: normalizeProviderRuntimeId(config.preferredRuntimeId),
+    primaryModelSource:
+      config.primaryModelSource === 'default' || config.primaryModelSource === 'custom'
+        ? config.primaryModelSource
+        : undefined,
     approvalMode: normalizeConversationApprovalMode(config.approvalMode),
     surface: normalizeAppSessionSurface(config.surface),
     visibility: normalizeAppSessionVisibility(config.visibility),
@@ -174,6 +179,11 @@ export function getSessionConfigFromMetadata(
       && metadata.preferredRuntimeId.trim().length > 0
         ? metadata.preferredRuntimeId
         : '',
+    primaryModelSource:
+      metadata?.primaryModelSource === 'default'
+      || metadata?.primaryModelSource === 'custom'
+        ? metadata.primaryModelSource
+        : undefined,
     selectedSkillIds,
     selectedSkillNames,
     selectedToolIds,
@@ -212,6 +222,9 @@ export function createSessionMetadata(
       baseMode: config.baseMode,
       planMode: config.planMode,
       preferredRuntimeId: config.preferredRuntimeId,
+      ...(config.primaryModelSource
+        ? { primaryModelSource: config.primaryModelSource }
+        : {}),
       selectedSkillIds: [...config.selectedSkillIds],
       selectedSkillNames: [...config.selectedSkillNames],
       selectedToolIds: [...config.selectedToolIds],
@@ -252,6 +265,7 @@ export function buildTalkSessionConfig(
     baseMode: 'explore',
     planMode: false,
     preferredRuntimeId: TALK_SESSION_RUNTIME_ID,
+    primaryModelSource: 'default',
     selectedSkillIds: [],
     selectedSkillNames: [],
     selectedToolIds: [],

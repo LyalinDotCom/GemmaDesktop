@@ -285,6 +285,48 @@ export function buildOtherSelectableModels(
   )
 }
 
-export function describeGuidedGemmaMeta(entry: GemmaCatalogEntry): string {
-  return [entry.tierLabel, entry.architectureBadge, entry.contextBadge].join(' · ')
+function formatContextBadge(contextLength?: number): string | null {
+  if (!contextLength || !Number.isFinite(contextLength)) {
+    return null
+  }
+
+  return `${Math.round(contextLength / 1024)}K ctx`
+}
+
+export function describeRuntimeModelMeta(
+  model: ModelSummary | undefined,
+  fallback?: GemmaCatalogEntry,
+): string {
+  if (!model) {
+    return fallback
+      ? [fallback.tierLabel, fallback.contextBadge].join(' · ')
+      : ''
+  }
+
+  return [
+    model.runtimeName,
+    model.parameterCount,
+    model.quantization,
+    formatContextBadge(model.contextLength),
+    model.attachmentSupport?.image ? 'image input' : null,
+    model.attachmentSupport?.audio ? 'audio input' : null,
+    ...(model.optimizationTags ?? []).map((tag) => `${tag} optimized`),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+export function resolveGuidedGemmaDisplayName(entry: GuidedGemmaModel): string {
+  return entry.model?.name ?? entry.label
+}
+
+export function resolveGuidedGemmaCapabilityBadges(entry: GuidedGemmaModel): string[] {
+  if (!entry.model) {
+    return []
+  }
+
+  return [
+    entry.model.attachmentSupport?.image ? 'Vision' : null,
+    entry.model.attachmentSupport?.audio ? 'Audio' : null,
+  ].filter((badge): badge is string => Boolean(badge))
 }

@@ -4,7 +4,9 @@ import { ModelPickerList } from '@/components/ModelPickerList'
 import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import {
   buildGuidedGemmaModels,
+  describeRuntimeModelMeta,
   resolveGuidedGemmaModelTarget,
+  resolveGuidedGemmaDisplayName,
   resolveGuidedModelSelectionState,
   sortGuidedGemmaModelsHighestFirst,
 } from '@/lib/guidedModels'
@@ -120,8 +122,14 @@ export function GemmaSizeSelector({
   const selectedCustomOptimizationLabel = selectedCustomOptimizationTags.length > 0
     ? ` · ${selectedCustomOptimizationTags.map((tag) => `${tag} optimized`).join(' · ')}`
     : ''
+  const selectedGemmaMeta = selectedGemma
+    ? describeRuntimeModelMeta(selectedGemma.model, selectedGemma)
+    : ''
+  const selectedGemmaName = selectedGemma
+    ? resolveGuidedGemmaDisplayName(selectedGemma)
+    : ''
   const buttonTitle = selectedGemma
-    ? `Session model size: ${displayTierLabel(selectedGemma)}`
+    ? `Session model: ${[selectedGemmaName, selectedGemmaMeta].filter(Boolean).join(' · ')}`
     : usesTemporaryModelOverride
       ? `Custom conversation model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
       : `Saved main model: ${selectedCustomModel?.name ?? selectedModelId}${selectedCustomOptimizationLabel}`
@@ -223,14 +231,14 @@ export function GemmaSizeSelector({
                           isSelected ? 'text-white' : 'text-zinc-900 dark:text-zinc-100'
                         }`}
                       >
-                        {entry.label}
+                        {resolveGuidedGemmaDisplayName(entry)}
                       </div>
                       <div
                         className={`truncate text-[11px] ${
                           isSelected ? 'text-indigo-100' : 'text-zinc-500 dark:text-zinc-400'
                         }`}
                       >
-                        {entry.contextBadge} · {entry.architectureBadge}
+                        {describeRuntimeModelMeta(entry.model, entry)}
                       </div>
                     </div>
                     <div

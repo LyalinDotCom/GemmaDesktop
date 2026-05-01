@@ -98,6 +98,7 @@ const DEFAULT_MODE_PRESETS: Record<string, string[]> = {
   build: [
     ...SHARED_COWORK_TOOLS,
     "write_file",
+    "write_files",
     "edit_file",
     "exec_command",
     FINALIZE_BUILD_TOOL_NAME,
@@ -1231,7 +1232,7 @@ function resolveModeToolNames(mode: ModeSelection): string[] {
     throw new GemmaDesktopError("runtime_mode_unsupported", `Unknown mode preset "${base}".`);
   }
 
-  const names = new Set<string>(preset);
+  const names = new Set<string>(spec.onlyTools ?? preset);
   for (const name of spec.tools ?? []) {
     names.add(name);
   }

@@ -56,6 +56,28 @@ describe("custom tool surfaces", () => {
     expect(staticDebug.tools.some((tool) => tool.name === "plan_question")).toBe(true);
   });
 
+  it("can restrict a preset to an explicit tool surface", async () => {
+    const gemmaDesktop = await createGemmaDesktop();
+
+    const session = await gemmaDesktop.sessions.create({
+      runtime: "ollama-native",
+      model: "debug-model",
+      mode: {
+        base: "build",
+        onlyTools: ["write_files", "exec_command", "finalize_build"],
+      },
+    });
+
+    const debug = gemmaDesktop.describeSession(session.snapshot());
+
+    expect(debug.toolNames).toEqual(["write_files", "exec_command", "finalize_build"]);
+    expect(debug.requestPreview.tools.map((tool) => tool.name)).toEqual([
+      "write_files",
+      "exec_command",
+      "finalize_build",
+    ]);
+  });
+
   it("shows a composed system prompt as one bootstrap system message", async () => {
     const gemmaDesktop = await createGemmaDesktop();
 

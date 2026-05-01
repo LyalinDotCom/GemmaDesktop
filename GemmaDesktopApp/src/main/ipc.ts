@@ -264,6 +264,7 @@ import {
   normalizeProviderRuntimeId,
   resolveConfiguredHelperModelTarget,
   resolveConfiguredSessionPrimaryTarget,
+  resolveHelperModelEnabled,
   resolveSavedDefaultSessionPrimaryTarget,
   type AppModelSelectionSettings,
 } from '../shared/sessionModelDefaults'
@@ -687,6 +688,8 @@ interface PrimaryModelTarget {
   loadedInstanceId?: string
 }
 
+type PrimaryModelSource = NonNullable<AppSessionConfig['primaryModelSource']>
+
 type EnvironmentInspection = Awaited<ReturnType<GemmaDesktop['inspectEnvironment']>>
 
 interface PrimaryModelAvailabilityIssue {
@@ -703,6 +706,7 @@ interface BootstrapStateRecord {
   status: 'idle' | 'checking' | 'starting_ollama' | 'pulling_models' | 'loading_helper' | 'ready' | 'warning' | 'error'
   ready: boolean
   message: string
+  helperModelEnabled: boolean
   helperModelId: string
   helperRuntimeId: string
   requiredPrimaryModelIds: string[]
@@ -715,6 +719,16 @@ function resolveHelperRouterTarget(
   currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
 ): PrimaryModelTarget {
   return resolveConfiguredHelperModelTarget(currentSettings?.modelSelection)
+}
+
+function isHelperModelEnabled(
+  currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
+): boolean {
+  return resolveHelperModelEnabled(currentSettings?.modelSelection)
+}
+
+function createHelperModelDisabledError(): Error {
+  return new Error('Helper model is disabled in Settings.')
 }
 
 function isOllamaModelRuntime(runtimeId: string): boolean {
@@ -766,62 +780,12 @@ function resolveRequiredPrimaryModelIds(
   return requiredModelIds
 }
 
-async function resolveStartupSessionPrimaryTarget(): Promise<PrimaryModelTarget | null> {
-  if (!sidebarStore) {
-    return null
-  }
-
-  const sidebarState = sidebarStore.getState()
-  const closedProjectPaths = new Set(
-    sidebarState.closedProjectPaths.map(normalizeStoredSidebarProjectPath),
-  )
-  const persistedBySessionId = new Map<string, PersistedSession>()
-
-  for (const meta of store.listMeta()) {
-    const persisted = await store.load(meta.id)
-    if (!persisted || isHiddenSessionSnapshot(persisted.snapshot)) {
-      continue
-    }
-
-    const projectPath = normalizeStoredSidebarProjectPath(
-      persisted.snapshot.workingDirectory,
-    )
-    if (projectPath && closedProjectPaths.has(projectPath)) {
-      continue
-    }
-
-    persistedBySessionId.set(meta.id, persisted)
-  }
-
-  for (const sessionId of sidebarState.pinnedSessionIds) {
-    const persisted = persistedBySessionId.get(sessionId)
-    if (!persisted) {
-      continue
-    }
-
-    return {
-      modelId: persisted.snapshot.modelId,
-      runtimeId: persisted.snapshot.runtimeId,
-    }
-  }
-
-  const firstVisible = store.listMeta()
-    .map((meta) => persistedBySessionId.get(meta.id))
-    .find((persisted): persisted is PersistedSession => Boolean(persisted))
-
-  return firstVisible
-    ? {
-        modelId: firstVisible.snapshot.modelId,
-        runtimeId: firstVisible.snapshot.runtimeId,
-      }
-    : null
-}
-
 function resolveBootstrapTargets(
   currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
-): Pick<BootstrapStateRecord, 'helperModelId' | 'helperRuntimeId' | 'requiredPrimaryModelIds'> {
+): Pick<BootstrapStateRecord, 'helperModelEnabled' | 'helperModelId' | 'helperRuntimeId' | 'requiredPrimaryModelIds'> {
   const helperTarget = resolveHelperRouterTarget(currentSettings)
   return {
+    helperModelEnabled: isHelperModelEnabled(currentSettings),
     helperModelId: helperTarget.modelId,
     helperRuntimeId: helperTarget.runtimeId,
     requiredPrimaryModelIds: resolveRequiredPrimaryModelIds(currentSettings),
@@ -1625,15 +1589,7 @@ function usesTemporaryModelOverride(snapshot?: SessionSnapshot | null): boolean 
     return false
   }
 
-  const config = getSessionConfig(snapshot)
-  const defaultTarget = buildDefaultSessionPrimaryTarget(config, settings)
-  return !primaryTargetsMatch(
-    {
-      modelId: snapshot.modelId,
-      runtimeId: snapshot.runtimeId,
-    },
-    defaultTarget,
-  )
+  return resolveSessionPrimaryModelSource(snapshot, settings) === 'custom'
 }
 
 function resolveSessionPrimaryTarget(
@@ -1642,6 +1598,10 @@ function resolveSessionPrimaryTarget(
   snapshot?: SessionSnapshot | null,
 ): PrimaryModelTarget {
   if (snapshot && !isTalkSessionSnapshot(snapshot)) {
+    if (resolveSessionPrimaryModelSource(snapshot, settings) === 'default') {
+      return buildDefaultSessionPrimaryTarget(config, settings)
+    }
+
     return {
       modelId: snapshot.modelId,
       runtimeId: snapshot.runtimeId,
@@ -1663,12 +1623,93 @@ function primaryTargetsMatch(
   )
 }
 
+function resolveSessionPrimaryModelSource(
+  snapshot: SessionSnapshot,
+  _currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
+): PrimaryModelSource {
+  const config = getSessionConfig(snapshot)
+  if (config.primaryModelSource === 'default' || config.primaryModelSource === 'custom') {
+    return config.primaryModelSource
+  }
+
+  return 'default'
+}
+
+function resolveRequestedPrimaryModelSource(
+  config: Pick<AppSessionConfig, 'conversationKind' | 'baseMode' | 'surface'>,
+  target: PrimaryModelTarget,
+  currentSettings?: Pick<AppSettingsRecord, 'modelSelection'> | null,
+): PrimaryModelSource {
+  return primaryTargetsMatch(target, buildDefaultSessionPrimaryTarget(config, currentSettings))
+    ? 'default'
+    : 'custom'
+}
+
+function shouldTreatLegacySessionAsDefaultPrimary(
+  snapshot: SessionSnapshot,
+  _previousSettings: Pick<AppSettingsRecord, 'modelSelection'>,
+): boolean {
+  const config = getSessionConfig(snapshot)
+  if (config.primaryModelSource === 'default') {
+    return true
+  }
+  if (config.primaryModelSource === 'custom') {
+    return false
+  }
+
+  return true
+}
+
 function shouldWarmModelTarget(
   currentSettings: AppSettingsRecord,
   target: Pick<PrimaryModelTarget, 'runtimeId'>,
 ): boolean {
   return !isOllamaModelRuntime(target.runtimeId)
     || currentSettings.runtimes.ollama.keepAliveEnabled
+}
+
+function uniquePrimaryModelTargets(targets: PrimaryModelTarget[]): PrimaryModelTarget[] {
+  const byKey = new Map<string, PrimaryModelTarget>()
+  for (const target of targets) {
+    byKey.set(modelTargetKey(target), target)
+  }
+  return [...byKey.values()]
+}
+
+function shouldKeepDefaultOllamaPairWarm(currentSettings: AppSettingsRecord): boolean {
+  return currentSettings.runtimes.ollama.keepAliveEnabled
+    && currentSettings.runtimes.ollama.maxLoadedModels > 1
+    && isHelperModelEnabled(currentSettings)
+}
+
+function resolveProtectedTargetsForModelLoad(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): PrimaryModelTarget[] {
+  if (
+    !isOllamaModelRuntime(target.runtimeId)
+    || !shouldKeepDefaultOllamaPairWarm(currentSettings)
+  ) {
+    return [target]
+  }
+
+  const defaultPrimaryTarget = resolveSavedDefaultSessionPrimaryTarget(
+    currentSettings.modelSelection,
+  )
+  const helperTarget = resolveHelperRouterTarget(currentSettings)
+  if (!isOllamaModelRuntime(helperTarget.runtimeId)) {
+    return [target]
+  }
+
+  if (primaryTargetsMatch(target, defaultPrimaryTarget)) {
+    return uniquePrimaryModelTargets([target, helperTarget])
+  }
+
+  if (primaryTargetsMatch(target, helperTarget)) {
+    return uniquePrimaryModelTargets([target, defaultPrimaryTarget])
+  }
+
+  return [target]
 }
 
 function describeOptionalPrimaryWarmupUnavailable(
@@ -1743,7 +1784,9 @@ function createDefaultModelTargetEntries(
   }
 
   addTarget('main', modelSelection.mainModel)
-  addTarget('helper', modelSelection.helperModel)
+  if (modelSelection.helperModelEnabled) {
+    addTarget('helper', modelSelection.helperModel)
+  }
   return [...byKey.values()]
 }
 
@@ -2265,6 +2308,8 @@ async function loadDefaultModelSelection(
     busyLabel: 'loading defaults',
     targetLabel: 'default model',
     failureLabel: 'loading defaults',
+    unloadLabel: 'model',
+    forceReloadTargets: true,
   })
 }
 
@@ -2317,6 +2362,7 @@ async function resolveReloadModelSelection(
     selection: {
       mainModel: sessionMainTarget,
       helperModel: { ...defaultSelection.helperModel },
+      helperModelEnabled: defaultSelection.helperModelEnabled,
     },
     sessionId,
     usesSessionMainOverride: true,
@@ -2368,79 +2414,18 @@ function formatFailureReasonSentence(rawMessage: string): string {
     : ` Reason: ${message}.`
 }
 
-function getBuiltInDefaultPrimaryTarget(): PrimaryModelTarget {
-  const defaultSelection = createDefaultModelSelectionSettings(os.totalmem())
-  return {
-    modelId: defaultSelection.mainModel.modelId,
-    runtimeId: defaultSelection.mainModel.runtimeId,
-  }
-}
-
-function isSavedDefaultPrimaryTarget(
-  target: PrimaryModelTarget,
-  currentSettings: AppSettingsRecord,
-): boolean {
-  return primaryTargetsMatch(
-    target,
-    resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
-  )
-}
-
-async function fallBackDefaultPrimaryModelIfNeeded(
-  target: PrimaryModelTarget,
-  currentSettings: AppSettingsRecord,
-): Promise<AppSettingsRecord | null> {
-  if (!isSavedDefaultPrimaryTarget(target, currentSettings)) {
-    return null
-  }
-
-  const fallbackTarget = getBuiltInDefaultPrimaryTarget()
-  if (primaryTargetsMatch(target, fallbackTarget)) {
-    return null
-  }
-
-  const nextSettings = await saveSettings({
-    modelSelection: {
-      ...currentSettings.modelSelection,
-      mainModel: fallbackTarget,
-    },
-  })
-  broadcastSettingsChanged(nextSettings)
-  broadcastEnvironmentModelsChanged()
-
-  return nextSettings
-}
-
 async function recordPrimaryModelLoadFailure(
   target: PrimaryModelTarget,
   error: unknown,
   source: PrimaryModelAvailabilityIssue['source'],
-  currentSettingsInput?: AppSettingsRecord,
 ): Promise<PrimaryModelAvailabilityIssue> {
-  const currentSettings = currentSettingsInput ?? await getSettingsState()
-  const fallbackSettings = await fallBackDefaultPrimaryModelIfNeeded(
-    target,
-    currentSettings,
-  )
-  const fallbackTarget = fallbackSettings
-    ? resolveSavedDefaultSessionPrimaryTarget(fallbackSettings.modelSelection)
-    : null
   const baseMessage = describePrimaryModelLoadFailure(target, error)
-  const message = fallbackTarget
-    ? `${baseMessage} The saved default model was reset to ${fallbackTarget.runtimeId} / ${fallbackTarget.modelId} for new chats.`
-    : baseMessage
   const issue: PrimaryModelAvailabilityIssue = {
     modelId: target.modelId,
     runtimeId: target.runtimeId,
-    message,
+    message: baseMessage,
     detectedAt: Date.now(),
-    source: fallbackTarget ? 'global-default' : source,
-    ...(fallbackTarget
-      ? {
-          fallbackModelId: fallbackTarget.modelId,
-          fallbackRuntimeId: fallbackTarget.runtimeId,
-        }
-      : {}),
+    source,
   }
   const key = modelTargetKey(target)
   const existingIssue = primaryModelAvailabilityIssues.get(key)
@@ -2453,11 +2438,11 @@ async function recordPrimaryModelLoadFailure(
     ? null
     : activePrimaryModelTarget
 
-  const stateSettings = fallbackSettings ?? currentSettings
+  const stateSettings = await getSettingsState()
   setBootstrapState({
     status: 'warning',
     ready: true,
-    message,
+    message: baseMessage,
     error: undefined,
   }, stateSettings)
   await broadcastSessionsChanged()
@@ -2551,6 +2536,7 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
   inputTarget: PrimaryModelTarget,
 ): Promise<void> {
   const target = normalizePrimaryModelTarget(inputTarget)
+  const currentSettings = await getSettingsState()
   if (
     currentPrimaryHoldCount() > 0
     && activePrimaryModelTarget
@@ -2560,7 +2546,6 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
   }
 
   if (primaryTargetsMatch(activePrimaryModelTarget, target)) {
-    const currentSettings = await getSettingsState()
     const resident = await isTrackedModelTargetResident(target, currentSettings).catch((error) => {
       console.warn(
         `[gemma-desktop] Could not confirm whether ${target.runtimeId} / ${target.modelId} is still resident; reloading it:`,
@@ -2595,7 +2580,6 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
 
   primaryModelLoadTarget = { ...target }
   primaryModelLoadPromise = (async () => {
-    const currentSettings = await getSettingsState()
     if (activePrimaryModelTarget && !primaryTargetsMatch(activePrimaryModelTarget, target)) {
       const previousTarget = activePrimaryModelTarget
       await unloadModelForRuntime(previousTarget)
@@ -2604,12 +2588,8 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
       }
     }
 
-    const helperTarget = resolveHelperRouterTarget(currentSettings)
-    const protectedTargets = primaryTargetsMatch(helperTarget, target)
-      ? [target]
-      : [target, helperTarget]
     const unloadResult = await unloadResidentModelTargetsBeforeLoad({
-      protectedTargets,
+      protectedTargets: resolveProtectedTargetsForModelLoad(target, currentSettings),
       reason: `loading ${formatPrimaryModelTarget(target)}`,
     })
     if (unloadResult.errors.length > 0) {
@@ -2665,9 +2645,7 @@ function scheduleStartupPrimaryWarmup(): void {
     })
 
     const latestSettings = await getSettingsState()
-    const target =
-      await resolveStartupSessionPrimaryTarget()
-      ?? resolveSavedDefaultSessionPrimaryTarget(latestSettings.modelSelection)
+    const target = resolveSavedDefaultSessionPrimaryTarget(latestSettings.modelSelection)
     if (
       !shouldWarmModelTarget(latestSettings, target)
       || currentPrimaryHoldCount() > 0
@@ -2733,6 +2711,39 @@ async function unloadIdleOllamaModelsWhenKeepAliveDisabled(
   })
 }
 
+async function unloadDisabledHelperModelTarget(
+  currentSettings: AppSettingsRecord,
+): Promise<void> {
+  if (
+    isHelperModelEnabled(currentSettings)
+    || currentHelperHoldCount() > 0
+  ) {
+    return
+  }
+
+  const helperTarget = resolveHelperRouterTarget(currentSettings)
+  const defaultPrimaryTarget = resolveSavedDefaultSessionPrimaryTarget(
+    currentSettings.modelSelection,
+  )
+  if (
+    !supportsExplicitModelUnload(helperTarget)
+    || primaryTargetsMatch(helperTarget, defaultPrimaryTarget)
+    || primaryTargetsMatch(helperTarget, activePrimaryModelTarget)
+  ) {
+    return
+  }
+
+  await runModelLifecycleExclusive(async () => {
+    await unloadModelForRuntime(helperTarget)
+  }).catch((error) => {
+    console.warn(
+      `[gemma-desktop] Failed to unload disabled helper model ${helperTarget.modelId}:`,
+      error,
+    )
+  })
+  broadcastEnvironmentModelsChanged()
+}
+
 function broadcastBootstrapStateChanged(): void {
   broadcastToWindows(
     BrowserWindow.getAllWindows(),
@@ -2767,6 +2778,39 @@ function markModelLoadPending(target: PrimaryModelTarget): () => void {
     }
     broadcastEnvironmentModelsChanged()
   }
+}
+
+function appendModelLifecycleLog(input: {
+  action: 'load' | 'unload' | 'inspect'
+  status: 'started' | 'success' | 'skipped' | 'error'
+  target?: Partial<PrimaryModelTarget>
+  reason?: string
+  message?: string
+  error?: unknown
+}): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    action: input.action,
+    status: input.status,
+    target: input.target
+      ? {
+          modelId: input.target.modelId,
+          runtimeId: input.target.runtimeId,
+          loadedInstanceId: input.target.loadedInstanceId,
+        }
+      : undefined,
+    reason: input.reason,
+    message: input.message,
+    error: input.error ? getErrorDisplayMessage(input.error) : undefined,
+  }
+  const line = `${JSON.stringify(entry)}\n`
+  void fs.appendFile(
+    path.join(app.getPath('userData'), 'model-lifecycle.jsonl'),
+    line,
+    'utf8',
+  ).catch((error) => {
+    console.warn('[gemma-desktop] Failed to append model lifecycle log:', error)
+  })
 }
 
 function setBootstrapState(
@@ -3254,6 +3298,11 @@ async function loadModelForRuntime(
   target: PrimaryModelTarget,
 ): Promise<PrimaryModelTarget> {
   const currentSettings = await getSettingsState()
+  appendModelLifecycleLog({
+    action: 'load',
+    status: 'started',
+    target,
+  })
 
   if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
     const profile = resolveManagedOllamaLoadProfile(currentSettings, target)
@@ -3267,6 +3316,12 @@ async function loadModelForRuntime(
       loadedModel
       && ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)
     ) {
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'skipped',
+        target,
+        message: 'Model is already loaded with the managed profile.',
+      })
       return target
     }
 
@@ -3292,8 +3347,19 @@ async function loadModelForRuntime(
           resolveOllamaRequestKeepAlive(currentSettings.runtimes.ollama),
         )
       } catch (error) {
+        appendModelLifecycleLog({
+          action: 'load',
+          status: 'error',
+          target,
+          error,
+        })
         throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
       }
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'success',
+        target,
+      })
       return target
     } finally {
       releasePendingLoad()
@@ -3319,6 +3385,12 @@ async function loadModelForRuntime(
       loadedInstance
       && lmStudioLoadedConfigMatchesLoadOptions(loadedInstance.config, loadOptions)
     ) {
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'skipped',
+        target,
+        message: 'Model is already loaded with the managed profile.',
+      })
       return {
         ...target,
         loadedInstanceId: loadedInstance.id,
@@ -3349,7 +3421,18 @@ async function loadModelForRuntime(
         target.modelId,
         loadOptions,
       ).catch((error) => {
+        appendModelLifecycleLog({
+          action: 'load',
+          status: 'error',
+          target,
+          error,
+        })
         throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
+      })
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'success',
+        target,
       })
       return {
         ...target,
@@ -3372,8 +3455,19 @@ async function loadModelForRuntime(
           model: target.modelId,
         }),
       })
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'success',
+        target,
+      })
       return target
     } catch (error) {
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'error',
+        target,
+        error,
+      })
       throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
     } finally {
       releasePendingLoad()
@@ -3400,7 +3494,18 @@ async function loadModelForRuntime(
         apiKey,
         target.modelId,
       ).catch((error) => {
+        appendModelLifecycleLog({
+          action: 'load',
+          status: 'error',
+          target,
+          error,
+        })
         throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'loading')
+      })
+      appendModelLifecycleLog({
+        action: 'load',
+        status: 'success',
+        target,
       })
       return target
     } finally {
@@ -3408,20 +3513,52 @@ async function loadModelForRuntime(
     }
   }
 
+  appendModelLifecycleLog({
+    action: 'load',
+    status: 'skipped',
+    target,
+    message: 'Runtime does not require explicit model load.',
+  })
   return target
 }
 
 async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> {
   const currentSettings = await getSettingsState()
+  appendModelLifecycleLog({
+    action: 'unload',
+    status: 'started',
+    target,
+  })
 
   if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
+    let skippedUnload = false
     await unloadOllamaModel(currentSettings.runtimes.ollama.endpoint, target.modelId)
       .catch((error) => {
         if (isModelNotLoadedError(error)) {
+          skippedUnload = true
+          appendModelLifecycleLog({
+            action: 'unload',
+            status: 'skipped',
+            target,
+            message: 'Model was not loaded.',
+          })
           return
         }
+        appendModelLifecycleLog({
+          action: 'unload',
+          status: 'error',
+          target,
+          error,
+        })
         throw error
       })
+    if (!skippedUnload) {
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'success',
+        target,
+      })
+    }
     return
   }
 
@@ -3433,6 +3570,7 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       ?? (visibleModels ? findLoadedLmStudioInstanceId(visibleModels, target.modelId) : undefined)
       ?? target.modelId
 
+    let skippedUnload = false
     await requestJson(`${endpoint}/api/v1/models/unload`, {
       method: 'POST',
       headers: {
@@ -3443,14 +3581,35 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       }),
     }).catch((error) => {
       if (isModelNotLoadedError(error)) {
+        skippedUnload = true
+        appendModelLifecycleLog({
+          action: 'unload',
+          status: 'skipped',
+          target,
+          message: 'Model was not loaded.',
+        })
         return
       }
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'error',
+        target,
+        error,
+      })
       throw error
     })
+    if (!skippedUnload) {
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'success',
+        target,
+      })
+    }
     return
   }
 
   if (target.runtimeId === 'llamacpp-server') {
+    let skippedUnload = false
     await requestJson(`${currentSettings.runtimes.llamacpp.endpoint.replace(/\/$/, '')}/models/unload`, {
       method: 'POST',
       headers: {
@@ -3461,15 +3620,36 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       }),
     }).catch((error) => {
       if (isModelNotLoadedError(error)) {
+        skippedUnload = true
+        appendModelLifecycleLog({
+          action: 'unload',
+          status: 'skipped',
+          target,
+          message: 'Model was not loaded.',
+        })
         return
       }
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'error',
+        target,
+        error,
+      })
       throw error
     })
+    if (!skippedUnload) {
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'success',
+        target,
+      })
+    }
     return
   }
 
   if (isOmlxModelRuntime(target.runtimeId)) {
     const apiKey = currentSettings.runtimes.omlx.apiKey.trim()
+    let skippedUnload = false
     await requestJson(`${currentSettings.runtimes.omlx.endpoint.replace(/\/$/, '')}/v1/models/${encodeURIComponent(target.modelId)}/unload`, {
       method: 'POST',
       headers: {
@@ -3479,11 +3659,39 @@ async function unloadModelForRuntime(target: PrimaryModelTarget): Promise<void> 
       body: JSON.stringify({}),
     }).catch((error) => {
       if (isModelNotLoadedError(error)) {
+        skippedUnload = true
+        appendModelLifecycleLog({
+          action: 'unload',
+          status: 'skipped',
+          target,
+          message: 'Model was not loaded.',
+        })
         return
       }
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'error',
+        target,
+        error,
+      })
       throw error
     })
+    if (!skippedUnload) {
+      appendModelLifecycleLog({
+        action: 'unload',
+        status: 'success',
+        target,
+      })
+    }
+    return
   }
+
+  appendModelLifecycleLog({
+    action: 'unload',
+    status: 'skipped',
+    target,
+    message: 'Runtime does not require explicit model unload.',
+  })
 }
 
 async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord> {
@@ -3500,6 +3708,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
     const currentSettings = await getSettingsState()
     const ollamaEndpoint = currentSettings.runtimes.ollama.endpoint
     const helperTarget = resolveHelperRouterTarget(currentSettings)
+    const helperModelEnabled = isHelperModelEnabled(currentSettings)
     const helperModelId = helperTarget.modelId
     const requiredPrimaryModelIds = resolveRequiredPrimaryModelIds(currentSettings)
 
@@ -3512,7 +3721,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
 
     try {
       const requiredTags = [...new Set([
-        ...(isOllamaModelRuntime(helperTarget.runtimeId) ? [helperModelId] : []),
+        ...(helperModelEnabled && isOllamaModelRuntime(helperTarget.runtimeId) ? [helperModelId] : []),
         ...requiredPrimaryModelIds,
       ])]
       const availableTags = new Set<string>()
@@ -3543,7 +3752,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
             target.modelId === modelId
             && isOllamaModelRuntime(target.runtimeId)
           ) {
-            return await recordPrimaryModelLoadFailure(target, error, 'global-default', currentSettings)
+            return await recordPrimaryModelLoadFailure(target, error, 'global-default')
               .then(() => bootstrapState)
           }
           throw error
@@ -3551,20 +3760,63 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
         availableTags.add(modelId)
       }
 
-      if (shouldWarmModelTarget(currentSettings, helperTarget)) {
+      const defaultPrimaryTarget = resolveSavedDefaultSessionPrimaryTarget(
+        currentSettings.modelSelection,
+      )
+      if (shouldWarmModelTarget(currentSettings, defaultPrimaryTarget)) {
+        setBootstrapState({
+          status: 'loading_helper',
+          ready: false,
+          message: `Loading main model ${defaultPrimaryTarget.modelId}…`,
+          error: undefined,
+        }, currentSettings)
+        await runModelLifecycleExclusive(async () => {
+          const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+            protectedTargets: resolveProtectedTargetsForModelLoad(
+              defaultPrimaryTarget,
+              currentSettings,
+            ),
+            reason: `loading main model ${formatPrimaryModelTarget(defaultPrimaryTarget)}`,
+          })
+          if (unloadResult.errors.length > 0) {
+            throw new Error(summarizeLifecycleErrors(unloadResult.errors))
+          }
+          if (unloadResult.unloaded.length > 0 || unloadResult.skipped.length > 0) {
+            broadcastEnvironmentModelsChanged()
+          }
+          await loadModelForRuntime(defaultPrimaryTarget)
+          activePrimaryModelTarget = defaultPrimaryTarget
+        })
+      }
+
+      if (helperModelEnabled && shouldWarmModelTarget(currentSettings, helperTarget)) {
         setBootstrapState({
           status: 'loading_helper',
           ready: false,
           message: `Loading helper model ${helperModelId}…`,
           error: undefined,
         }, currentSettings)
-        await runModelLifecycleExclusive(() => loadModelForRuntime(helperTarget))
+        await runModelLifecycleExclusive(async () => {
+          const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+            protectedTargets: resolveProtectedTargetsForModelLoad(helperTarget, currentSettings),
+            reason: `loading helper model ${formatPrimaryModelTarget(helperTarget)}`,
+          })
+          if (unloadResult.errors.length > 0) {
+            throw new Error(summarizeLifecycleErrors(unloadResult.errors))
+          }
+          if (unloadResult.unloaded.length > 0 || unloadResult.skipped.length > 0) {
+            broadcastEnvironmentModelsChanged()
+          }
+          await loadModelForRuntime(helperTarget)
+        })
       }
 
       const nextBootstrapState = setBootstrapState({
         status: 'ready',
         ready: true,
-        message: shouldWarmModelTarget(currentSettings, helperTarget)
+        message: !helperModelEnabled
+          ? 'Helper model is disabled. Primary models will load on demand.'
+          : shouldWarmModelTarget(currentSettings, helperTarget)
           ? `Helper model ${helperModelId} is ready.`
           : 'Ollama model keep-alive is disabled. Required models are available and will load on demand.',
         error: undefined,
@@ -3671,6 +3923,11 @@ async function acquirePrimaryModelLease(
 async function acquireHelperModelLease(
   ownerId: string,
 ): Promise<() => void> {
+  const currentSettings = await getSettingsState()
+  if (!isHelperModelEnabled(currentSettings)) {
+    throw createHelperModelDisabledError()
+  }
+
   const bootstrap = await ensureBootstrapReady()
   if (!bootstrap.ready) {
     throw new Error(bootstrap.error ?? bootstrap.message)
@@ -3690,8 +3947,30 @@ async function acquireHelperModelLease(
   }
 
   try {
-    const helperTarget = resolveHelperRouterTarget(await getSettingsState())
-    await runModelLifecycleExclusive(() => loadModelForRuntime(helperTarget))
+    const helperTarget = resolveHelperRouterTarget(currentSettings)
+    if (
+      currentPrimaryHoldCount() > 0
+      && activePrimaryModelTarget
+      && !primaryTargetsMatch(activePrimaryModelTarget, helperTarget)
+    ) {
+      throw new Error(
+        `Gemma Desktop is already running ${activePrimaryModelTarget.runtimeId} / ${activePrimaryModelTarget.modelId}. Wait for that work to finish or stop it before starting helper model ${helperTarget.runtimeId} / ${helperTarget.modelId}.`,
+      )
+    }
+
+    await runModelLifecycleExclusive(async () => {
+      const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+        protectedTargets: resolveProtectedTargetsForModelLoad(helperTarget, currentSettings),
+        reason: `loading helper model ${formatPrimaryModelTarget(helperTarget)}`,
+      })
+      if (unloadResult.errors.length > 0) {
+        throw new Error(summarizeLifecycleErrors(unloadResult.errors))
+      }
+      if (unloadResult.unloaded.length > 0 || unloadResult.skipped.length > 0) {
+        broadcastEnvironmentModelsChanged()
+      }
+      await loadModelForRuntime(helperTarget)
+    })
   } catch (error) {
     releaseLease()
     throw error
@@ -3705,7 +3984,14 @@ async function acquireSessionExecutionLease(
   snapshot: SessionSnapshot,
 ): Promise<() => void> {
   if (isTalkSessionSnapshot(snapshot)) {
-    return await acquireHelperModelLease(ownerId)
+    const currentSettings = await getSettingsState()
+    if (isHelperModelEnabled(currentSettings)) {
+      return await acquireHelperModelLease(ownerId)
+    }
+    return await acquirePrimaryModelLease(
+      ownerId,
+      resolveSavedDefaultSessionPrimaryTarget(currentSettings.modelSelection),
+    )
   }
 
   return await acquirePrimaryModelLease(ownerId, {
@@ -4259,6 +4545,10 @@ async function refreshBootstrapModelSelection(
     return
   }
 
+  if (modelSelectionChanged && !isHelperModelEnabled(nextSettings)) {
+    await unloadDisabledHelperModelTarget(nextSettings)
+  }
+
   if (!nextSettings.runtimes.ollama.keepAliveEnabled) {
     await unloadIdleOllamaModelsWhenKeepAliveDisabled(nextSettings)
     setBootstrapState({
@@ -4271,6 +4561,157 @@ async function refreshBootstrapModelSelection(
   }
 
   await ensureBootstrapReady(true)
+}
+
+async function reconfigureDefaultPrimarySession(
+  sessionId: string,
+  snapshot: SessionSnapshot,
+  target: PrimaryModelTarget,
+  options: {
+    allowActiveSession?: boolean
+  } = {},
+): Promise<boolean> {
+  if (
+    !gemmaDesktop
+    || (activeSessionTasks.has(sessionId) && !options.allowActiveSession)
+  ) {
+    return false
+  }
+
+  const currentConfig = getSessionConfig(snapshot)
+  const runtimeSelection = normalizeRuntimeForSessionMode(
+    target.runtimeId,
+    currentConfig.baseMode,
+  )
+  const composition = await resolveSessionComposition({
+    snapshot,
+    conversationKind: currentConfig.conversationKind,
+    sessionMode: currentConfig.baseMode,
+    planMode: currentConfig.planMode,
+    modelId: target.modelId,
+    runtimeId: runtimeSelection.runtimeId,
+    preferredRuntimeId: target.runtimeId,
+    primaryModelSource: 'default',
+    selectedSkillIds: currentConfig.selectedSkillIds,
+    selectedToolIds: currentConfig.selectedToolIds,
+    approvalMode: currentConfig.approvalMode,
+    surface: currentConfig.surface,
+    visibility: currentConfig.visibility,
+    storageScope: currentConfig.storageScope,
+  })
+  const nextSnapshot: SessionSnapshot = {
+    ...snapshot,
+    modelId: target.modelId,
+    runtimeId: runtimeSelection.runtimeId,
+    mode: composition.mode,
+    systemInstructions: composition.systemInstructions,
+    metadata: composition.metadata,
+    savedAt: new Date().toISOString(),
+  }
+  const nextSession = await gemmaDesktop.sessions.resume({
+    snapshot: nextSnapshot,
+  })
+
+  liveSessions.set(sessionId, nextSession)
+  await store.save(sessionId, nextSnapshot, undefined, undefined, {
+    preserveUpdatedAt: true,
+  })
+  appendDebugLog(sessionId, {
+    layer: 'ipc',
+    direction: 'main->renderer',
+    event: 'sessions.default-model.reconciled',
+    summary: `Session now follows default model ${runtimeSelection.runtimeId}/${target.modelId}`,
+    data: {
+      sessionId,
+      modelId: target.modelId,
+      runtimeId: runtimeSelection.runtimeId,
+      preferredRuntimeId: target.runtimeId,
+      runtimeNormalizationReason: runtimeSelection.reason,
+    },
+  })
+  return true
+}
+
+async function reconcileDefaultPrimarySessionForSend(
+  sessionId: string,
+  session: GemmaDesktopSession,
+  currentSettings: AppSettingsRecord,
+): Promise<{
+  session: GemmaDesktopSession
+  snapshot: SessionSnapshot
+  changed: boolean
+}> {
+  const snapshot = session.snapshot()
+  if (
+    isTalkSessionSnapshot(snapshot)
+    || resolveSessionPrimaryModelSource(snapshot, currentSettings) !== 'default'
+  ) {
+    return { session, snapshot, changed: false }
+  }
+
+  const config = getSessionConfig(snapshot)
+  const target = buildDefaultSessionPrimaryTarget(config, currentSettings)
+  if (primaryTargetsMatch({
+    modelId: snapshot.modelId,
+    runtimeId: snapshot.runtimeId,
+  }, target)) {
+    return { session, snapshot, changed: false }
+  }
+
+  const changed = await reconfigureDefaultPrimarySession(
+    sessionId,
+    snapshot,
+    target,
+    { allowActiveSession: true },
+  )
+  const nextSession = liveSessions.get(sessionId) ?? session
+  return {
+    session: nextSession,
+    snapshot: nextSession.snapshot(),
+    changed,
+  }
+}
+
+async function reconcileDefaultPrimarySessionsForSettingsChange(
+  previousSettings: AppSettingsRecord,
+  nextSettings: AppSettingsRecord,
+): Promise<void> {
+  const updates: Promise<boolean>[] = []
+
+  for (const meta of store.listMeta()) {
+    const snapshot = store.getSnapshot(meta.id)
+    if (
+      !snapshot
+      || (isHiddenSessionSnapshot(snapshot) && !isTalkSessionSnapshot(snapshot))
+      || isSessionExecutionBusy(meta.id)
+    ) {
+      continue
+    }
+
+    if (!shouldTreatLegacySessionAsDefaultPrimary(snapshot, previousSettings)) {
+      continue
+    }
+
+    const config = getSessionConfig(snapshot)
+    const target = buildDefaultSessionPrimaryTarget(config, nextSettings)
+    const currentTarget = {
+      modelId: snapshot.modelId,
+      runtimeId: snapshot.runtimeId,
+    }
+    if (
+      primaryTargetsMatch(currentTarget, target)
+      && config.primaryModelSource === 'default'
+    ) {
+      continue
+    }
+
+    updates.push(reconfigureDefaultPrimarySession(meta.id, snapshot, target))
+  }
+
+  const results = await Promise.all(updates)
+  if (results.some(Boolean)) {
+    await broadcastSessionsChanged()
+  }
 }
 
 async function persistBrowserToolLastStatus(
@@ -5187,6 +5628,7 @@ async function resolveSessionComposition(input: {
   modelId: string
   runtimeId: string
   preferredRuntimeId: string
+  primaryModelSource?: PrimaryModelSource
   selectedSkillIds: string[]
   selectedToolIds: string[]
   approvalMode: ConversationApprovalMode
@@ -5208,6 +5650,11 @@ async function resolveSessionComposition(input: {
     ...sessionModeToConfig(input.sessionMode),
     planMode: input.planMode,
     preferredRuntimeId: input.preferredRuntimeId,
+    primaryModelSource:
+      input.primaryModelSource
+      ?? (input.snapshot
+        ? resolveSessionPrimaryModelSource(input.snapshot, currentSettings)
+        : undefined),
     selectedSkillIds: [...input.selectedSkillIds],
     selectedSkillNames: [],
     selectedToolIds: [],
@@ -6175,7 +6622,21 @@ async function maybeStartStartupWelcomeInternal(): Promise<{
     return { started: false, reason: decision.reason, sessionId }
   }
 
-  const helperTarget = resolveHelperRouterTarget(await getSettingsState())
+  const currentSettings = await getSettingsState()
+  if (!isHelperModelEnabled(currentSettings)) {
+    appendDebugLog(sessionId, {
+      layer: 'ipc',
+      direction: 'main->renderer',
+      event: 'talk.startup-welcome.skipped',
+      summary: 'Startup welcome skipped: helper model disabled',
+      data: {
+        reason: 'helper_model_disabled',
+      },
+    })
+    return { started: false, reason: 'helper_model_disabled', sessionId }
+  }
+
+  const helperTarget = resolveHelperRouterTarget(currentSettings)
   const messages = store.getAppMessages(sessionId)
   const hiddenPrompt = buildStartupWelcomeHiddenPrompt({
     idleMs: decision.idleMs,
@@ -6596,6 +7057,10 @@ async function runHelperStructuredTask(input: {
   signal?: AbortSignal
 }): Promise<HelperStructuredTaskResult> {
   const currentSettings = await getSettingsState()
+  if (!isHelperModelEnabled(currentSettings)) {
+    throw createHelperModelDisabledError()
+  }
+
   const helperTarget = resolveHelperRouterTarget(currentSettings)
   const helperModelId = helperTarget.modelId
   const helperRuntimeId = helperTarget.runtimeId
@@ -6718,6 +7183,7 @@ const smartContent = createSmartContentService({
   mapModels,
   acquirePrimaryModelLease,
   buildWorkerSessionMetadata: buildPdfWorkerSessionMetadata,
+  isHelperModelEnabled: async () => isHelperModelEnabled(await getSettingsState()),
   removePathBestEffort,
 })
 
@@ -7554,6 +8020,7 @@ async function ensureTalkSessionInternal(
       modelId: defaultTarget.modelId,
       runtimeId: defaultTarget.runtimeId,
       preferredRuntimeId: defaultTarget.runtimeId,
+      primaryModelSource: 'default',
       selectedSkillIds: [],
       selectedToolIds: [],
       approvalMode: talkConfig.approvalMode,
@@ -7620,6 +8087,7 @@ async function ensureTalkSessionInternal(
     modelId: snapshot.modelId,
     runtimeId: snapshot.runtimeId,
     preferredRuntimeId: currentConfig.preferredRuntimeId,
+    primaryModelSource: currentConfig.primaryModelSource ?? 'default',
     selectedSkillIds: talkConfig.selectedSkillIds,
     selectedToolIds: talkConfig.selectedToolIds,
     approvalMode: talkConfig.approvalMode,
@@ -7747,10 +8215,14 @@ async function warmSelectedSessionPrimary(sessionId: string): Promise<void> {
   }
 
   const currentSettings = await getSettingsState()
-  const target = {
-    modelId: snapshot.modelId,
-    runtimeId: snapshot.runtimeId,
+  if (resolveSessionPrimaryModelSource(snapshot, currentSettings) !== 'default') {
+    return
   }
+
+  const target = buildDefaultSessionPrimaryTarget(
+    getSessionConfig(snapshot),
+    currentSettings,
+  )
 
   if (!shouldWarmModelTarget(currentSettings, target)) {
     return
@@ -9600,6 +10072,7 @@ async function applyTemporarySessionModelOverride(input: {
     modelId: overrideTarget.modelId,
     runtimeId: overrideTarget.runtimeId,
     preferredRuntimeId: currentConfig.preferredRuntimeId,
+    primaryModelSource: currentConfig.primaryModelSource,
     selectedSkillIds: currentConfig.selectedSkillIds,
     selectedToolIds: currentConfig.selectedToolIds,
     approvalMode: currentConfig.approvalMode,
@@ -9635,6 +10108,7 @@ async function applyTemporarySessionModelOverride(input: {
         modelId: originalTarget.modelId,
         runtimeId: originalTarget.runtimeId,
         preferredRuntimeId: latestConfig.preferredRuntimeId,
+        primaryModelSource: latestConfig.primaryModelSource,
         selectedSkillIds: latestConfig.selectedSkillIds,
         selectedToolIds: latestConfig.selectedToolIds,
         approvalMode: latestConfig.approvalMode,
@@ -9843,6 +10317,18 @@ async function sendSessionMessageInternal(
     )
     session = syncedPreferences.session
     sessionSnapshot = syncedPreferences.snapshot
+
+    const reconciledDefaultPrimary = await reconcileDefaultPrimarySessionForSend(
+      sessionId,
+      session,
+      currentSettings,
+    )
+    session = reconciledDefaultPrimary.session
+    sessionSnapshot = reconciledDefaultPrimary.snapshot
+    if (reconciledDefaultPrimary.changed) {
+      persisted = await getPersistedSession(sessionId)
+      await broadcastSessionsChanged()
+    }
 
     if (coBrowseTurn) {
       const coBrowseComposition = await applyCoBrowseSessionComposition(
@@ -11069,7 +11555,6 @@ async function sendSessionMessageInternal(
               primaryTarget,
               modelAvailabilityError,
               'send',
-              currentSettings,
             )
           : null
       if (modelAvailabilityIssue) {
@@ -12275,6 +12760,14 @@ export function registerIpcHandlers(): void {
         opts.runtimeId,
         nextSessionConfig.baseMode,
       )
+      const primaryModelSource = resolveRequestedPrimaryModelSource(
+        nextSessionConfig,
+        {
+          modelId: opts.modelId,
+          runtimeId: runtimeSelection.runtimeId,
+        },
+        currentSettings,
+      )
       const composition = await resolveSessionComposition({
         snapshot: null,
         conversationKind: nextSessionConfig.conversationKind,
@@ -12283,6 +12776,7 @@ export function registerIpcHandlers(): void {
         modelId: opts.modelId,
         runtimeId: runtimeSelection.runtimeId,
         preferredRuntimeId: opts.runtimeId,
+        primaryModelSource,
         selectedSkillIds: Array.isArray(opts.selectedSkillIds)
           ? opts.selectedSkillIds
           : [],
@@ -12507,7 +13001,24 @@ export function registerIpcHandlers(): void {
         modelId: currentSnapshot.modelId,
         runtimeId: currentSnapshot.runtimeId,
       }
-      const nextTarget = requestedTarget ?? snapshotTarget
+      const currentPrimaryModelSource = currentSnapshotIsTalk
+        ? 'default'
+        : resolveSessionPrimaryModelSource(currentSnapshot, currentSettings)
+      const defaultTarget = buildDefaultSessionPrimaryTarget(
+        nextSessionConfig,
+        currentSettings,
+      )
+      const nextTarget =
+        requestedTarget
+          ?? (currentPrimaryModelSource === 'default' ? defaultTarget : snapshotTarget)
+      const nextPrimaryModelSource =
+        requestedTarget
+          ? resolveRequestedPrimaryModelSource(
+              nextSessionConfig,
+              normalizePrimaryModelTarget(requestedTarget),
+              currentSettings,
+            )
+          : currentPrimaryModelSource
 
       const selectedSkillIds = Array.isArray(opts.selectedSkillIds)
         ? opts.selectedSkillIds
@@ -12530,6 +13041,7 @@ export function registerIpcHandlers(): void {
         modelId: nextTarget.modelId,
         runtimeId: runtimeSelection.runtimeId,
         preferredRuntimeId: nextTarget.runtimeId,
+        primaryModelSource: nextPrimaryModelSource,
         selectedSkillIds,
         selectedToolIds,
         approvalMode: nextSessionConfig.approvalMode,
@@ -14296,6 +14808,7 @@ export function registerIpcHandlers(): void {
       const settingsPatch = { ...patch }
       delete settingsPatch[LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]
 
+      const previousSettings = await getSettingsState()
       let nextSettings = await saveSettings(settingsPatch as Partial<AppSettingsRecord>)
       if (loadDefaultModelsRequested) {
         const result = await loadDefaultModelSelection(nextSettings.modelSelection)
@@ -14308,6 +14821,12 @@ export function registerIpcHandlers(): void {
 
       await refreshBootstrapModelSelection(nextSettings, settingsPatch)
       nextSettings = await getSettingsState()
+      if (Object.prototype.hasOwnProperty.call(settingsPatch, 'modelSelection')) {
+        await reconcileDefaultPrimarySessionsForSettingsChange(
+          previousSettings,
+          nextSettings,
+        )
+      }
       if (
         Object.prototype.hasOwnProperty.call(settingsPatch, 'toolPolicy')
         || Object.prototype.hasOwnProperty.call(settingsPatch, 'skills')

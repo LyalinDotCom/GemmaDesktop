@@ -208,12 +208,25 @@ function resolveWorkspaceEscapePermission(input: {
   }
 
   const record = input.toolInput as Record<string, unknown>;
-  const requestedPath =
+  let requestedPath =
     input.toolName === "write_file" || input.toolName === "edit_file"
       ? record.path
       : input.toolName === "exec_command"
         ? record.cwd
         : undefined;
+  if (requestedPath == null && input.toolName === "write_files") {
+    const files = Array.isArray(record.files) ? record.files : [];
+    requestedPath = files
+      .filter((file): file is Record<string, unknown> => Boolean(file) && typeof file === "object" && !Array.isArray(file))
+      .map((file) => file.path)
+      .find((candidate) => {
+        if (typeof candidate !== "string" || candidate.trim().length === 0) {
+          return false;
+        }
+        const resolvedCandidate = path.resolve(input.workingDirectory, candidate);
+        return workspaceRelativePath(path.resolve(input.workingDirectory), resolvedCandidate) === null;
+      });
+  }
   if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
     return undefined;
   }
@@ -229,7 +242,9 @@ function resolveWorkspaceEscapePermission(input: {
       ? "run a shell command"
       : input.toolName === "edit_file"
         ? "edit a file"
-        : "write a file";
+        : input.toolName === "write_files"
+          ? "write files"
+          : "write a file";
 
   return {
     kind: "workspace_escape",

@@ -42,6 +42,7 @@ export interface SmartContentServiceDependencies {
   mapModels: (inspectionResults: Awaited<ReturnType<GemmaDesktop['inspectEnvironment']>>['runtimes']) => SmartContentModelRecord[]
   acquirePrimaryModelLease: (leaseId: string, target: SmartContentModelTarget) => Promise<() => void>
   buildWorkerSessionMetadata: (workerTarget: SmartContentModelTarget) => Promise<Record<string, unknown>>
+  isHelperModelEnabled?: () => boolean | Promise<boolean>
   removePathBestEffort: (targetPath: string, options?: Parameters<typeof fs.rm>[1]) => Promise<void>
 }
 
@@ -164,6 +165,14 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
   const acquirePrimaryModelLease = dependencies.acquirePrimaryModelLease
   const buildPdfWorkerSessionMetadata = dependencies.buildWorkerSessionMetadata
   const removePathBestEffort = dependencies.removePathBestEffort
+  const isHelperModelEnabled = async () =>
+    dependencies.isHelperModelEnabled ? await dependencies.isHelperModelEnabled() : true
+
+  async function assertHelperModelEnabledForSmartContent(): Promise<void> {
+    if (!(await isHelperModelEnabled())) {
+      throw new Error('Helper model is disabled in Settings.')
+    }
+  }
 
   function makeStructuredResponseFormat(
     name: string,
@@ -522,6 +531,8 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     sessionId: string
     kind: 'pdf' | 'audio' | 'image'
   }): Promise<FileWorkerCapabilitySnapshot> {
+    await assertHelperModelEnabledForSmartContent()
+
     const { session } = await getOrResumeLiveSession(input.sessionId)
     const snapshot = session.snapshot()
     const env = await dependencies.getGemmaDesktop().inspectEnvironment()
@@ -2262,6 +2273,8 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     signal?: AbortSignal
     onProgress?: Parameters<typeof derivePdfArtifact>[0]['onProgress']
   }): Promise<PersistedPdfAttachment> {
+    await assertHelperModelEnabledForSmartContent()
+
     const artifactDirectory = path.join(
       path.dirname(input.attachment.path),
       `${path.basename(input.attachment.path, path.extname(input.attachment.path))}-derived-${Date.now()}`,

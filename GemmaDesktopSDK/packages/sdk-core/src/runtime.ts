@@ -340,6 +340,7 @@ export type ModeSelection =
   | ModePreset
   | {
       base?: ModePreset;
+      onlyTools?: string[];
       tools?: string[];
       withoutTools?: string[];
       requiredTools?: string[];

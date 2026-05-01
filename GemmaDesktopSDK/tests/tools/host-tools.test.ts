@@ -591,18 +591,52 @@ describe("host tools", () => {
     expect(await readFile(path.join(workingDirectory, "docs", "guide.txt"), "utf8")).toBe("alpha\ngamma\ngamma\n");
   });
 
-  it("reports actionable write failures when the parent directory is missing", async () => {
+  it("creates missing parent directories for direct file writes", async () => {
     const workingDirectory = await createWorkspace();
 
-    await expect(
-      getTool("write_file").execute(
-        {
-          path: "missing/guide.txt",
-          content: "alpha\n",
-        },
-        createContext(workingDirectory),
-      ),
-    ).rejects.toThrow(/parent directory does not exist/i);
+    const result = await getTool("write_file").execute(
+      {
+        path: "missing/guide.txt",
+        content: "alpha\n",
+      },
+      createContext(workingDirectory),
+    );
+
+    expect(result.output).toContain("Created and verified");
+    expect(await readFile(path.join(workingDirectory, "missing", "guide.txt"), "utf8")).toBe("alpha\n");
+  });
+
+  it("writes multiple complete files in one verified tool call", async () => {
+    const workingDirectory = await createWorkspace();
+
+    const result = await getTool("write_files").execute(
+      {
+        files: [
+          { path: "app/index.html", content: "<main>Hello</main>\n" },
+          { path: "app/style.css", content: "main { display: grid; }\n" },
+          { path: "app/src/main.js", content: "document.body.dataset.ready = 'true';\n" },
+        ],
+      },
+      createContext(workingDirectory),
+    );
+    const structured = result.structuredOutput as {
+      count: number;
+      verified: boolean;
+      files: Array<{ path: string; bytes: number; verified: boolean }>;
+    };
+
+    expect(result.output).toContain("Wrote and verified 3 files");
+    expect(structured.count).toBe(3);
+    expect(structured.verified).toBe(true);
+    expect(structured.files.map((file) => path.relative(workingDirectory, file.path))).toEqual([
+      path.join("app", "index.html"),
+      path.join("app", "style.css"),
+      path.join("app", "src", "main.js"),
+    ]);
+    expect(structured.files.every((file) => file.verified)).toBe(true);
+    expect(await readFile(path.join(workingDirectory, "app", "src", "main.js"), "utf8")).toBe(
+      "document.body.dataset.ready = 'true';\n",
+    );
   });
 
   it("normalizes line endings and treats already-applied edits as a no-op", async () => {
@@ -833,6 +867,29 @@ describe("host tools", () => {
       workingDirectory,
       requestedPath: outsideFile,
       resolvedPath: outsideFile,
+    });
+
+    const outsideBatchFile = path.join(outsideDirectory, "outside-batch.txt");
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-write-files-outside",
+          name: "write_files",
+          input: {
+            files: [
+              { path: "inside.txt", content: "inside\n" },
+              { path: outsideBatchFile, content: "outside\n" },
+            ],
+          },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    await expect(readFile(outsideBatchFile, "utf8")).rejects.toThrow();
+    expect(permissionDetails[1]).toMatchObject({
+      workingDirectory,
+      requestedPath: outsideBatchFile,
+      resolvedPath: outsideBatchFile,
     });
 
     const approvedRuntime = createToolRuntime({ allowWorkspaceEscape: true });

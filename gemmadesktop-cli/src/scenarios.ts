@@ -277,6 +277,7 @@ const SCENARIO_SYSTEM_INSTRUCTIONS = [
   "You are running an on-demand Gemma Desktop CLI acceptance scenario.",
   "Use the available tools to gather evidence or mutate files; do not answer from memory when the scenario asks you to fetch, research, extract, build, edit, or validate.",
   "For build-mode scenarios, call finalize_build as soon as the requested artifact is validated.",
+  "When creating project validators, assert the requested behavior and constraints directly; do not rely only on file-existence checks or generic forbidden-string checks.",
   "Keep outputs concise but include enough source, command, or artifact detail for an automated validator to verify the run.",
 ].join("\n");
 
@@ -1757,6 +1758,9 @@ export async function runHeadlessScenario(
       turns.push(turn.record);
       if (turn.result) {
         rawResults.push(turn.result);
+      }
+      if (turn.record.error) {
+        break;
       }
       const compaction = definition.compactAfterTurns?.find((entry) => entry.afterTurn === index + 1);
       if (compaction) {

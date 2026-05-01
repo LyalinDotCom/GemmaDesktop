@@ -88,6 +88,7 @@ function makeSettings(input?: Partial<{
     modelSelection: {
       mainModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.mainModel },
       helperModel: { ...DEFAULT_MODEL_SELECTION_SETTINGS.helperModel },
+      helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
     },
     ollama: getDefaultOllamaSettings(),
     lmstudio: getDefaultLmStudioSettings(),

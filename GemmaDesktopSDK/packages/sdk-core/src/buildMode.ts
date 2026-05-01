@@ -439,6 +439,17 @@ function extractMutationPaths(toolResult: ToolResult): string[] {
       const resolvedPath = coercePath(record.path);
       return resolvedPath ? [resolvedPath] : [];
     }
+    case "write_files": {
+      const files = Array.isArray(record.files)
+        ? record.files
+        : [];
+      return uniqueStrings(
+        files
+          .filter(isRecord)
+          .map((file) => coercePath(file.path))
+          .filter((candidate): candidate is string => typeof candidate === "string"),
+      );
+    }
     case "edit_file": {
       const replacements =
         typeof record.replacements === "number"
