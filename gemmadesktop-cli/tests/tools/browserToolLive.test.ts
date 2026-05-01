@@ -28,6 +28,16 @@ function readTabs(result: BrowserToolResult): Array<{ tabId?: string; active?: b
   return data.tabs as Array<{ tabId?: string; active?: boolean }>;
 }
 
+function readStructuredData(result: BrowserToolResult): Record<string, unknown> {
+  const structured = result.structuredOutput;
+  if (!structured || typeof structured !== "object" || !("data" in structured)) {
+    return {};
+  }
+  return structured.data && typeof structured.data === "object" && !Array.isArray(structured.data)
+    ? structured.data as Record<string, unknown>
+    : {};
+}
+
 describeLive("CLI browser tool live validation", () => {
   const sessionId = `browser-tool-live-${Date.now()}`;
   const browserTool = createCliBrowserTool();
@@ -47,16 +57,30 @@ describeLive("CLI browser tool live validation", () => {
     }
   });
 
-  it("reads a deterministic page through snapshot and evaluate", async () => {
+  it("reads a deterministic news page through snapshot, evaluate, and scan screenshots", async () => {
     const pageHtml = [
       "<!doctype html>",
       "<html lang=\"en\">",
       "<head><title>CLI Browser Tool Fixture</title></head>",
+      "<style>",
+      "body{margin:0;font-family:Arial,sans-serif;}",
+      ".story{min-height:820px;display:flex;align-items:center;padding:40px;border-bottom:1px solid #ddd;}",
+      "a{font-size:32px;line-height:1.2;color:#111;}",
+      "</style>",
       "<body>",
       "<main>",
-      "<article>",
+      "<article class=\"story\">",
       "<h1>Offline CLI Browser Tool Fixture</h1>",
-      "<p>Static story body for CLI browser tool regression coverage.</p>",
+      "<a href=\"https://www.cnn.com/2026/05/01/world/cli-fixture-story-one\">CNN CLI Fixture Story One: Opening headline visible in the first viewport</a>",
+      "</article>",
+      "<article class=\"story\">",
+      "<a href=\"https://www.cnn.com/2026/05/01/world/cli-fixture-story-two\">CNN CLI Fixture Story Two: Follow-up headline after one scroll</a>",
+      "</article>",
+      "<article class=\"story\">",
+      "<a href=\"https://www.cnn.com/2026/05/01/world/cli-fixture-story-three\">CNN CLI Fixture Story Three: Deeper headline after two scrolls</a>",
+      "</article>",
+      "<article class=\"story\">",
+      "<a href=\"https://www.cnn.com/2026/05/01/world/cli-fixture-story-four\">CNN CLI Fixture Story Four: Lower-page headline after three scrolls</a>",
       "</article>",
       "</main>",
       "</body>",
@@ -70,12 +94,23 @@ describeLive("CLI browser tool live validation", () => {
       action: "snapshot",
     }, "browser-tool-live-snapshot");
     expect(snapshot.output).toContain("Offline CLI Browser Tool Fixture");
-    expect(snapshot.output).toContain("Static story body");
+    expect(snapshot.output).toContain("CNN CLI Fixture Story One");
 
     const evaluated = await execute({
       action: "evaluate",
       function: "() => document.querySelector(\"h1\")?.textContent?.trim()",
     }, "browser-tool-live-evaluate");
     expect(evaluated.output).toContain("Offline CLI Browser Tool Fixture");
+
+    const scan = await execute({
+      action: "scan_page",
+      scrolls: 3,
+      waitMs: 100,
+    }, "browser-tool-live-scan");
+    const scanData = readStructuredData(scan);
+    expect(scan.output).toContain("CNN CLI Fixture Story One");
+    expect(scan.output).toContain("CNN CLI Fixture Story Four");
+    expect(Number(scanData.screenshotCount)).toBeGreaterThanOrEqual(4);
+    expect(Number(scanData.firstViewportStoryCount)).toBeLessThan(Number(scanData.uniqueStoryCount));
   }, 90_000);
 });

@@ -11,6 +11,12 @@ export const DEFAULT_BROWSER_INLINE_TEXT_CHARS = 4_000
 const MAX_BROWSER_INLINE_TEXT_CHARS = 12_000
 const DEFAULT_BROWSER_DETAIL_FILE_EXTENSION = 'md'
 const BROWSER_COMMAND_RETRY_DELAYS_MS = [0, 400]
+const DEFAULT_BROWSER_SCAN_SCROLLS = 3
+const DEFAULT_BROWSER_SCAN_SCROLL_AMOUNT = 900
+const DEFAULT_BROWSER_SCAN_WAIT_MS = 750
+const DEFAULT_BROWSER_SCAN_MAX_STORIES = 80
+const MAX_BROWSER_SCAN_SCROLLS = 8
+const MAX_BROWSER_SCAN_STORIES = 200
 
 export const BROWSER_TOOL_ACTIONS = [
   'tabs',
@@ -20,6 +26,7 @@ export const BROWSER_TOOL_ACTIONS = [
   'wait',
   'snapshot',
   'screenshot',
+  'scan_page',
   'click',
   'fill',
   'type',
@@ -73,6 +80,41 @@ type BrowserScreenshotData = {
 type BrowserEvaluateData = {
   origin?: string
   result?: unknown
+}
+
+type BrowserScanLink = {
+  text?: string
+  href?: string
+  top?: number
+  viewportTop?: number
+  area?: number
+}
+
+type BrowserScanEvalResult = {
+  url?: string
+  title?: string
+  scrollY?: number
+  viewportHeight?: number
+  documentHeight?: number
+  links?: BrowserScanLink[]
+}
+
+type BrowserScanStory = {
+  text: string
+  href?: string
+  firstSeenStep: number
+  sightings: number
+}
+
+type BrowserScanStepSummary = {
+  index: number
+  scrollY?: number
+  viewportHeight?: number
+  documentHeight?: number
+  screenshotPath?: string
+  storyCount: number
+  newStoryCount: number
+  errors?: string[]
 }
 
 type BrowserTabRecord = {
@@ -163,6 +205,7 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
     description: [
       'Use a managed browser session for live or dynamic sites that need real page interaction.',
       'Open pages, inspect tabs, capture snapshots, wait for page content, click refs, fill forms, type, press keys, navigate, take screenshots, handle dialogs, or run page scripts when needed.',
+      'Use scan_page for news homepages, feeds, and long pages where scrolling plus multiple screenshots can reveal more stories than the first viewport.',
       'Prefer snapshot after each meaningful page change so you get fresh refs before the next action.',
       'Use this tool instead of fetch-only web tools when a site is JavaScript-heavy, interactive, personalized, or blocked behind dynamic rendering.',
     ].join(' '),
@@ -189,6 +232,10 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
         },
         waitMs: { type: 'number' },
         maxChars: { type: 'number' },
+        scrolls: { type: 'number' },
+        scrollAmount: { type: 'number' },
+        maxStories: { type: 'number' },
+        captureScreenshots: { type: 'boolean' },
         ref: { type: 'string' },
         uid: { type: 'string' },
         value: { type: 'string' },
@@ -537,6 +584,75 @@ function buildEvaluateScript(functionSource: string, args: unknown): string {
   return `(${trimmed})(...${JSON.stringify(normalizeEvaluateArgs(args))})`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.max(min, Math.min(max, Math.floor(value)))
+}
+
+function normalizeStoryText(value: unknown): string {
+  return typeof value === 'string'
+    ? value.replace(/\s+/g, ' ').trim()
+    : ''
+}
+
+function normalizeStoryHref(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : undefined
+}
+
+function getStoryKey(story: { text: string; href?: string }): string {
+  return story.href ?? story.text.toLowerCase()
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function readBrowserScanEvalResult(data: BrowserEvaluateData | undefined): BrowserScanEvalResult {
+  const result = data?.result
+  if (!isRecord(result)) {
+    return {}
+  }
+
+  const links = Array.isArray(result.links)
+    ? result.links
+      .filter(isRecord)
+      .map((link) => ({
+        text: normalizeStoryText(link.text),
+        href: normalizeStoryHref(link.href),
+        top: readNumber(link.top),
+        viewportTop: readNumber(link.viewportTop),
+        area: readNumber(link.area),
+      }))
+      .filter((link) => link.text.length > 0 || link.href)
+    : []
+
+  return {
+    url: normalizeStoryHref(result.url),
+    title: normalizeStoryText(result.title),
+    scrollY: readNumber(result.scrollY),
+    viewportHeight: readNumber(result.viewportHeight),
+    documentHeight: readNumber(result.documentHeight),
+    links,
+  }
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim()
+  }
+
+  return String(error)
+}
+
 function normalizeRef(ref: string): string {
   const trimmed = ref.trim()
   return trimmed.startsWith('@') ? trimmed : `@${trimmed}`
@@ -698,6 +814,8 @@ function buildLead(action: BrowserToolAction, detail?: string): string {
       return 'Captured a browser snapshot.'
     case 'screenshot':
       return 'Captured a browser screenshot.'
+    case 'scan_page':
+      return 'Scanned the browser page.'
     case 'click':
       return 'Completed the requested browser click.'
     case 'fill':
@@ -721,6 +839,261 @@ export function isBrowserActionName(value: unknown): value is BrowserToolAction 
 
 export function isBrowserMutatingActionName(value: unknown): boolean {
   return typeof value === 'string' && BROWSER_MUTATING_ACTION_SET.has(value)
+}
+
+const SCAN_PAGE_SCRIPT = `(() => {
+  const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const documentHeight = Math.max(
+    document.body?.scrollHeight || 0,
+    document.documentElement?.scrollHeight || 0
+  );
+  const links = Array.from(document.querySelectorAll("a[href]"))
+    .map((anchor) => {
+      const rect = anchor.getBoundingClientRect();
+      const visible =
+        rect.bottom > 0
+        && rect.top < viewportHeight
+        && rect.right > 0
+        && rect.left < viewportWidth;
+      const imageAlt = anchor.querySelector("img")?.getAttribute("alt") || "";
+      const text = normalize(anchor.innerText || anchor.textContent || anchor.getAttribute("aria-label") || imageAlt);
+      const rawHref = anchor.getAttribute("href") || "";
+      let href = rawHref;
+      try {
+        href = new URL(rawHref, document.baseURI).href;
+      } catch {
+        href = rawHref;
+      }
+      return {
+        text,
+        href,
+        visible,
+        top: Math.round(rect.top + window.scrollY),
+        viewportTop: Math.round(rect.top),
+        area: Math.round(Math.max(0, rect.width) * Math.max(0, rect.height)),
+      };
+    })
+    .filter((link) => link.visible && link.href && link.text.length >= 24)
+    .sort((a, b) => a.viewportTop - b.viewportTop || b.area - a.area)
+    .slice(0, 120);
+
+  return {
+    url: window.location.href,
+    title: document.title,
+    scrollY: Math.round(window.scrollY),
+    viewportHeight,
+    documentHeight,
+    links,
+  };
+})()`
+
+function resolveScanPageOptions(args: Record<string, unknown>): {
+  scrolls: number
+  scrollAmount: number
+  waitMs: number
+  maxStories: number
+  captureScreenshots: boolean
+  maxChars: number
+} {
+  return {
+    scrolls: clampInteger(args.scrolls, DEFAULT_BROWSER_SCAN_SCROLLS, 0, MAX_BROWSER_SCAN_SCROLLS),
+    scrollAmount: clampInteger(args.scrollAmount, DEFAULT_BROWSER_SCAN_SCROLL_AMOUNT, 100, 3000),
+    waitMs: clampInteger(args.waitMs, DEFAULT_BROWSER_SCAN_WAIT_MS, 0, 5000),
+    maxStories: clampInteger(args.maxStories, DEFAULT_BROWSER_SCAN_MAX_STORIES, 1, MAX_BROWSER_SCAN_STORIES),
+    captureScreenshots: args.captureScreenshots !== false,
+    maxChars: clampInteger(args.maxChars, DEFAULT_BROWSER_SNAPSHOT_INLINE_TEXT_CHARS, 400, MAX_BROWSER_INLINE_TEXT_CHARS),
+  }
+}
+
+async function captureScanStep(input: {
+  cli: BrowserCliLike
+  sessionId: string
+  stepIndex: number
+  captureScreenshots: boolean
+  seenStories: Map<string, BrowserScanStory>
+  maxStories: number
+}): Promise<BrowserScanStepSummary> {
+  const errors: string[] = []
+  let screenshotPath: string | undefined
+
+  if (input.captureScreenshots) {
+    try {
+      const screenshot = await input.cli.execJson<BrowserScreenshotData>(input.sessionId, ['screenshot'])
+      screenshotPath = normalizeStoryHref(screenshot.data?.path)
+    } catch (error) {
+      errors.push(`screenshot: ${extractErrorMessage(error)}`)
+    }
+  }
+
+  let scanResult: BrowserScanEvalResult = {}
+  try {
+    const evaluated = await input.cli.execJson<BrowserEvaluateData>(input.sessionId, ['eval', SCAN_PAGE_SCRIPT])
+    scanResult = readBrowserScanEvalResult(evaluated.data)
+  } catch (error) {
+    errors.push(`extract: ${extractErrorMessage(error)}`)
+  }
+
+  const links = (scanResult.links ?? [])
+    .map((link) => ({
+      text: normalizeStoryText(link.text),
+      href: normalizeStoryHref(link.href),
+    }))
+    .filter((link) => link.text.length > 0)
+
+  let newStoryCount = 0
+  for (const link of links) {
+    if (input.seenStories.size >= input.maxStories) {
+      break
+    }
+
+    const key = getStoryKey(link)
+    const existing = input.seenStories.get(key)
+    if (existing) {
+      existing.sightings += 1
+      continue
+    }
+
+    input.seenStories.set(key, {
+      text: link.text,
+      href: link.href,
+      firstSeenStep: input.stepIndex,
+      sightings: 1,
+    })
+    newStoryCount += 1
+  }
+
+  return {
+    index: input.stepIndex,
+    scrollY: scanResult.scrollY,
+    viewportHeight: scanResult.viewportHeight,
+    documentHeight: scanResult.documentHeight,
+    screenshotPath,
+    storyCount: links.length,
+    newStoryCount,
+    ...(errors.length > 0 ? { errors } : {}),
+  }
+}
+
+function formatBrowserScanResult(input: {
+  steps: BrowserScanStepSummary[]
+  stories: BrowserScanStory[]
+  scrolls: number
+  scrollAmount: number
+  waitMs: number
+}): string {
+  const screenshotCount = input.steps.filter((step) => step.screenshotPath).length
+  const firstViewportStoryCount = input.steps[0]?.newStoryCount ?? 0
+  const addedAfterFirstViewport = Math.max(0, input.stories.length - firstViewportStoryCount)
+  const lines = [
+    `Scanned ${input.steps.length} viewport${input.steps.length === 1 ? '' : 's'} (${input.scrolls} requested scroll${input.scrolls === 1 ? '' : 's'}, ${input.scrollAmount}px each, ${input.waitMs}ms wait).`,
+    `Captured ${screenshotCount} screenshot${screenshotCount === 1 ? '' : 's'}.`,
+    `Found ${input.stories.length} unique story link${input.stories.length === 1 ? '' : 's'}; first viewport had ${firstViewportStoryCount}, scrolling added ${addedAfterFirstViewport}.`,
+  ]
+
+  const warnings = input.steps
+    .filter((step) => step.errors && step.errors.length > 0)
+    .map((step) => `Step ${step.index}: ${step.errors?.join('; ')}`)
+  if (warnings.length > 0) {
+    lines.push('', 'Warnings:', ...warnings.map((warning) => `- ${warning}`))
+  }
+
+  const screenshotLines = input.steps
+    .filter((step) => step.screenshotPath)
+    .map((step) => `- Step ${step.index}: ${step.screenshotPath}`)
+  if (screenshotLines.length > 0) {
+    lines.push('', 'Screenshots:', ...screenshotLines)
+  }
+
+  if (input.stories.length > 0) {
+    lines.push(
+      '',
+      'Story links:',
+      ...input.stories.slice(0, 40).map((story, index) =>
+        `${index + 1}. ${story.text}${story.href ? ` — ${story.href}` : ''} (first seen step ${story.firstSeenStep})`,
+      ),
+    )
+  }
+
+  return lines.join('\n')
+}
+
+async function runBrowserPageScan(input: {
+  sessionId: string
+  args: Record<string, unknown>
+  cli: BrowserCliLike
+  persistArtifact?: BrowserSessionManagerOptions['persistArtifact']
+}): Promise<BrowserToolCallResult> {
+  await selectTabIfNeeded(input.cli, input.sessionId, input.args.tabId)
+  const options = resolveScanPageOptions(input.args)
+  const seenStories = new Map<string, BrowserScanStory>()
+  const steps: BrowserScanStepSummary[] = []
+
+  for (let stepIndex = 0; stepIndex <= options.scrolls; stepIndex += 1) {
+    const stepErrors: string[] = []
+    if (stepIndex > 0) {
+      try {
+        await input.cli.execJson(input.sessionId, ['scroll', 'down', String(options.scrollAmount)])
+      } catch (error) {
+        stepErrors.push(`scroll: ${extractErrorMessage(error)}`)
+      }
+
+      if (options.waitMs > 0) {
+        try {
+          await input.cli.execJson(input.sessionId, ['wait', String(options.waitMs)])
+        } catch (error) {
+          stepErrors.push(`wait: ${extractErrorMessage(error)}`)
+        }
+      }
+    }
+
+    const step = await captureScanStep({
+      cli: input.cli,
+      sessionId: input.sessionId,
+      stepIndex,
+      captureScreenshots: options.captureScreenshots,
+      seenStories,
+      maxStories: options.maxStories,
+    })
+    steps.push({
+      ...step,
+      ...(stepErrors.length > 0 || step.errors
+        ? { errors: [...stepErrors, ...(step.errors ?? [])] }
+        : {}),
+    })
+  }
+
+  const stories = [...seenStories.values()]
+  const text = formatBrowserScanResult({
+    steps,
+    stories,
+    scrolls: options.scrolls,
+    scrollAmount: options.scrollAmount,
+    waitMs: options.waitMs,
+  })
+  const firstViewportStoryCount = steps[0]?.newStoryCount ?? 0
+
+  return await finalizeBrowserTextResult({
+    sessionId: input.sessionId,
+    action: 'scan_page',
+    text,
+    maxChars: options.maxChars,
+    persistArtifact: input.persistArtifact,
+    metadata: {
+      scrolls: options.scrolls,
+      scrollAmount: options.scrollAmount,
+      waitMs: options.waitMs,
+      captureScreenshots: options.captureScreenshots,
+      screenshotCount: steps.filter((step) => step.screenshotPath).length,
+      firstViewportStoryCount,
+      uniqueStoryCount: stories.length,
+      addedAfterFirstViewport: Math.max(0, stories.length - firstViewportStoryCount),
+      steps,
+      stories,
+    },
+    lead: buildLead('scan_page'),
+  })
 }
 
 export async function executeAgentBrowserTool(input: {
@@ -953,6 +1326,9 @@ export async function executeAgentBrowserTool(input: {
           path: screenshotPath,
         },
       }
+    }
+    case 'scan_page': {
+      return await runBrowserPageScan(input)
     }
     case 'click': {
       await selectTabIfNeeded(input.cli, input.sessionId, input.args.tabId)

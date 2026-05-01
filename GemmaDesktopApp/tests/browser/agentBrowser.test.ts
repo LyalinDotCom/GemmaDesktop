@@ -309,6 +309,173 @@ describe('agentBrowser helpers', () => {
     expect(execJson).toHaveBeenCalledWith('session-evaluate-expression', ['eval', script])
   })
 
+  it('scans a CNN-style page with more stories after the default three scrolls', async () => {
+    const linksByStep = [
+      [
+        {
+          text: 'CNN fixture lead story about global markets and policy shifts',
+          href: 'https://www.cnn.com/2026/05/01/business/global-markets-policy',
+        },
+        {
+          text: 'CNN fixture live updates on severe weather across the US',
+          href: 'https://www.cnn.com/2026/05/01/weather/live-updates',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture live updates on severe weather across the US',
+          href: 'https://www.cnn.com/2026/05/01/weather/live-updates',
+        },
+        {
+          text: 'CNN fixture analysis of a major election night result',
+          href: 'https://www.cnn.com/2026/05/01/politics/election-analysis',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture health story on hospital staffing pressure',
+          href: 'https://www.cnn.com/2026/05/01/health/hospital-staffing',
+        },
+      ],
+      [
+        {
+          text: 'CNN fixture travel story about airport delays this weekend',
+          href: 'https://www.cnn.com/2026/05/01/travel/airport-delays',
+        },
+      ],
+    ]
+    let stepIndex = 0
+    const { cli, execJson } = createCliMocks(
+      async (_sessionId: string | null, args: string[]) => {
+        if (args[0] === 'screenshot') {
+          return {
+            success: true,
+            data: {
+              path: `/tmp/cnn-scan-step-${stepIndex}.png`,
+            },
+          }
+        }
+
+        if (args[0] === 'eval') {
+          return {
+            success: true,
+            data: {
+              result: {
+                scrollY: stepIndex * 900,
+                viewportHeight: 720,
+                documentHeight: 3600,
+                links: linksByStep[stepIndex] ?? [],
+              },
+            },
+          }
+        }
+
+        if (args[0] === 'scroll') {
+          stepIndex += 1
+          return { success: true, data: {} }
+        }
+
+        if (args[0] === 'wait') {
+          return { success: true, data: {} }
+        }
+
+        throw new Error(`unexpected args ${args.join(' ')}`)
+      },
+    )
+
+    const result = await executeAgentBrowserTool({
+      sessionId: 'session-scan-page',
+      args: {
+        action: 'scan_page',
+      },
+      cli,
+    })
+
+    expect(execJson.mock.calls.slice(0, 2).map((call) => call[1][0])).toEqual([
+      'screenshot',
+      'eval',
+    ])
+    expect(execJson.mock.calls.filter((call) => call[1][0] === 'scroll')).toHaveLength(3)
+    expect(result.output).toContain('scrolling added 3')
+    expect(result.output).toContain('CNN fixture travel story')
+    expect(result.structuredOutput).toEqual(expect.objectContaining({
+      action: 'scan_page',
+      scrolls: 3,
+      screenshotCount: 4,
+      firstViewportStoryCount: 2,
+      uniqueStoryCount: 5,
+      addedAfterFirstViewport: 3,
+    }))
+  })
+
+  it('keeps the first scan screenshot and reports later scroll failures without failing', async () => {
+    let screenshotCalls = 0
+    const { cli } = createCliMocks(
+      async (_sessionId: string | null, args: string[]) => {
+        if (args[0] === 'screenshot') {
+          screenshotCalls += 1
+          if (screenshotCalls > 1) {
+            throw new Error('page became unstable')
+          }
+          return {
+            success: true,
+            data: {
+              path: '/tmp/first-scan.png',
+            },
+          }
+        }
+
+        if (args[0] === 'eval') {
+          return {
+            success: true,
+            data: {
+              result: {
+                scrollY: 0,
+                viewportHeight: 720,
+                documentHeight: 1400,
+                links: [
+                  {
+                    text: 'CNN fixture first story remains available after scan errors',
+                    href: 'https://www.cnn.com/2026/05/01/us/first-story',
+                  },
+                ],
+              },
+            },
+          }
+        }
+
+        if (args[0] === 'scroll') {
+          throw new Error('scroll target detached')
+        }
+
+        if (args[0] === 'wait') {
+          return { success: true, data: {} }
+        }
+
+        throw new Error(`unexpected args ${args.join(' ')}`)
+      },
+    )
+
+    const result = await executeAgentBrowserTool({
+      sessionId: 'session-scan-page-errors',
+      args: {
+        action: 'scan_page',
+        scrolls: 1,
+      },
+      cli,
+    })
+
+    expect(result.output).toContain('/tmp/first-scan.png')
+    expect(result.output).toContain('Warnings:')
+    expect(result.output).toContain('scroll target detached')
+    expect(result.output).toContain('page became unstable')
+    expect(result.structuredOutput).toEqual(expect.objectContaining({
+      action: 'scan_page',
+      screenshotCount: 1,
+      uniqueStoryCount: 1,
+    }))
+  })
+
   it('accepts snapshot-style ref handles when clicking', async () => {
     const { cli, execJson } = createCliMocks(async () => ({ success: true, data: {} }))
 
