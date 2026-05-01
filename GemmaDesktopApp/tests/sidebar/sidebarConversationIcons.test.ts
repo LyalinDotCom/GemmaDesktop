@@ -168,6 +168,41 @@ describe('Sidebar conversation icons', () => {
     expect(markup).not.toContain('aria-label="Show ⭐ conversations"')
   })
 
+  it('uses the reorder affordance slot for project conversation icons', async () => {
+    root = renderSidebar(container, sidebarProps({
+      sessions: [
+        makeSession({
+          id: 'plain',
+          title: 'Plain Chat',
+          conversationIcon: null,
+          updatedAt: 3_000,
+        }),
+        makeSession({
+          id: 'tagged',
+          title: 'Tagged Chat',
+          conversationIcon: '🧪',
+          updatedAt: 2_000,
+        }),
+      ],
+      activeSessionId: 'tagged',
+    }))
+    await act(async () => {})
+
+    const taggedRow = getSessionRow(container, 'Tagged Chat')
+    const plainRow = getSessionRow(container, 'Plain Chat')
+    const taggedIcon = Array.from(taggedRow.querySelectorAll<HTMLElement>('[role="img"]'))
+      .find((element) => element.getAttribute('aria-label') === 'Conversation icon 🧪')
+    const reorderButton = getButtonByLabel(taggedRow, 'Reorder Tagged Chat')
+
+    expect(taggedIcon).toBeTruthy()
+    expect(reorderButton).toBeTruthy()
+    expect(taggedIcon?.className).toContain('absolute left-0.5')
+    expect(taggedIcon?.className).toContain('group-hover:opacity-0')
+    expect(reorderButton?.className).toContain('absolute left-0.5')
+    expect(reorderButton?.className).toContain('group-hover:pointer-events-auto')
+    expect(plainRow.querySelector('[aria-label^="Conversation icon"]')).toBeNull()
+  })
+
   it('renders icon filters and allows one expanded group at a time', async () => {
     root = renderSidebar(container, sidebarProps({
       sessions: [

@@ -843,6 +843,7 @@ export function Sidebar({
       && session.id in sidebarState.sessionOrderOverrides,
     )
     const rowKind = inPinnedSection ? 'pinned' : inIconSection ? 'icon' : 'project'
+    const conversationIconUsesDragSlot = Boolean(session.conversationIcon && projectKey)
 
     return (
       <div key={`${rowKind}-${session.id}`}>
@@ -937,7 +938,17 @@ export function Sidebar({
             {followUpSessionIds.has(session.id) && (
               <Flag size={12} className="flex-shrink-0 text-amber-500/70 dark:text-amber-400/60" />
             )}
-            {session.conversationIcon && (
+            {session.conversationIcon && conversationIconUsesDragSlot && (
+              <span
+                className="pointer-events-none absolute left-0.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-sm leading-none opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+                title="Conversation icon"
+                role="img"
+                aria-label={`Conversation icon ${session.conversationIcon}`}
+              >
+                {session.conversationIcon}
+              </span>
+            )}
+            {session.conversationIcon && !conversationIconUsesDragSlot && (
               <span
                 className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-sm leading-none"
                 title="Conversation icon"
