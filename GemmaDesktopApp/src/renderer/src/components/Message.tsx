@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useId, useMemo, useState } from 'react'
 import { AlertTriangle, Info, X } from 'lucide-react'
 import { AssistantActionRow } from '@/components/AssistantActionRow'
 import { MarkdownContent } from '@/components/MarkdownContent'
@@ -504,6 +504,7 @@ export function StreamingStatus({
 }) {
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const tooltipId = useId()
 
   useEffect(() => {
     if (!activity) return
@@ -515,42 +516,52 @@ export function StreamingStatus({
   const presentation = activity
     ? buildLiveActivityPresentation(activity, now)
     : null
-  const label = presentation
-    ? presentation.label.toLowerCase()
-    : 'working'
-  const detail = presentation?.detail ?? ''
+  const triggerLabel = presentation
+    ? `${presentation.label}. ${presentation.note}`
+    : 'Working'
 
   return (
     <div
       className={`relative inline-flex items-center gap-2 text-[11px] text-zinc-400 dark:text-zinc-500 ${className}`}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
     >
-      <div className="inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-gradient-to-r from-sky-50 via-indigo-50 to-emerald-50 px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-[0_12px_24px_-18px_rgba(14,165,233,0.85)] dark:border-sky-500/20 dark:from-sky-500/10 dark:via-indigo-500/10 dark:to-emerald-500/10 dark:text-zinc-100">
-        <span className="relative h-3.5 w-3.5 shrink-0" aria-hidden="true">
-          <span className="absolute inset-0 rounded-full bg-[conic-gradient(from_210deg,_#38bdf8,_#818cf8,_#f472b6,_#f59e0b,_#22c55e,_#38bdf8)] motion-reduce:animate-none motion-safe:animate-spin" />
-          <span className="absolute inset-[2px] rounded-full bg-white/95 dark:bg-zinc-950/90" />
-          <span className="absolute inset-[2px] rounded-full border border-white/70 dark:border-white/10" />
-          <span className="absolute inset-[5px] rounded-full bg-sky-100/90 shadow-[0_0_12px_rgba(56,189,248,0.7)] motion-reduce:animate-none motion-safe:animate-pulse dark:bg-sky-200/80" />
-        </span>
-        <span className="tracking-[0.02em] text-zinc-700 dark:text-zinc-100">
-          {label}
-        </span>
-        {detail ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{detail}</span>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        className="inline-flex h-6 min-w-8 items-center justify-center rounded-full px-1.5 text-left transition-colors hover:bg-sky-100/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 dark:hover:bg-sky-400/10"
+        aria-label={triggerLabel}
+        aria-expanded={open}
+        aria-describedby={presentation ? tooltipId : undefined}
+      >
+        <StreamingDots
+          className="assistant-streaming-dots-color"
+          ariaHidden
+        />
+      </button>
       <span className="font-mono tabular-nums opacity-70">{elapsedClock}</span>
 
       {presentation && (
         <div
+          id={tooltipId}
           className={`pointer-events-none absolute bottom-full left-0 z-[70] mb-2 w-[260px] rounded-lg border border-sky-200/80 bg-sky-50/95 p-2.5 text-xs shadow-lg backdrop-blur transition-all duration-150 dark:border-sky-800/70 dark:bg-zinc-950/95 ${
             open ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
           }`}
           role="tooltip"
           aria-hidden={!open}
         >
-          <p className="text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <div className="min-w-0 text-[11px] font-semibold leading-snug text-sky-700 dark:text-sky-300">
+              {presentation.label}
+            </div>
+            {presentation.detail && presentation.detail !== 'session turn' && (
+              <div className="min-w-0 text-[10px] leading-snug text-sky-700/55 dark:text-sky-300/55">
+                {presentation.detail}
+              </div>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
             {presentation.note}
           </p>
           <dl className="mt-2 grid grid-cols-[max-content_1fr] items-baseline gap-x-3 gap-y-1">
@@ -571,12 +582,19 @@ export function StreamingStatus({
   )
 }
 
-function StreamingDots() {
+function StreamingDots({
+  className = 'mt-2',
+  ariaHidden = false,
+}: {
+  className?: string
+  ariaHidden?: boolean
+}) {
   return (
     <span
-      className="assistant-streaming-dots mt-2"
-      aria-label="Working"
-      role="status"
+      className={`assistant-streaming-dots ${className}`}
+      aria-hidden={ariaHidden ? 'true' : undefined}
+      aria-label={ariaHidden ? undefined : 'Working'}
+      role={ariaHidden ? undefined : 'status'}
     >
       <span className="assistant-streaming-dot">.</span>
       <span className="assistant-streaming-dot">.</span>

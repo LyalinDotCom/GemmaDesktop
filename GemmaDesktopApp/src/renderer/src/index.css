@@ -437,6 +437,23 @@
     animation-delay: 320ms;
   }
 
+  .assistant-streaming-dots-color {
+    color: rgb(14, 165, 233);
+    filter: drop-shadow(0 0 10px rgba(14, 165, 233, 0.32));
+  }
+
+  .assistant-streaming-dots-color .assistant-streaming-dot:nth-child(1) {
+    color: rgb(34, 211, 238);
+  }
+
+  .assistant-streaming-dots-color .assistant-streaming-dot:nth-child(2) {
+    color: rgb(129, 140, 248);
+  }
+
+  .assistant-streaming-dots-color .assistant-streaming-dot:nth-child(3) {
+    color: rgb(244, 114, 182);
+  }
+
   .assistant-chat-bottom-status {
     margin-top: 0;
   }

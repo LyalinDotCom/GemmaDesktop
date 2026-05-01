@@ -1,8 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { Message } from '../../src/renderer/src/components/Message'
-import type { ChatMessage } from '../../src/renderer/src/types'
+import { Message, StreamingStatus } from '../../src/renderer/src/components/Message'
+import type { ChatMessage, LiveActivitySnapshot } from '../../src/renderer/src/types'
 
 function buildAssistantMessage(): ChatMessage {
   return {
@@ -13,7 +13,46 @@ function buildAssistantMessage(): ChatMessage {
   }
 }
 
+function buildLiveActivity(): LiveActivitySnapshot {
+  const now = Date.now()
+  return {
+    source: 'research',
+    state: 'working',
+    stage: 'synthesis',
+    startedAt: now - 518_000,
+    lastEventAt: now - 1_000,
+    firstTokenAt: now - 500_000,
+    assistantUpdates: 42,
+    reasoningUpdates: 7,
+    lifecycleEvents: 0,
+    runningToolCount: 1,
+    completedToolCount: 3,
+    recentProgressCount: 12,
+    lastProgressAt: now - 1_000,
+    activeToolName: 'deep_research.synthesis',
+    activeToolLabel: 'Drafting final synthesis',
+    activeToolContext: 'synthesis',
+  }
+}
+
 describe('message actions', () => {
+  it('renders active streaming status as a compact ellipsis with hover details and the clock intact', () => {
+    const html = renderToStaticMarkup(
+      createElement(StreamingStatus, {
+        elapsedClock: '08:38',
+        activity: buildLiveActivity(),
+      }),
+    )
+
+    expect(html).toContain('assistant-streaming-dots-color')
+    expect(html).toContain('>08:38</span>')
+    expect(html).toContain('role="tooltip"')
+    expect(html).toContain('Drafting final synthesis')
+    expect(html).toContain('synthesis')
+    expect(html).not.toContain('bg-gradient-to-r')
+    expect(html).not.toContain('conic-gradient')
+  })
+
   it('hides all assistant action buttons while streaming', () => {
     const html = renderToStaticMarkup(
       createElement(Message, {
