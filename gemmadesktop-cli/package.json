@@ -16,7 +16,8 @@
     "start": "node dist/index.js",
     "test": "npm run test:default",
     "test:default": "vitest run",
-    "test:live": "npm run test:scenario-preflight",
+    "test:live": "npm run test:browser-live && npm run test:scenario-preflight",
+    "test:browser-live": "GEMMA_DESKTOP_RUN_BROWSER_TOOL_LIVE=1 vitest run tests/tools/browserToolLive.test.ts",
     "test:scenario-preflight": "GEMMA_DESKTOP_RUN_CLI_SCENARIOS_LIVE=1 GEMMA_DESKTOP_CLI_SCENARIOS=web-hacker-news-frontpage vitest run tests/scenarios/scenariosLive.test.ts",
     "test:scenarios-live": "GEMMA_DESKTOP_RUN_CLI_SCENARIOS_LIVE=1 vitest run tests/scenarios/scenariosLive.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"

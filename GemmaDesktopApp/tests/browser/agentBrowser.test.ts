@@ -185,16 +185,128 @@ describe('agentBrowser helpers', () => {
       cli,
     })
 
-    expect(execJson).toHaveBeenCalledWith('session-snapshot', ['snapshot', '-i'])
+    expect(execJson).toHaveBeenCalledWith('session-snapshot', ['snapshot'])
     expect(result.output).toContain('Captured a browser snapshot.')
     expect(result.output).toContain('ref=@e1')
     expect(result.structuredOutput).toEqual({
       action: 'snapshot',
+      snapshotMode: 'full',
       origin: 'https://example.com/',
       refs: {
         e1: { role: 'link', name: 'Learn more' },
       },
     })
+  })
+
+  it('falls back to an interactive snapshot when the full snapshot is empty', async () => {
+    const { cli, execJson } = createCliMocks(
+      async (_sessionId: string | null, args: string[]) => {
+        if (args[0] === 'snapshot' && args.length === 1) {
+          return {
+            success: true,
+            data: {
+              origin: 'https://example.com/',
+              refs: {},
+              snapshot: '',
+            },
+          }
+        }
+
+        if (args[0] === 'snapshot' && args[1] === '-i') {
+          return {
+            success: true,
+            data: {
+              origin: 'https://example.com/',
+              refs: {
+                e1: { role: 'heading', name: 'Static headline' },
+              },
+              snapshot: '- heading "Static headline" [level=1, ref=e1]\n- StaticText "Story body"',
+            },
+          }
+        }
+
+        throw new Error(`unexpected args ${args.join(' ')}`)
+      },
+    )
+
+    const result = await executeAgentBrowserTool({
+      sessionId: 'session-snapshot-fallback',
+      args: {
+        action: 'snapshot',
+      },
+      cli,
+    })
+
+    expect(execJson).toHaveBeenNthCalledWith(1, 'session-snapshot-fallback', ['snapshot'])
+    expect(execJson).toHaveBeenNthCalledWith(2, 'session-snapshot-fallback', ['snapshot', '-i'])
+    expect(result.output).toContain('Static headline')
+    expect(result.output).toContain('ref=@e1')
+    expect(result.structuredOutput).toEqual({
+      action: 'snapshot',
+      snapshotMode: 'interactive',
+      origin: 'https://example.com/',
+      refs: {
+        e1: { role: 'heading', name: 'Static headline' },
+      },
+    })
+  })
+
+  it('invokes model-supplied evaluate functions before passing them to agent-browser', async () => {
+    const { cli, execJson } = createCliMocks(
+      async (_sessionId: string | null, args: string[]) => {
+        if (args[0] === 'eval') {
+          return {
+            success: true,
+            data: {
+              origin: 'https://example.com/',
+              result: ['Static headline'],
+            },
+          }
+        }
+
+        throw new Error(`unexpected args ${args.join(' ')}`)
+      },
+    )
+
+    const result = await executeAgentBrowserTool({
+      sessionId: 'session-evaluate',
+      args: {
+        action: 'evaluate',
+        function: '(selector) => Array.from(document.querySelectorAll(selector)).map((el) => el.textContent?.trim())',
+        args: ['h1'],
+      },
+      cli,
+    })
+
+    expect(execJson).toHaveBeenCalledWith(
+      'session-evaluate',
+      [
+        'eval',
+        '((selector) => Array.from(document.querySelectorAll(selector)).map((el) => el.textContent?.trim()))(...["h1"])',
+      ],
+    )
+    expect(result.output).toContain('Static headline')
+  })
+
+  it('passes already-invoked evaluate expressions through unchanged', async () => {
+    const script = '(() => document.title)()'
+    const { cli, execJson } = createCliMocks(async () => ({
+      success: true,
+      data: {
+        result: 'Example Domain',
+      },
+    }))
+
+    await executeAgentBrowserTool({
+      sessionId: 'session-evaluate-expression',
+      args: {
+        action: 'evaluate',
+        function: script,
+      },
+      cli,
+    })
+
+    expect(execJson).toHaveBeenCalledWith('session-evaluate-expression', ['eval', script])
   })
 
   it('accepts snapshot-style ref handles when clicking', async () => {

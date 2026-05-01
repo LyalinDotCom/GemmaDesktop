@@ -70,6 +70,11 @@ type BrowserScreenshotData = {
   path?: string
 }
 
+type BrowserEvaluateData = {
+  origin?: string
+  result?: unknown
+}
+
 type BrowserTabRecord = {
   tabId?: string
   label?: string | null
@@ -501,13 +506,35 @@ function formatTabs(
     .join('\n')
 }
 
+function readSnapshotText(data: BrowserSnapshotData | undefined): string {
+  return typeof data?.snapshot === 'string' ? data.snapshot.trim() : ''
+}
+
 function normalizeSnapshotText(data: BrowserSnapshotData | undefined): string {
   const snapshot = typeof data?.snapshot === 'string' ? data.snapshot.trim() : ''
   if (snapshot.length === 0) {
-    return '(no interactive elements)'
+    return '(no browser snapshot text returned)'
   }
 
   return snapshot.replace(/\bref=(e\d+)\b/g, 'ref=@$1')
+}
+
+function normalizeEvaluateArgs(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function isBareEvaluateFunction(source: string): boolean {
+  return /^(?:async\s+)?(?:\([^()]*\)|[$A-Z_a-z][$\w]*)\s*=>/s.test(source)
+    || /^(?:async\s+)?function(?:\s+[$A-Z_a-z][$\w]*)?\s*\(/s.test(source)
+}
+
+function buildEvaluateScript(functionSource: string, args: unknown): string {
+  const trimmed = functionSource.trim()
+  if (!isBareEvaluateFunction(trimmed)) {
+    return trimmed
+  }
+
+  return `(${trimmed})(...${JSON.stringify(normalizeEvaluateArgs(args))})`
 }
 
 function normalizeRef(ref: string): string {
@@ -869,7 +896,17 @@ export async function executeAgentBrowserTool(input: {
     }
     case 'snapshot': {
       const tabId = await selectTabIfNeeded(input.cli, input.sessionId, input.args.tabId)
-      const envelope = await input.cli.execJson<BrowserSnapshotData>(input.sessionId, ['snapshot', '-i'])
+      let envelope = await input.cli.execJson<BrowserSnapshotData>(input.sessionId, ['snapshot'])
+      let snapshotMode: 'interactive' | 'full' = 'full'
+
+      if (readSnapshotText(envelope.data).length === 0) {
+        const interactiveEnvelope = await input.cli.execJson<BrowserSnapshotData>(input.sessionId, ['snapshot', '-i'])
+        if (readSnapshotText(interactiveEnvelope.data).length > 0) {
+          envelope = interactiveEnvelope
+          snapshotMode = 'interactive'
+        }
+      }
+
       const snapshotText = normalizeSnapshotText(envelope.data)
       const maxChars =
         typeof input.args.maxChars === 'number' && Number.isFinite(input.args.maxChars)
@@ -884,6 +921,7 @@ export async function executeAgentBrowserTool(input: {
         persistArtifact: input.persistArtifact,
         metadata: {
           ...(tabId ? { tabId } : {}),
+          snapshotMode,
           ...(typeof envelope.data?.origin === 'string' ? { origin: envelope.data.origin } : {}),
           ...(envelope.data?.refs ? { refs: envelope.data.refs } : {}),
         },
@@ -1029,7 +1067,8 @@ export async function executeAgentBrowserTool(input: {
       if (!fn || fn.trim().length === 0) {
         throw new Error('Browser action "evaluate" requires function.')
       }
-      const envelope = await input.cli.execJson<Record<string, unknown>>(input.sessionId, ['eval', fn])
+      const script = buildEvaluateScript(fn, input.args.args)
+      const envelope = await input.cli.execJson<BrowserEvaluateData>(input.sessionId, ['eval', script])
       return await finalizeBrowserTextResult({
         sessionId: input.sessionId,
         action,
@@ -1131,6 +1170,7 @@ export class BrowserSessionManager {
 }
 
 export const __testing = {
+  buildEvaluateScript,
   formatBrowserCommandFailureMessage,
   isRetryableBrowserCommandFailure,
 }

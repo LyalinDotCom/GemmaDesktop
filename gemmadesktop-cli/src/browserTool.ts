@@ -165,6 +165,32 @@ function optionalPositiveInteger(record: Record<string, unknown>, key: string, f
     : fallback;
 }
 
+function readSnapshotText(data: unknown): string {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return "";
+  }
+  const snapshot = (data as Record<string, unknown>).snapshot;
+  return typeof snapshot === "string" ? snapshot.trim() : "";
+}
+
+function normalizeEvaluateArgs(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function isBareEvaluateFunction(source: string): boolean {
+  return /^(?:async\s+)?(?:\([^()]*\)|[$A-Z_a-z][$\w]*)\s*=>/s.test(source)
+    || /^(?:async\s+)?function(?:\s+[$A-Z_a-z][$\w]*)?\s*\(/s.test(source);
+}
+
+function buildEvaluateScript(functionSource: string, args: unknown): string {
+  const trimmed = functionSource.trim();
+  if (!isBareEvaluateFunction(trimmed)) {
+    return trimmed;
+  }
+
+  return `(${trimmed})(...${JSON.stringify(normalizeEvaluateArgs(args))})`;
+}
+
 function buildExtractLinksScript(input: Record<string, unknown>): string {
   const textIncludes = optionalString(input, "textIncludes")?.toLowerCase() ?? "";
   const maxResults = Math.min(optionalPositiveInteger(input, "maxResults", 100), 250);
@@ -231,7 +257,7 @@ function resolveBrowserArgs(input: Record<string, unknown>): string[] {
       throw new Error('Browser action "wait" requires waitForText, waitForLoadState, or waitMs.');
     }
     case "snapshot":
-      return ["snapshot", "-i"];
+      return ["snapshot"];
     case "links":
       return ["eval", buildExtractLinksScript(input)];
     case "get_url":
@@ -263,7 +289,7 @@ function resolveBrowserArgs(input: Record<string, unknown>): string[] {
     case "close":
       return ["tab", "close", requireString(input, "tabId", action)];
     case "evaluate":
-      return ["eval", requireString(input, "function", action)];
+      return ["eval", buildEvaluateScript(requireString(input, "function", action), input.args)];
     default:
       throw new Error(`Unsupported browser action "${action}".`);
   }
@@ -321,6 +347,10 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
         inputText: { type: "string" },
         key: { type: "string" },
         function: { type: "string" },
+        args: {
+          type: "array",
+          items: {},
+        },
       },
       required: ["action"],
       additionalProperties: false,
@@ -331,13 +361,30 @@ export function createCliBrowserTool(): RegisteredTool<Record<string, unknown>> 
         context,
         args: resolveBrowserArgs(input),
       });
+      const fallbackEnvelope = action === "snapshot" && readSnapshotText(envelope.data).length === 0
+        ? await runBrowserCommand({
+          context,
+          args: ["snapshot", "-i"],
+        })
+        : null;
+      const outputEnvelope =
+        fallbackEnvelope && readSnapshotText(fallbackEnvelope.data).length > 0
+          ? fallbackEnvelope
+          : envelope;
       return {
-        output: formatBrowserOutput(action, envelope),
+        output: formatBrowserOutput(action, outputEnvelope),
         structuredOutput: {
           action,
-          data: envelope.data,
+          data: outputEnvelope.data,
         },
       };
     },
   };
 }
+
+export const __testing = {
+  buildEvaluateScript,
+  formatBrowserOutput,
+  readSnapshotText,
+  resolveBrowserArgs,
+};
