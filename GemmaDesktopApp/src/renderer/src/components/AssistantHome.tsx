@@ -16,14 +16,12 @@ interface AssistantHomeProps {
   readAloudSlot?: ReactNode
   hasConversation: boolean
   busy: boolean
-  pinnedToDock?: boolean
   assistantNarrationMode?: AssistantNarrationMode
   assistantNarrationAvailable?: boolean
   assistantNarrationDisabledReason?: string | null
   onWorkMode: () => void
   onCoBrowse: () => void
   onExitCoBrowse?: () => void
-  onTogglePin?: () => void
   onToggleAssistantNarration?: () => void
 }
 

@@ -1,33 +1,22 @@
 import { Brain, Pin } from 'lucide-react'
 
 interface GlobalChatSwitchBarProps {
-  assistantHomeVisible: boolean
   pinnedToDock: boolean
   busy: boolean
-  coBrowseActive?: boolean
-  onToggleHome: () => void
+  onOpenHome: () => void
   onTogglePin: () => void
 }
 
-const COBROWSE_LOCK_REASON = 'Stop CoBrowse first'
-
 export function GlobalChatSwitchBar({
-  assistantHomeVisible,
   pinnedToDock,
   busy,
-  coBrowseActive = false,
-  onToggleHome,
+  onOpenHome,
   onTogglePin,
 }: GlobalChatSwitchBarProps) {
-  const baseToggleLabel = assistantHomeVisible
-    ? 'Switch to Work mode'
-    : 'Open Assistant Home'
+  const toggleLabel = 'Open Assistant Home'
   const basePinLabel = pinnedToDock
     ? 'Unpin Assistant Chat from the right dock'
     : 'Pin Assistant Chat to the right dock'
-  const toggleLabel = coBrowseActive
-    ? `${baseToggleLabel} (${COBROWSE_LOCK_REASON})`
-    : baseToggleLabel
 
   return (
     <div className="no-drag pointer-events-none absolute inset-x-0 top-0 z-[95] flex justify-center px-4">
@@ -37,11 +26,10 @@ export function GlobalChatSwitchBar({
       >
         <button
           type="button"
-          onClick={onToggleHome}
-          disabled={coBrowseActive}
+          onClick={onOpenHome}
           aria-label={toggleLabel}
           title={toggleLabel}
-          className="no-drag flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 py-2 text-zinc-200 transition-colors hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-200"
+          className="no-drag flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 py-2 text-zinc-200 transition-colors hover:bg-white/5 hover:text-white"
         >
           <Brain size={19} className="shrink-0 text-zinc-100" />
         </button>

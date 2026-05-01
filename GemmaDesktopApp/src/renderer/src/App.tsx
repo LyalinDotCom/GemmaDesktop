@@ -1427,8 +1427,8 @@ export function App() {
     setRightDockView((current) => (current === view ? null : view))
   }
 
-  const toggleAssistantHome = useCallback(() => {
-    setAssistantHomeVisible((current) => !current)
+  const openAssistantHome = useCallback(() => {
+    setAssistantHomeVisible(true)
   }, [])
 
   const enterWorkMode = useCallback(() => {
@@ -2442,18 +2442,19 @@ export function App() {
       />
     </div>
   ) : null
-  const globalChatSwitchBar = (
-    <GlobalChatSwitchBar
-      assistantHomeVisible={assistantHomeVisible}
-      pinnedToDock={globalChatPinnedToDock}
-      busy={globalChatBusy}
-      coBrowseActive={coBrowseActive}
-      onToggleHome={toggleAssistantHome}
-      onTogglePin={toggleGlobalChatDockPin}
-    />
-  )
-  const globalChatSwitchBarLeftOffset =
-    !assistantHomeVisible && state.sidebarOpen ? sidebarResize.width : 0
+  const globalChatSwitchBar = !assistantHomeVisible ? (
+    <div
+      className="no-drag pointer-events-none fixed right-0 top-0 z-[95] h-12"
+      style={{ left: state.sidebarOpen ? sidebarResize.width : 0 }}
+    >
+      <GlobalChatSwitchBar
+        pinnedToDock={globalChatPinnedToDock}
+        busy={globalChatBusy}
+        onOpenHome={openAssistantHome}
+        onTogglePin={toggleGlobalChatDockPin}
+      />
+    </div>
+  ) : null
   const globalChatSessionControlsSlot = globalChatSession.targetKind === 'fallback' ? (
     <AssistantHomeSessionControls
       sessions={globalChatSession.talkSessions}
@@ -2538,12 +2539,7 @@ export function App() {
       {/* Title bar drag region */}
       <div className="drag-region fixed inset-x-0 top-0 z-50 h-12" />
 
-      <div
-        className="no-drag pointer-events-none fixed right-0 top-0 z-[95] h-12"
-        style={{ left: globalChatSwitchBarLeftOffset }}
-      >
-        {globalChatSwitchBar}
-      </div>
+      {globalChatSwitchBar}
 
       {/* Zone 1: Sidebar */}
       <div

@@ -15,25 +15,25 @@ const rendererCss = readFileSync(
 )
 
 describe('Assistant Chat surface copy', () => {
-  it('renders the top bar as a home/work switch without dropdown actions', () => {
+  it('renders the work-screen top bar as an Assistant Home switch without dropdown actions', () => {
     const markup = renderToStaticMarkup(
       createElement(
         GlobalChatSwitchBar,
         {
-          assistantHomeVisible: true,
           pinnedToDock: false,
           busy: false,
-          onToggleHome: () => {},
+          onOpenHome: () => {},
           onTogglePin: () => {},
         },
       ),
     )
 
-    expect(markup).toContain('aria-label="Switch to Work mode"')
+    expect(markup).toContain('aria-label="Open Assistant Home"')
     expect(markup).toContain('lucide-brain')
     expect(markup).not.toContain('lucide-chevron')
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
     expect(markup).toContain('aria-label="Pin Assistant Chat to the right dock"')
+    expect(markup).not.toContain('aria-label="Switch to Work mode"')
     expect(markup).toContain('no-drag pointer-events-none absolute')
     expect(markup).not.toContain('pointer-events-none fixed')
     expect(markup).toContain('rounded-xl p-1.5')
@@ -47,10 +47,9 @@ describe('Assistant Chat surface copy', () => {
       createElement(
         GlobalChatSwitchBar,
         {
-          assistantHomeVisible: false,
           pinnedToDock: true,
           busy: false,
-          onToggleHome: () => {},
+          onOpenHome: () => {},
           onTogglePin: () => {},
         },
       ),
@@ -68,10 +67,9 @@ describe('Assistant Chat surface copy', () => {
       createElement(
         GlobalChatSwitchBar,
         {
-          assistantHomeVisible: false,
           pinnedToDock: false,
           busy: false,
-          onToggleHome: () => {},
+          onOpenHome: () => {},
           onTogglePin: () => {},
         },
       ),
@@ -89,10 +87,8 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: true,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -149,10 +145,8 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: true,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -213,10 +207,8 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: true,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -240,10 +232,8 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: true,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -265,10 +255,8 @@ describe('Assistant Chat surface copy', () => {
         coBrowseSlot: createElement('div', { 'data-testid': 'cobrowse-browser' }, 'browser'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -298,10 +286,8 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: true,
         busy: true,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -323,11 +309,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         assistantNarrationMode: 'off',
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
         onToggleAssistantNarration: () => {},
       }),
     )
@@ -338,11 +322,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         assistantNarrationMode: 'summary',
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
         onToggleAssistantNarration: () => {},
       }),
     )
@@ -353,11 +335,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         assistantNarrationMode: 'full',
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
         onToggleAssistantNarration: () => {},
       }),
     )
@@ -385,11 +365,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
     const onMarkup = renderToStaticMarkup(
@@ -400,11 +378,9 @@ describe('Assistant Chat surface copy', () => {
         coBrowseSlot: createElement('div', { 'data-testid': 'cobrowse-browser' }, 'browser'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -428,11 +404,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         assistantNarrationMode: 'off',
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
         onToggleAssistantNarration: () => {},
       }),
     )
@@ -456,10 +430,8 @@ describe('Assistant Chat surface copy', () => {
         readAloudSlot: createElement('div', { 'data-testid': 'read-aloud-slot' }, 'read aloud playback'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -486,11 +458,9 @@ describe('Assistant Chat surface copy', () => {
         composerSlot: createElement('div', null, 'composer'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
     const onMarkup = renderToStaticMarkup(
@@ -501,11 +471,9 @@ describe('Assistant Chat surface copy', () => {
         coBrowseSlot: createElement('div', { 'data-testid': 'cobrowse-browser' }, 'browser'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -530,11 +498,9 @@ describe('Assistant Chat surface copy', () => {
         coBrowseSlot: createElement('div', { 'data-testid': 'cobrowse-browser' }, 'browser'),
         hasConversation: false,
         busy: false,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
     const busyMarkup = renderToStaticMarkup(
@@ -545,11 +511,9 @@ describe('Assistant Chat surface copy', () => {
         coBrowseSlot: createElement('div', { 'data-testid': 'cobrowse-browser' }, 'browser'),
         hasConversation: false,
         busy: true,
-        pinnedToDock: false,
         onWorkMode: () => {},
         onCoBrowse: () => {},
         onExitCoBrowse: () => {},
-        onTogglePin: () => {},
       }),
     )
 
@@ -564,35 +528,21 @@ describe('Assistant Chat surface copy', () => {
     expect(busyDisabledCount).toBe(2)
   })
 
-  it('locks the top GlobalChatSwitchBar Brain toggle while CoBrowse is on', () => {
-    const offMarkup = renderToStaticMarkup(
+  it('keeps the top GlobalChatSwitchBar free of Welcome-only CoBrowse state', () => {
+    const markup = renderToStaticMarkup(
       createElement(GlobalChatSwitchBar, {
-        assistantHomeVisible: true,
         pinnedToDock: false,
         busy: false,
-        coBrowseActive: false,
-        onToggleHome: () => {},
-        onTogglePin: () => {},
-      }),
-    )
-    const onMarkup = renderToStaticMarkup(
-      createElement(GlobalChatSwitchBar, {
-        assistantHomeVisible: true,
-        pinnedToDock: false,
-        busy: false,
-        coBrowseActive: true,
-        onToggleHome: () => {},
+        onOpenHome: () => {},
         onTogglePin: () => {},
       }),
     )
 
-    expect(offMarkup).not.toContain('disabled=""')
-    expect(onMarkup).toContain(
-      'aria-label="Switch to Work mode (Stop CoBrowse first)"',
-    )
-    expect(onMarkup).toContain('aria-label="Pin Assistant Chat to the right dock"')
-    const disabledCount = onMarkup.match(/disabled=""/g)?.length ?? 0
-    expect(disabledCount).toBe(1)
+    expect(markup).toContain('aria-label="Open Assistant Home"')
+    expect(markup).toContain('aria-label="Pin Assistant Chat to the right dock"')
+    expect(markup).not.toContain('Stop CoBrowse first')
+    expect(markup).not.toContain('aria-label="Switch to Work mode')
+    expect(markup).not.toContain('disabled=""')
   })
 
   it('mutes inline streaming progress when Assistant Home owns the external status', () => {
