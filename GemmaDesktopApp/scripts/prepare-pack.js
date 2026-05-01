@@ -171,6 +171,7 @@ function writeStageConfig() {
 function copyStageAssets() {
   copyDirectory(path.join(appRoot, 'out'), path.join(stageRoot, 'out'))
   copyDirectory(path.join(appRoot, 'resources'), path.join(stageRoot, 'resources'))
+  copyDirectory(path.join(appRoot, 'scripts'), path.join(stageRoot, 'scripts'))
 
   const readAloudAssetsDir = path.join(appRoot, '.cache', 'read-aloud-assets')
   if (fs.existsSync(readAloudAssetsDir)) {

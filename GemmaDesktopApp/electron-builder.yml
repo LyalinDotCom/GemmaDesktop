@@ -28,9 +28,15 @@ asarUnpack:
 buildDependenciesFromSource: false
 npmRebuild: true
 nodeGypRebuild: false
+afterPack: scripts/after-pack-macos-media-usage.js
 mac:
   icon: resources/icon.icns
   category: public.app-category.developer-tools
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: Gemma Desktop uses the camera only when you choose to attach a camera capture to a conversation.
+    NSMicrophoneUsageDescription: Gemma Desktop uses the microphone only when you choose speech input or voice features.
   target:
     - dmg
     - zip

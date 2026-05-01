@@ -461,6 +461,15 @@ export interface DoctorPermissionCheck {
   requestableInApp: boolean
 }
 
+export interface MediaPermissionRequestResult {
+  granted: boolean
+  status: DoctorPermissionStatus | string
+  previousStatus?: DoctorPermissionStatus | string
+  prompted?: boolean
+  timedOut?: boolean
+  requiresSettings?: boolean
+}
+
 export interface DoctorIssue {
   severity: 'error' | 'warning' | 'info'
   title: string
@@ -1192,8 +1201,8 @@ export interface GemmaDesktopBridge {
     writeText(text: string): Promise<void>
   }
   media: {
-    requestCameraAccess(): Promise<{ granted: boolean; status: string }>
-    requestMicrophoneAccess(): Promise<{ granted: boolean; status: string }>
+    requestCameraAccess(): Promise<MediaPermissionRequestResult>
+    requestMicrophoneAccess(): Promise<MediaPermissionRequestResult>
   }
   speech: {
     inspect(): Promise<SpeechInspection>

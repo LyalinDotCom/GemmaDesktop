@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Camera,
   Cpu,
@@ -22,6 +22,7 @@ import type {
   DoctorCommandCheck,
   DoctorIntegrationCheck,
   DoctorIssue,
+  MediaPermissionRequestResult,
   DoctorPermissionCheck,
   DoctorReport,
   DoctorRuntimeCheck,
@@ -140,6 +141,90 @@ function formatPermissionStatus(status: DoctorPermissionCheck['status']): string
     unsupported: 'N/A',
   }
   return map[status] ?? status
+}
+
+type MediaPermissionKind = 'camera' | 'microphone'
+
+function formatMediaPermissionLabel(kind: MediaPermissionKind): string {
+  return kind === 'camera' ? 'Camera' : 'Microphone'
+}
+
+export function describeMediaPermissionRequest(
+  kind: MediaPermissionKind,
+  result: MediaPermissionRequestResult,
+  browserError?: string,
+): string | null {
+  if (result.granted || result.status === 'granted') {
+    return null
+  }
+
+  const label = formatMediaPermissionLabel(kind)
+  const settingsTarget = `System Settings > Privacy & Security > ${label}`
+
+  if (
+    result.requiresSettings
+    || result.status === 'denied'
+    || result.status === 'restricted'
+  ) {
+    return `${label} access is blocked. Open ${settingsTarget} and enable Gemma Desktop, then try again.`
+  }
+
+  if (browserError) {
+    if (result.timedOut) {
+      return `${label} access did not finish through macOS (${browserError}). Open ${settingsTarget} and check whether Gemma Desktop is listed.`
+    }
+    return `${label} access was not granted (${browserError}). If no macOS prompt appeared, open ${settingsTarget} and check whether Gemma Desktop is listed.`
+  }
+
+  if (result.timedOut) {
+    return `${label} access did not finish through macOS. Try again, or open ${settingsTarget} and verify Gemma Desktop.`
+  }
+
+  if (result.status === 'not-determined') {
+    return `macOS has not granted ${label.toLowerCase()} access yet. Try the request again; if Gemma Desktop is already listed in ${settingsTarget}, enable it there.`
+  }
+
+  return `${label} access is not available yet. Open ${settingsTarget} and verify Gemma Desktop.`
+}
+
+export async function requestBrowserMediaPermission(
+  kind: MediaPermissionKind,
+): Promise<{ granted: boolean; error?: string }> {
+  const mediaDevices = navigator.mediaDevices
+  if (!mediaDevices?.getUserMedia) {
+    return {
+      granted: false,
+      error: 'media devices are unavailable in this window',
+    }
+  }
+
+  try {
+    const stream = await Promise.race([
+      mediaDevices.getUserMedia(
+        kind === 'camera'
+          ? { video: true, audio: false }
+          : { audio: true, video: false },
+      ),
+      new Promise<'timed-out'>((resolve) => {
+        setTimeout(() => resolve('timed-out'), 4000)
+      }),
+    ])
+    if (stream === 'timed-out') {
+      return {
+        granted: false,
+        error: `${kind} prompt timed out`,
+      }
+    }
+    for (const track of stream.getTracks()) {
+      track.stop()
+    }
+    return { granted: true }
+  } catch (err) {
+    return {
+      granted: false,
+      error: err instanceof Error ? err.message : 'request failed',
+    }
+  }
 }
 
 function Section({
@@ -301,6 +386,10 @@ export function DoctorPanel({
   const [activeTab, setActiveTab] = useState<DoctorTab>('overview')
   const [requestingCamera, setRequestingCamera] = useState(false)
   const [requestingMicrophone, setRequestingMicrophone] = useState(false)
+  const [mediaRequestMessage, setMediaRequestMessage] = useState<
+    Partial<Record<MediaPermissionKind, string>>
+  >({})
+  const mediaRequestIdRef = useRef(0)
   const [openingPrivacySettings, setOpeningPrivacySettings] = useState<
     'screen' | 'camera' | 'microphone' | null
   >(null)
@@ -349,29 +438,83 @@ export function DoctorPanel({
 
   if (!open) return null
 
-  const handleRequestCameraAccess = async () => {
-    setRequestingCamera(true)
+  const handleRequestMediaAccess = async (kind: MediaPermissionKind) => {
+    const requestId = mediaRequestIdRef.current + 1
+    mediaRequestIdRef.current = requestId
+    if (kind === 'camera') setRequestingCamera(true)
+    else setRequestingMicrophone(true)
+    let finalMessage: string | null = null
+    const label = formatMediaPermissionLabel(kind)
+    const timeoutMessage = `${label} access did not respond. Open System Settings > Privacy & Security > ${label} and check whether Gemma Desktop is listed, then try again.`
+    const watchdog = window.setTimeout(() => {
+      if (mediaRequestIdRef.current !== requestId) return
+      setError(timeoutMessage)
+      setMediaRequestMessage((current) => ({
+        ...current,
+        [kind]: timeoutMessage,
+      }))
+      if (kind === 'camera') setRequestingCamera(false)
+      else setRequestingMicrophone(false)
+    }, 6000)
+    setMediaRequestMessage((current) => ({
+      ...current,
+      [kind]: `Requesting ${label.toLowerCase()} access...`,
+    }))
+
     try {
-      await window.gemmaDesktopBridge.media.requestCameraAccess()
+      const request = () => kind === 'camera'
+        ? window.gemmaDesktopBridge.media.requestCameraAccess()
+        : window.gemmaDesktopBridge.media.requestMicrophoneAccess()
+      let result: MediaPermissionRequestResult = {
+        granted: false,
+        status: 'not-determined',
+        previousStatus: 'not-determined',
+        prompted: false,
+        requiresSettings: false,
+      }
+      let browserError: string | undefined
+
+      if (kind === 'camera') {
+        const browserResult = await requestBrowserMediaPermission(kind)
+        browserError = browserResult.error
+        if (browserResult.granted) {
+          result = {
+            ...result,
+            granted: true,
+            status: 'granted',
+          }
+        }
+      } else {
+        result = await request()
+      }
+
+      finalMessage = describeMediaPermissionRequest(kind, result, browserError)
       await loadReport(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not request camera access.')
+      finalMessage =
+        err instanceof Error
+          ? err.message
+          : `Could not request ${kind} access.`
     } finally {
-      setRequestingCamera(false)
+      window.clearTimeout(watchdog)
+      if (mediaRequestIdRef.current === requestId && finalMessage) {
+        setError(finalMessage)
+        setMediaRequestMessage((current) => ({
+          ...current,
+          [kind]: finalMessage,
+        }))
+      }
+      if (kind === 'camera') setRequestingCamera(false)
+      else setRequestingMicrophone(false)
     }
   }
 
-  const handleRequestMicrophoneAccess = async () => {
-    setRequestingMicrophone(true)
+  const handleRequestCameraAccess = async () => {
+    await handleRequestMediaAccess('camera')
+  }
 
-    try {
-      await window.gemmaDesktopBridge.media.requestMicrophoneAccess()
-      await loadReport(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not request microphone access.')
-    } finally {
-      setRequestingMicrophone(false)
-    }
+  const handleRequestMicrophoneAccess = async () => {
+    await handleRequestMediaAccess('microphone')
   }
 
   const handleRunReadAloudTest = async () => {
@@ -686,35 +829,42 @@ export function DoctorPanel({
                                 ? requestingMicrophone || openingPrivacySettings === perm.id
                                 : openingPrivacySettings === perm.id
                           return (
-                            <div key={perm.id} className="flex items-center justify-between px-3 py-2">
-                              <div className="flex items-center gap-2">
-                                <Icon size={13} className="text-zinc-400" />
-                                <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                                  {perm.label}
-                                </span>
-                                {canRequest ? (
-                                  <button
-                                    onClick={() => {
-                                      if (perm.id === 'camera') {
-                                        void handleRequestCameraAccess()
-                                        return
-                                      }
-                                      void handleRequestMicrophoneAccess()
-                                    }}
-                                    disabled={actionBusy}
-                                    className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50 dark:text-indigo-400"
-                                  >
-                                    {actionBusy ? 'Requesting...' : 'Request'}
-                                  </button>
-                                ) : shouldOpenSettings ? (
-                                  <button
-                                    onClick={() => { void handleOpenPrivacySettings(perm.id) }}
-                                    disabled={actionBusy}
-                                    className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50 dark:text-indigo-400"
-                                  >
-                                    {actionBusy ? 'Opening…' : 'Open Settings'}
-                                  </button>
-                                ) : null}
+                            <div key={perm.id} className="flex items-start justify-between gap-3 px-3 py-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <Icon size={13} className="text-zinc-400" />
+                                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                                    {perm.label}
+                                  </span>
+                                  {canRequest ? (
+                                    <button
+                                      onClick={() => {
+                                        if (perm.id === 'camera') {
+                                          void handleRequestCameraAccess()
+                                          return
+                                        }
+                                        void handleRequestMicrophoneAccess()
+                                      }}
+                                      disabled={actionBusy}
+                                      className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50 dark:text-indigo-400"
+                                    >
+                                      {actionBusy ? 'Requesting...' : 'Request'}
+                                    </button>
+                                  ) : shouldOpenSettings ? (
+                                    <button
+                                      onClick={() => { void handleOpenPrivacySettings(perm.id) }}
+                                      disabled={actionBusy}
+                                      className="text-[11px] text-indigo-600 hover:underline disabled:opacity-50 dark:text-indigo-400"
+                                    >
+                                      {actionBusy ? 'Opening…' : 'Open Settings'}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {(perm.id === 'camera' || perm.id === 'microphone') && mediaRequestMessage[perm.id] && (
+                                  <p className="mt-1 max-w-2xl text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                                    {mediaRequestMessage[perm.id]}
+                                  </p>
+                                )}
                               </div>
                               <Badge tone={permissionTone(perm)}>{formatPermissionStatus(perm.status)}</Badge>
                             </div>
