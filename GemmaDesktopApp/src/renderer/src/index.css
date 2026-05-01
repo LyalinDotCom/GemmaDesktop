@@ -200,9 +200,65 @@
     opacity: 0.72;
   }
 
+  .global-chat-switch-bar {
+    position: relative;
+    isolation: isolate;
+    transition:
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      filter 180ms ease;
+  }
+
+  .global-chat-switch-bar-nebula {
+    inset: 0;
+    opacity: 0.9;
+    transition:
+      filter 180ms ease,
+      opacity 180ms ease;
+  }
+
+  .global-chat-switch-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, rgba(5, 8, 23, 0.52) 0%, rgba(5, 8, 23, 0.18) 46%, rgba(5, 8, 23, 0.58) 100%),
+      radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.14) 0%, transparent 62%);
+    opacity: 1;
+    transition: opacity 180ms ease;
+  }
+
+  .global-chat-switch-bar:hover,
+  .global-chat-switch-bar:focus-within {
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow:
+      0 24px 70px -36px rgba(0, 0, 0, 0.85),
+      0 0 28px -18px rgba(34, 211, 238, 0.62),
+      0 16px 44px -34px rgba(244, 114, 182, 0.78);
+    filter: brightness(1.08);
+  }
+
+  .global-chat-switch-bar:hover .global-chat-switch-bar-nebula,
+  .global-chat-switch-bar:focus-within .global-chat-switch-bar-nebula {
+    opacity: 1;
+    filter: saturate(1.16) brightness(1.14);
+  }
+
+  .global-chat-switch-bar:hover::after,
+  .global-chat-switch-bar:focus-within::after {
+    opacity: 0.74;
+  }
+
+  .global-chat-switch-bar-busy .assistant-home-nebula::before {
+    animation-duration: 7s;
+    filter: blur(20px) saturate(1.22);
+    opacity: 0.94;
+  }
+
   /* Shared nebula art — same network of glowing curves and nodes that
-     anchors the welcome screen, available in two intensities so the work
-     surface can wear a quieter version of the same design language. */
+     anchors the welcome screen and the Work-mode top indicator. */
   .nebula-field {
     position: absolute;
     inset: 0;
@@ -257,63 +313,6 @@
 
   .nebula-field-vivid.nebula-field-busy .nebula-field-network-fast {
     animation-duration: 3.7s;
-  }
-
-  /* Ambient variant — work-mode background. The same paths and nodes,
-     dialed down so they read as quiet structure behind real content.
-     Animations are declared but paused by default so the shapes are always
-     present (no surprise pop-in); the overlay's -running modifier engages
-     motion while the agent is actually working. */
-  .nebula-field-ambient .nebula-field-network {
-    opacity: 0.32;
-  }
-
-  .nebula-field-ambient .nebula-field-network path {
-    stroke-width: 1;
-    opacity: 0.22;
-  }
-
-  .nebula-field-ambient .nebula-field-network-slow {
-    animation: nebula-field-network-float 42s ease-in-out infinite alternate;
-    animation-play-state: paused;
-  }
-
-  .nebula-field-ambient .nebula-field-network-fast {
-    animation: nebula-field-network-pulse 22s ease-in-out infinite alternate;
-    animation-play-state: paused;
-  }
-
-  .nebula-field-ambient .nebula-field-nodes circle {
-    fill: rgba(186, 230, 253, 0.55);
-    opacity: 0.34;
-    animation: nebula-field-node-pulse-ambient 9s ease-in-out infinite alternate;
-    animation-play-state: paused;
-  }
-
-  /* Light theme: bias the ambient palette toward indigo so it reads on a
-     pale background without pushing toward washed-out white. */
-  html:not(.dark) .nebula-field-ambient .nebula-field-network {
-    opacity: 0.22;
-  }
-
-  html:not(.dark) .nebula-field-ambient .nebula-field-nodes circle {
-    fill: rgba(99, 102, 241, 0.5);
-  }
-
-  /* Fixed full-viewport overlay used by AmbientMood. The shapes live here
-     all the time so they never have to fade in; the -running modifier just
-     resumes the animations underneath them. */
-  .nebula-field-ambient-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-  }
-
-  .nebula-field-ambient-overlay-running .nebula-field-network-slow,
-  .nebula-field-ambient-overlay-running .nebula-field-network-fast,
-  .nebula-field-ambient-overlay-running .nebula-field-nodes circle {
-    animation-play-state: running;
   }
 
   .assistant-home-stage {
@@ -506,15 +505,6 @@
     }
   }
 
-  @keyframes nebula-field-node-pulse-ambient {
-    from {
-      opacity: 0.34;
-    }
-    to {
-      opacity: 0.6;
-    }
-  }
-
   @keyframes assistant-streaming-dot {
     0%,
     72%,
@@ -538,9 +528,6 @@
       animation: none;
     }
 
-    .nebula-field-ambient-overlay {
-      transition: none;
-    }
   }
 
   .sidebar-session-running::before {

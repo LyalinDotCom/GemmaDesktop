@@ -624,9 +624,6 @@ export interface AppSettings {
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
   omlx: AppOmlxSettings
-  ambientEffects: {
-    enabled: boolean
-  }
   tools: {
     chromeMcp: {
       enabled: boolean

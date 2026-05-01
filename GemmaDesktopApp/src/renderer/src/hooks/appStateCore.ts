@@ -340,9 +340,6 @@ const defaultSettings: AppSettings = {
   ollama: getDefaultOllamaSettings(),
   lmstudio: getDefaultLmStudioSettings(),
   omlx: getDefaultOmlxSettings(),
-  ambientEffects: {
-    enabled: true,
-  },
   tools: {
     chromeMcp: {
       enabled: false,

@@ -1,7 +1,7 @@
 import { memo } from 'react'
 
 interface NebulaFieldProps {
-  variant: 'vivid' | 'ambient'
+  variant: 'vivid'
   busy?: boolean
 }
 

@@ -26,7 +26,6 @@ import { PlanQuestionCard } from '@/components/PlanQuestionCard'
 import { PlanExecutionCard } from '@/components/PlanExecutionCard'
 import { ToolApprovalCard } from '@/components/ToolApprovalCard'
 import { AutomationsPanel } from '@/components/AutomationsPanel'
-import { AmbientMood } from '@/components/AmbientMood'
 import { DoctorPanel } from '@/components/DoctorPanel'
 import { StartupLoadingOverlay } from '@/components/StartupLoadingOverlay'
 import { StartupRiskDialog } from '@/components/StartupRiskDialog'
@@ -2532,10 +2531,6 @@ export function App() {
 
   return (
     <div className="relative flex h-full overflow-hidden">
-      <AmbientMood
-        isGenerating={state.isGenerating}
-        enabled={state.settings.ambientEffects.enabled}
-      />
       {/* Title bar drag region */}
       <div className="drag-region fixed inset-x-0 top-0 z-50 h-12" />
 

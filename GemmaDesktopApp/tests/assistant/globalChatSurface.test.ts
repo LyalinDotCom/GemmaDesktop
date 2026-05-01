@@ -29,7 +29,13 @@ describe('Assistant Chat surface copy', () => {
     )
 
     expect(markup).toContain('aria-label="Open Assistant Home"')
-    expect(markup).toContain('lucide-brain')
+    expect(markup).toContain('global-chat-switch-bar')
+    expect(markup).toContain('global-chat-switch-bar-nebula')
+    expect(markup).toContain('assistant-home-nebula')
+    expect(markup).toContain('nebula-field-vivid')
+    expect(markup).not.toContain('lucide-brain')
+    expect(markup).not.toContain('bg-cyan-300')
+    expect(markup).not.toContain('self-stretch rounded-full')
     expect(markup).not.toContain('lucide-chevron')
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
     expect(markup).toContain('aria-label="Pin Assistant Chat to the right dock"')
@@ -40,6 +46,8 @@ describe('Assistant Chat surface copy', () => {
     expect(markup).not.toContain('aria-label="Assistant Chat actions"')
     expect(markup).not.toContain('shared composer')
     expect(markup).not.toContain('Built-in assistant chat')
+    expect(rendererCss).toContain('.global-chat-switch-bar:hover .global-chat-switch-bar-nebula')
+    expect(rendererCss).toContain('.global-chat-switch-bar:hover::after')
   })
 
   it('switches the top bar controls into pinned work mode', () => {
@@ -77,6 +85,37 @@ describe('Assistant Chat surface copy', () => {
 
     expect(markup).toContain('aria-label="Open Assistant Home"')
     expect(markup).not.toContain('aria-label="Context: ~4096 / 32768 tokens (13%)"')
+  })
+
+  it('speeds the full-bar nebula indicator while the assistant is busy', () => {
+    const idleMarkup = renderToStaticMarkup(
+      createElement(
+        GlobalChatSwitchBar,
+        {
+          pinnedToDock: false,
+          busy: false,
+          onOpenHome: () => {},
+          onTogglePin: () => {},
+        },
+      ),
+    )
+    const busyMarkup = renderToStaticMarkup(
+      createElement(
+        GlobalChatSwitchBar,
+        {
+          pinnedToDock: false,
+          busy: true,
+          onOpenHome: () => {},
+          onTogglePin: () => {},
+        },
+      ),
+    )
+
+    expect(idleMarkup).not.toContain('global-chat-switch-bar-busy')
+    expect(idleMarkup).not.toContain('nebula-field-busy')
+    expect(busyMarkup).toContain('global-chat-switch-bar-busy')
+    expect(busyMarkup).toContain('nebula-field-busy')
+    expect(busyMarkup).not.toContain('bg-cyan-300')
   })
 
   it('renders Assistant Home history at full height without an expander', () => {

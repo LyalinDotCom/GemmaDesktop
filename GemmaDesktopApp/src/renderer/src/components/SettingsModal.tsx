@@ -936,7 +936,7 @@ export function SettingsModal({
             <div className="space-y-6 px-8 py-6">
               {activeTab === 'general' && (
                 <>
-                  <SettingsSection title="Appearance" description="Theme and visual ambiance.">
+                  <SettingsSection title="Appearance" description="Theme preference.">
                     <SettingsRow
                       label="Theme"
                       description="Match the app to your preferred contrast."
@@ -958,24 +958,6 @@ export function SettingsModal({
                       </div>
                     </SettingsRow>
 
-                    <SettingsRow
-                      label="Ambient effects"
-                      description="Subtle calming visuals while the model is thinking."
-                      control={
-                        <Toggle
-                          ariaLabel="Toggle ambient effects"
-                          checked={local.ambientEffects.enabled}
-                          onChange={() => {
-                            const ambientEffects = {
-                              ...local.ambientEffects,
-                              enabled: !local.ambientEffects.enabled,
-                            }
-                            setLocal({ ...local, ambientEffects })
-                            commitUpdate({ ambientEffects })
-                          }}
-                        />
-                      }
-                    />
                   </SettingsSection>
 
                   <SettingsSection title="Composer" description="How the message input behaves.">

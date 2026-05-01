@@ -1094,9 +1094,6 @@ type AppSettingsRecord = {
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
   omlx: AppOmlxSettings
-  ambientEffects: {
-    enabled: boolean
-  }
   tools: {
     chromeMcp: {
       enabled: boolean
@@ -3706,9 +3703,6 @@ function getDefaultSettings(): AppSettingsRecord {
     ollama: getDefaultOllamaSettings(os.totalmem()),
     lmstudio: getDefaultLmStudioSettings(os.totalmem()),
     omlx: getDefaultOmlxSettings(os.totalmem()),
-    ambientEffects: {
-      enabled: true,
-    },
     tools: {
       chromeMcp: {
         enabled: false,
@@ -4119,10 +4113,6 @@ async function saveSettings(
       patch.omlx ?? current.omlx,
       current.omlx,
     ),
-    ambientEffects: {
-      ...current.ambientEffects,
-      ...(patch.ambientEffects ?? {}),
-    },
     tools: {
       ...current.tools,
       ...(patch.tools ?? {}),
