@@ -285,6 +285,14 @@ export function App() {
   const globalChatSession = useGlobalChatSession()
   const globalChatBusy =
     globalChatSession.isGenerating || globalChatSession.isCompacting
+  const modelReloadRequestRunning =
+    globalChatBusy
+    || state.isGenerating
+    || state.isCompacting
+    || state.sessions.some((session) => session.isGenerating || session.isCompacting)
+  const modelReloadDisabledReason = modelReloadRequestRunning
+    ? 'Finish or stop the running request before reloading models.'
+    : null
   const [globalChatHomeStatusNow, setGlobalChatHomeStatusNow] = useState(() =>
     Date.now(),
   )
@@ -2629,6 +2637,7 @@ export function App() {
           activeRuntimeId={state.activeSession?.runtimeId ?? null}
           helperModelId={state.bootstrapState.helperModelId}
           helperRuntimeId={state.bootstrapState.helperRuntimeId}
+          reloadModelsDisabledReason={modelReloadDisabledReason}
           onReloadModels={async () => {
             if (window.gemmaDesktopBridge.environment.reloadModels) {
               return await window.gemmaDesktopBridge.environment.reloadModels({

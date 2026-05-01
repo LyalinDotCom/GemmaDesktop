@@ -119,6 +119,7 @@ interface SidebarProps {
   activeRuntimeId?: string | null
   helperModelId?: string | null
   helperRuntimeId?: string | null
+  reloadModelsDisabledReason?: string | null
   onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
   initialSearchState?: SidebarInitialSearchState
 }
@@ -219,6 +220,7 @@ export function Sidebar({
   activeRuntimeId = null,
   helperModelId = null,
   helperRuntimeId = null,
+  reloadModelsDisabledReason = null,
   onReloadModels,
   initialSearchState,
 }: SidebarProps) {
@@ -278,6 +280,14 @@ export function Sidebar({
   const renameTitleInputRef = useRef<HTMLInputElement>(null)
   const renameIconInputRef = useRef<HTMLInputElement>(null)
   const searchTimeoutRef = useRef<number | null>(null)
+  const sessionRequestRunning = sessions.some(
+    (session) => session.isGenerating || session.isCompacting,
+  )
+  const effectiveReloadModelsDisabledReason =
+    reloadModelsDisabledReason
+    ?? (sessionRequestRunning
+      ? 'Finish or stop the running request before reloading models.'
+      : null)
   const searchRequestRef = useRef(0)
 
   const sidebarModel = useMemo(
@@ -484,7 +494,7 @@ export function Sidebar({
   }
 
   const handleReloadModels = async () => {
-    if (!onReloadModels || modelReloadPending) {
+    if (!onReloadModels || modelReloadPending || effectiveReloadModelsDisabledReason) {
       return
     }
 
@@ -1539,6 +1549,7 @@ export function Sidebar({
             helperModelId={helperModelId ?? undefined}
             helperRuntimeId={helperRuntimeId ?? undefined}
             reloadModelsBusy={modelReloadPending}
+            reloadModelsDisabledReason={effectiveReloadModelsDisabledReason}
             onReloadModels={handleReloadModels}
           />
         </div>

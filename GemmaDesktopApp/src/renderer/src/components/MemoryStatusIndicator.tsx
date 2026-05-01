@@ -22,6 +22,7 @@ interface MemoryStatusDetailProps {
   helperModelId?: string
   helperRuntimeId?: string
   reloadModelsBusy?: boolean
+  reloadModelsDisabledReason?: string | null
   onReloadModels?: () => Promise<unknown> | void
 }
 
@@ -303,6 +304,7 @@ export function MemoryStatusPanel({
   helperModelId,
   helperRuntimeId,
   reloadModelsBusy = false,
+  reloadModelsDisabledReason = null,
   onReloadModels,
 }: MemoryStatusDetailProps) {
   const [now, setNow] = useState(() => Date.now())
@@ -329,6 +331,25 @@ export function MemoryStatusPanel({
     ? modelTokenUsage?.startedAtMs ?? now
     : now
   const elapsedLabel = formatElapsedSince(sessionStartedAtMs, now)
+  const reloadModelsDisabled = reloadModelsBusy || Boolean(reloadModelsDisabledReason)
+  const reloadModelsTitle = reloadModelsBusy
+    ? 'Reloading expected models'
+    : reloadModelsDisabledReason ?? 'Reload expected models'
+
+  const handleReloadModelsClick = () => {
+    if (!onReloadModels || reloadModelsDisabled) {
+      return
+    }
+
+    const confirmed = window.confirm(
+      'Reload expected models? This will refresh the active model selection and may unload models that are no longer expected.',
+    )
+    if (!confirmed) {
+      return
+    }
+
+    void onReloadModels()
+  }
 
   useEffect(() => {
     setNow(Date.now())
@@ -358,10 +379,10 @@ export function MemoryStatusPanel({
           {onReloadModels && (
             <button
               type="button"
-              onClick={() => { void onReloadModels() }}
-              disabled={reloadModelsBusy}
+              onClick={handleReloadModelsClick}
+              disabled={reloadModelsDisabled}
               className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 outline-none transition-colors hover:bg-zinc-200 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 dark:focus-visible:ring-zinc-700"
-              title="Reload expected models"
+              title={reloadModelsTitle}
               aria-label="Reload expected models"
             >
               {reloadModelsBusy
