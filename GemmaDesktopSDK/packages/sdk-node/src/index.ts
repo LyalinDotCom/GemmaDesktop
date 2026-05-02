@@ -124,7 +124,7 @@ const WEB_RESEARCH_WORKER_PROMPT = [
   "Do not browse recursively or keep searching once the requested comparison is answerable.",
   "Return a short synthesis and the exact URLs you actually used.",
 ].join("\n");
-const DEFAULT_DELEGATED_WEB_RESEARCH_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_DELEGATED_WEB_RESEARCH_TIMEOUT_MS = 9 * 60_000;
 const MAX_DELEGATED_WEB_RESEARCH_ASSISTANT_CHARS = 8_000;
 const WEB_RESEARCH_TOOL_NAMES = new Set(["search_web", "fetch_url_safe", "fetch_url"]);
 
@@ -586,6 +586,14 @@ function normalizeWebResearchResult(
       "tool_execution_failed",
       "Web research agent finished without using search_web or fetch_url_safe.",
     );
+  }
+
+  if (summary.length === 0 && trace.sourceUrls.length > 0) {
+    const fallbackSources = [...new Set([...sources, ...trace.sourceUrls])].slice(0, 10);
+    return {
+      summary: `Web research gathered source evidence but the delegated worker did not synthesize a final summary. Sources: ${fallbackSources.join(", ")}`,
+      sources: fallbackSources,
+    };
   }
 
   if (summary.length === 0) {

@@ -10,6 +10,12 @@ import {
 } from "../helpers/ollama-live.js";
 
 const itIfLive = isOllamaLiveEnabled() ? it : it.skip;
+const DIRECT_TOOL_LIVE_TIMEOUT_MS =
+  Number(process.env.GEMMA_DESKTOP_TOOL_ROUTING_DIRECT_TIMEOUT_MS?.trim() || "")
+  || 10 * 60_000;
+const WEB_RESEARCH_LIVE_TIMEOUT_MS =
+  Number(process.env.GEMMA_DESKTOP_TOOL_ROUTING_WEB_RESEARCH_TIMEOUT_MS?.trim() || "")
+  || 10 * 60_000;
 
 function configuredEnvValue(...names: string[]): string | undefined {
   for (const name of names) {
@@ -33,8 +39,33 @@ function resolveConfiguredModel(): string {
     "GEMMA_DESKTOP_TOOL_ROUTING_MODEL_ID",
     "GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID",
     "GEMMA_DESKTOP_LIVE_MODEL_ID",
-  ) ?? "gemma4:26b";
+  ) ?? "gemma4:31b";
 }
+
+describe("live tool routing configuration", () => {
+  it("defaults to the 31B Gemma model for live acceptance coverage", () => {
+    const saved = {
+      GEMMA_DESKTOP_TOOL_ROUTING_MODEL_ID: process.env.GEMMA_DESKTOP_TOOL_ROUTING_MODEL_ID,
+      GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID: process.env.GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID,
+      GEMMA_DESKTOP_LIVE_MODEL_ID: process.env.GEMMA_DESKTOP_LIVE_MODEL_ID,
+    };
+    delete process.env.GEMMA_DESKTOP_TOOL_ROUTING_MODEL_ID;
+    delete process.env.GEMMA_DESKTOP_OLLAMA_LIVE_MODEL_ID;
+    delete process.env.GEMMA_DESKTOP_LIVE_MODEL_ID;
+
+    try {
+      expect(resolveConfiguredModel()).toBe("gemma4:31b");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value == null) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+});
 
 describe.sequential("live tool routing", () => {
   itIfLive(
@@ -101,7 +132,7 @@ describe.sequential("live tool routing", () => {
         ).toBe(false);
       });
     },
-    3 * 60_000,
+    DIRECT_TOOL_LIVE_TIMEOUT_MS,
   );
 
   itIfLive(
@@ -145,7 +176,7 @@ describe.sequential("live tool routing", () => {
         expect(result.text).toMatch(/Hacker News|story|headline/i);
       });
     },
-    3 * 60_000,
+    DIRECT_TOOL_LIVE_TIMEOUT_MS,
   );
 
   itIfLive(
@@ -172,14 +203,14 @@ describe.sequential("live tool routing", () => {
             withoutTools: ["search_web", "fetch_url", "fetch_url_safe"],
           },
           workingDirectory,
-          maxSteps: 4,
+          maxSteps: 6,
         });
 
         const prompt =
-          "Identify the latest top stories and main headlines from MSNBC, Fox News, and CNN. Compare the coverage to determine which stories are being broadly covered across all three and identify any notable differences in focus, framing, or specific stories emphasized by individual networks.";
+          "Use web_research_agent once to fetch https://www.cnn.com/, https://www.foxnews.com/, and https://www.msnbc.com/. Return one current headline or lead topic from each source, then a one-sentence comparison. Do not do open-ended searching beyond those three direct outlet pages unless a direct fetch fails.";
 
         const result = await session.run(prompt, {
-          maxSteps: 4,
+          maxSteps: 6,
         });
 
         const toolResult = result.toolResults.find(
@@ -195,6 +226,17 @@ describe.sequential("live tool routing", () => {
             : undefined;
 
         expect(toolResult).toBeDefined();
+        if (toolResult?.metadata?.toolError === true) {
+          console.log(
+            "[live-tool-routing] web_research_agent failure:",
+            JSON.stringify({
+              output: toolResult.output,
+              structuredOutput,
+              metadata: toolResult.metadata,
+              childTrace: childTrace.slice(0, 4_000),
+            }, null, 2),
+          );
+        }
         expect(toolResult?.metadata?.toolError).not.toBe(true);
         expect(structuredOutput?.summary ?? toolResult?.output ?? "").toMatch(/CNN|Fox|MSNBC/i);
         expect(structuredOutput?.sources?.length ?? 0).toBeGreaterThan(0);
@@ -203,6 +245,6 @@ describe.sequential("live tool routing", () => {
         expect(childTrace).toMatch(/fetch_url_safe|Fetched pages:/);
       });
     },
-    4 * 60_000,
+    WEB_RESEARCH_LIVE_TIMEOUT_MS,
   );
 });

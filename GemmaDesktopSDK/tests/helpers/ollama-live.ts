@@ -190,6 +190,38 @@ async function readLockOwnerSummary(): Promise<string> {
   }
 }
 
+function parseLockOwnerPid(ownerSummary: string): number | undefined {
+  try {
+    const parsed = JSON.parse(ownerSummary) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const pid = (parsed as Record<string, unknown>).pid;
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function removeStaleLiveModelLockIfOwnerExited(): Promise<boolean> {
+  const owner = await readLockOwnerSummary();
+  const pid = parseLockOwnerPid(owner);
+  if (pid == null) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ESRCH") {
+      return false;
+    }
+    await rm(LIVE_MODEL_LOCK_DIRECTORY, { recursive: true, force: true });
+    return true;
+  }
+}
+
 async function acquireLiveModelLock(timeoutMs: number): Promise<() => Promise<void>> {
   const startedAt = Date.now();
   const ownerSummary = JSON.stringify(
@@ -212,6 +244,10 @@ async function acquireLiveModelLock(timeoutMs: number): Promise<() => Promise<vo
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
+      }
+
+      if (await removeStaleLiveModelLockIfOwnerExited()) {
+        continue;
       }
 
       if (Date.now() - startedAt >= timeoutMs) {

@@ -15,7 +15,7 @@
     "test:live": "npm run test:ollama-live && npm run test:research-live",
     "test:full": "npm run test:default && npm run test:live",
     "test:ollama-live": "GEMMA_DESKTOP_RUN_OLLAMA_LIVE=1 vitest run tests/runtimes/ollama-tool-routing-live.test.ts",
-    "test:research-live": "GEMMA_DESKTOP_RUN_LIVE_RESEARCH=1 vitest run tests/research/research-gemma-live.test.ts tests/research/research-gemma-catalog-live.test.ts",
+    "test:research-live": "GEMMA_DESKTOP_RUN_LIVE_RESEARCH=1 vitest run --fileParallelism=false tests/research/research-gemma-live.test.ts tests/research/research-gemma-catalog-live.test.ts",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json --pretty false"
   },
   "devDependencies": {
