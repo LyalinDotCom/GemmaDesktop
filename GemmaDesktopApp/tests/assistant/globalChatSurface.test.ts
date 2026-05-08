@@ -251,9 +251,13 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    expect(markup).toContain('assistant-home-stage flex max-h-full w-full max-w-3xl')
+    expect(markup).toContain('assistant-home-stage flex max-h-full min-h-0')
     expect(markup).toContain('assistant-home-stage-with-conversation')
-    expect(markup).toContain('w-full max-w-3xl flex-none')
+    expect(markup).toContain('assistant-home-composer-shell w-full flex-none')
+    expect(rendererCss).toContain('--assistant-home-stage-min-width: 88rem;')
+    expect(rendererCss).toContain('--assistant-home-stage-max-width: 96rem;')
+    expect(rendererCss).toContain('width: min(calc(100vw - 5rem), clamp(')
+    expect(rendererCss).toContain('.assistant-home-session-controls,\n  .assistant-home-transcript-shell,')
     expect(rendererCss).toContain('.assistant-home-stage-expanded {\n    height: 100%;')
     expect(rendererCss).toContain('@media (max-height: 760px)')
     expect(rendererCss).toContain('.assistant-home-transcript-shell-expanded {\n    display: flex;')
@@ -281,6 +285,8 @@ describe('Assistant Chat surface copy', () => {
 
     expect(markup).toContain('assistant-home-stage-with-conversation')
     expect(markup).toContain('assistant-home-transcript-shell')
+    expect(markup).toContain('assistant-home-stage flex max-h-full min-h-0')
+    expect(markup).toContain('assistant-home-composer-shell w-full flex-none')
     expect(transcriptIndex).toBeGreaterThanOrEqual(0)
     expect(composerIndex).toBeGreaterThan(transcriptIndex)
   })

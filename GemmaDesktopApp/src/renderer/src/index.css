@@ -316,8 +316,28 @@
   }
 
   .assistant-home-stage {
+    --assistant-home-stage-min-width: 88rem;
+    --assistant-home-stage-max-width: 96rem;
+
+    width: min(calc(100vw - 5rem), clamp(
+      var(--assistant-home-stage-min-width),
+      82vw,
+      var(--assistant-home-stage-max-width)
+    ));
     max-height: 100%;
     transition: gap 220ms ease;
+  }
+
+  .assistant-home-session-controls,
+  .assistant-home-transcript-shell,
+  .assistant-home-composer-shell {
+    width: 100%;
+    max-width: var(--assistant-home-stage-max-width) !important;
+    min-width: 0;
+  }
+
+  .assistant-home-transcript {
+    width: 100%;
   }
 
   .assistant-home-stage-with-conversation {

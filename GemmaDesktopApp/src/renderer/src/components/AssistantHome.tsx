@@ -105,7 +105,7 @@ export function AssistantHome({
         >
           <div className="assistant-home-chat-pane flex h-full min-h-0 min-w-0 flex-col items-center justify-center">
             <div
-              className={`assistant-home-stage flex max-h-full w-full max-w-3xl min-h-0 flex-col items-center ${
+              className={`assistant-home-stage flex max-h-full min-h-0 flex-col items-center ${
                 hasConversation ? 'assistant-home-stage-with-conversation' : 'assistant-home-stage-empty'
               } ${hasConversation ? 'assistant-home-stage-expanded' : ''}`}
             >
@@ -124,7 +124,7 @@ export function AssistantHome({
                 </div>
               )}
 
-              <section className="w-full max-w-3xl flex-none">
+              <section className="assistant-home-composer-shell w-full flex-none">
                 {supportSlot}
                 {composerSlot}
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">

@@ -2245,6 +2245,7 @@ export function App() {
       onClearPinnedQuotes={handleClearGlobalPinnedQuotes}
       readAloudPlayback={readAloudPlayer.playbackControls}
       presentation="floating"
+      layout="expanded"
     />
   ) : null
   const globalChatHomeHistoryVisible = true
