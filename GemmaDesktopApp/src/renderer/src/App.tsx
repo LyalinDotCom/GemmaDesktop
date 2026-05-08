@@ -1714,6 +1714,7 @@ export function App() {
           latestAssistantFallbackPrimaryModelId={state.activeSession?.modelId ?? null}
           topPaddingClass="pt-16"
           contentLayout={mainChatContentLayout}
+          streamingStatusPlacement="bottom"
         />
       )
     }

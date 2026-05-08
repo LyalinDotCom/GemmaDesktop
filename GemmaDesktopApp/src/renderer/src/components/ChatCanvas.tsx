@@ -91,6 +91,39 @@ interface SelectedTextBubble {
   top: number
 }
 
+interface AssistantResponseRenderItem {
+  message: ChatMessage
+  collapsedEventMessages: ChatMessage[]
+}
+
+function isAssistantEventOnlyMessage(message: ChatMessage): boolean {
+  return message.role === 'assistant'
+    && message.content.length > 0
+    && message.content.every((content) =>
+      content.type === 'thinking' || content.type === 'tool_call'
+    )
+}
+
+function groupAssistantResponseMessages(
+  messages: ChatMessage[],
+): AssistantResponseRenderItem[] {
+  const items: AssistantResponseRenderItem[] = []
+
+  for (const message of messages) {
+    if (isAssistantEventOnlyMessage(message) && items.length > 0) {
+      items[items.length - 1]?.collapsedEventMessages.push(message)
+      continue
+    }
+
+    items.push({
+      message,
+      collapsedEventMessages: [],
+    })
+  }
+
+  return items
+}
+
 function disableReadAloudActionWhileBusy(
   action: ReadAloudButtonState | null | undefined,
   lock: ConversationUiControlLock,
@@ -600,12 +633,18 @@ export function ChatCanvas({
   // duration label and buttons permanently visible; older assistant rows
   // hide their duration and reveal buttons on hover.
   const latestAssistantMessageId = useMemo(() => {
+    let fallbackEventOnlyAssistantId: string | null = null
     for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
       if (visibleMessages[i]?.role === 'assistant') {
-        return visibleMessages[i]!.id
+        if (!fallbackEventOnlyAssistantId) {
+          fallbackEventOnlyAssistantId = visibleMessages[i]!.id
+        }
+        if (!isAssistantEventOnlyMessage(visibleMessages[i]!)) {
+          return visibleMessages[i]!.id
+        }
       }
     }
-    return null
+    return fallbackEventOnlyAssistantId
   }, [visibleMessages])
 
   const messagesWithPrimaryModelFallback = useMemo(
@@ -617,7 +656,10 @@ export function ChatCanvas({
     [latestAssistantFallbackPrimaryModelId, visibleMessages],
   )
 
-  const renderMessage = (message: ChatMessage) => {
+  const renderMessage = (
+    message: ChatMessage,
+    options?: { collapsedEventMessages?: ChatMessage[] },
+  ) => {
     const researchReportId = isCompletedResearchReportMessage(message)
       ? message.id
       : undefined
@@ -629,8 +671,10 @@ export function ChatCanvas({
         <Message
           sessionId={sessionId}
           message={message}
+          collapsedEventMessages={options?.collapsedEventMessages}
           autoExpandActiveBlocks={autoExpandActiveBlocks}
           showThinkingBlocks={showThinkingBlocks}
+          collapseInlineEvents={message.role === 'assistant'}
           showCopyAction={message.role === 'assistant'}
           isLatestAssistantTurn={
             message.role === 'assistant' && message.id === latestAssistantMessageId
@@ -711,6 +755,7 @@ export function ChatCanvas({
           {conversation.turns.map((turn, turnIndex) => {
             const turnLogs = debugTimeline.turnLogs[turnIndex]
             const betweenTurnLogs = debugTimeline.interstitialLogs[turnIndex + 1] ?? []
+            const responseItems = groupAssistantResponseMessages(turn.responses)
             const isPendingTurn =
               (isGenerating || isCompacting)
               && turn.responses.length === 0
@@ -723,7 +768,9 @@ export function ChatCanvas({
                 {debugEnabled &&
                   turnLogs?.beforeResult.map((card) => renderDebugCard(card))}
 
-                {turn.responses.map((message) => renderMessage(message))}
+                {responseItems.map(({ message, collapsedEventMessages }) =>
+                  renderMessage(message, { collapsedEventMessages })
+                )}
 
                 {isPendingTurn && (
                   <Message
@@ -737,8 +784,10 @@ export function ChatCanvas({
                     isStreaming
                     liveActivity={liveActivity}
                     showStreamingStatus={streamingStatusPlacement === 'inline'}
+                    showStreamingDots={streamingStatusPlacement !== 'bottom'}
                     autoExpandActiveBlocks={autoExpandActiveBlocks}
                     showThinkingBlocks={showThinkingBlocks}
+                    collapseInlineEvents
                     streamingStartedAt={turn.user.timestamp}
                     showCopyAction
                     showSelectionAction={Boolean(onToggleSelectionMode)}
@@ -781,8 +830,10 @@ export function ChatCanvas({
               isStreaming
               liveActivity={liveActivity}
               showStreamingStatus={streamingStatusPlacement === 'inline'}
+              showStreamingDots={streamingStatusPlacement !== 'bottom'}
               autoExpandActiveBlocks={autoExpandActiveBlocks}
               showThinkingBlocks={showThinkingBlocks}
+              collapseInlineEvents
               showCopyAction
               showSelectionAction={Boolean(onToggleSelectionMode)}
               readAloudAction={

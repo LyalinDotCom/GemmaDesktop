@@ -206,6 +206,138 @@ describe('ChatCanvas layout', () => {
     expect(markup).not.toContain('cd blackhole-sim &amp;&amp; npm run dev')
   })
 
+  it('collapses assistant tool and thinking follow-up messages under the prior assistant response', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Check Hacker News' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'I will check the top stories.' }],
+            timestamp: 2000,
+          },
+          {
+            id: 'assistant-thinking-1',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'Now I need to open the browser.' }],
+            timestamp: 2100,
+          },
+          {
+            id: 'assistant-tool-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'browser',
+                input: { operation: 'open' },
+                status: 'success',
+                output: 'Opened Hacker News.',
+                startedAt: 2200,
+                completedAt: 3200,
+              },
+            ],
+            timestamp: 2200,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('I will check the top stories.')
+    expect(markup).toContain('browser open')
+    expect(markup).not.toContain('Events')
+    expect(markup).not.toContain('Thinking / browser open')
+    expect(markup).not.toContain('Now I need to open the browser.')
+    expect(markup).not.toContain('Opened Hacker News.')
+  })
+
+  it('collapses inline assistant tool and thinking blocks into one event timeline', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Open Hacker News' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'I will open the page.' },
+              { type: 'thinking', text: 'Preparing browser navigation.' },
+              {
+                type: 'tool_call',
+                toolName: 'browser',
+                input: { operation: 'open' },
+                status: 'success',
+                output: 'Opened.',
+                startedAt: 2200,
+                completedAt: 3200,
+              },
+              { type: 'text', text: 'The page is open.' },
+            ],
+            timestamp: 2000,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('I will open the page.')
+    expect(markup).toContain('The page is open.')
+    expect(markup).toContain('browser open')
+    expect(markup).not.toContain('Events')
+    expect(markup).not.toContain('Thinking / browser open')
+    expect(markup).not.toContain('Preparing browser navigation.')
+    expect(markup).not.toContain('Opened.')
+  })
+
+  it('does not render in-message streaming dots when streaming status is placed below the chat', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Summarize the news' }],
+            timestamp: 1000,
+          },
+        ],
+        streamingContent: [
+          { type: 'text', text: 'The summary is arriving.' },
+        ],
+        isGenerating: true,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        streamingStatusPlacement: 'bottom',
+      }),
+    )
+
+    expect(markup).toContain('The summary is arriving.')
+    expect(markup).toContain('assistant-chat-bottom-status')
+    expect(markup).not.toContain('assistant-streaming-dots mt-2')
+  })
+
   it('ignores hidden background process notices when choosing latest assistant metadata', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatCanvas, {

@@ -233,6 +233,7 @@ export function TalkPanel({
                 pendingCompaction={pendingCompaction}
                 pendingToolApproval={pendingToolApproval}
                 getReadAloudButtonState={getReadAloudButtonState}
+                streamingStatusPlacement="bottom"
               />
             ) : (
               <div className="flex-1" />

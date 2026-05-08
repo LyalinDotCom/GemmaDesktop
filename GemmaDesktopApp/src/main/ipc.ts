@@ -1672,6 +1672,43 @@ function resolveProtectedTargetsForModelLoad(
   return [target]
 }
 
+function canRunHelperAlongsideActivePrimary(
+  helperTarget: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): boolean {
+  if (
+    currentPrimaryHoldCount() === 0
+    || !activePrimaryModelTarget
+    || primaryTargetsMatch(activePrimaryModelTarget, helperTarget)
+  ) {
+    return true
+  }
+
+  return isOllamaModelRuntime(activePrimaryModelTarget.runtimeId)
+    && isOllamaModelRuntime(helperTarget.runtimeId)
+    && currentSettings.runtimes.ollama.maxLoadedModels > 1
+}
+
+function resolveProtectedTargetsForHelperModelLoad(
+  helperTarget: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): PrimaryModelTarget[] {
+  const protectedTargets = resolveProtectedTargetsForModelLoad(
+    helperTarget,
+    currentSettings,
+  )
+
+  if (
+    currentPrimaryHoldCount() > 0
+    && activePrimaryModelTarget
+    && canRunHelperAlongsideActivePrimary(helperTarget, currentSettings)
+  ) {
+    protectedTargets.push(activePrimaryModelTarget)
+  }
+
+  return uniquePrimaryModelTargets(protectedTargets)
+}
+
 function describeOptionalPrimaryWarmupUnavailable(
   target: PrimaryModelTarget,
   error: LocalRuntimeUnavailableError,
@@ -3894,6 +3931,7 @@ async function acquireHelperModelLease(
       currentPrimaryHoldCount() > 0
       && activePrimaryModelTarget
       && !primaryTargetsMatch(activePrimaryModelTarget, helperTarget)
+      && !canRunHelperAlongsideActivePrimary(helperTarget, currentSettings)
     ) {
       throw new Error(
         `Gemma Desktop is already running ${activePrimaryModelTarget.runtimeId} / ${activePrimaryModelTarget.modelId}. Wait for that work to finish or stop it before starting helper model ${helperTarget.runtimeId} / ${helperTarget.modelId}.`,
@@ -3902,7 +3940,10 @@ async function acquireHelperModelLease(
 
     await runModelLifecycleExclusive(async () => {
       const unloadResult = await unloadResidentModelTargetsBeforeLoad({
-        protectedTargets: resolveProtectedTargetsForModelLoad(helperTarget, currentSettings),
+        protectedTargets: resolveProtectedTargetsForHelperModelLoad(
+          helperTarget,
+          currentSettings,
+        ),
         reason: `loading helper model ${formatPrimaryModelTarget(helperTarget)}`,
       })
       if (unloadResult.errors.length > 0) {

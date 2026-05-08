@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Info, X } from 'lucide-react'
+import { ChevronRight, AlertTriangle, Info, X } from 'lucide-react'
 import { AssistantActionRow } from '@/components/AssistantActionRow'
 import { MarkdownContent } from '@/components/MarkdownContent'
 import { CodeBlock } from '@/components/CodeBlock'
@@ -32,8 +32,11 @@ interface MessageProps {
   liveActivity?: LiveActivitySnapshot | null
   streamingStartedAt?: number
   showStreamingStatus?: boolean
+  showStreamingDots?: boolean
   autoExpandActiveBlocks?: boolean
   showThinkingBlocks?: boolean
+  collapseInlineEvents?: boolean
+  collapsedEventMessages?: ChatMessage[]
   showCopyAction?: boolean
   onCopyTurn?: () => Promise<void> | void
   readAloudAction?: {
@@ -95,6 +98,15 @@ interface ContentBlockProps {
 }
 
 type NoticeTone = 'error' | 'warning'
+
+type AssistantEventContent = Extract<MessageContent, { type: 'thinking' | 'tool_call' }>
+
+interface AssistantTimelineEvent {
+  id: string
+  content: AssistantEventContent
+  messageId: string
+  contentBlockIndex: number
+}
 
 function NoticeBlock({
   tone,
@@ -648,6 +660,178 @@ function StreamingDots({
   )
 }
 
+function buildAssistantTimelineEvents(
+  messages: ChatMessage[] | undefined,
+  showThinkingBlocks: boolean,
+): AssistantTimelineEvent[] {
+  if (!messages?.length) {
+    return []
+  }
+
+  return messages.flatMap((eventMessage) =>
+    buildAssistantTimelineEventsFromContent({
+      messageId: eventMessage.id,
+      content: eventMessage.content,
+      showThinkingBlocks,
+    }),
+  )
+}
+
+function isAssistantTimelineEventContent(
+  content: MessageContent,
+): content is AssistantEventContent {
+  return content.type === 'thinking' || content.type === 'tool_call'
+}
+
+function buildAssistantTimelineEventsFromContent(input: {
+  messageId: string
+  content: MessageContent[]
+  showThinkingBlocks: boolean
+}): AssistantTimelineEvent[] {
+  return input.content.flatMap((content, contentBlockIndex) => {
+    if (content.type === 'thinking' && !input.showThinkingBlocks) {
+      return []
+    }
+    if (!isAssistantTimelineEventContent(content)) {
+      return []
+    }
+
+    return [{
+      id: `${input.messageId}:${contentBlockIndex}`,
+      messageId: input.messageId,
+      content,
+      contentBlockIndex,
+    }]
+  })
+}
+
+function formatEventDuration(content: AssistantEventContent): string | null {
+  if (content.type !== 'tool_call') {
+    return null
+  }
+  if (content.startedAt == null || content.completedAt == null) {
+    return null
+  }
+  return `${Math.max(1, Math.round((content.completedAt - content.startedAt) / 1000))}s`
+}
+
+function getToolActionLabel(input: Record<string, unknown>): string | null {
+  for (const key of ['operation', 'action', 'command', 'url']) {
+    const value = input[key]
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim()
+    }
+  }
+
+  return null
+}
+
+function getAssistantTimelineEventLabel(content: AssistantEventContent): string {
+  if (content.type === 'thinking') {
+    return 'Thinking'
+  }
+
+  const actionLabel = getToolActionLabel(content.input)
+  return actionLabel
+    ? `${content.toolName} ${actionLabel}`
+    : content.toolName
+}
+
+function getAssistantTimelineEventSummary(content: AssistantEventContent): string | null {
+  if (content.type === 'thinking') {
+    return content.summary?.trim() || content.text.trim().split(/\s+/).slice(0, 14).join(' ') || null
+  }
+
+  return content.summary?.trim() || content.worker?.currentAction?.trim() || null
+}
+
+function AssistantEventTimeline({
+  sessionId,
+  events,
+}: {
+  sessionId?: string | null
+  events: AssistantTimelineEvent[]
+}) {
+  const [open, setOpen] = useState(false)
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null)
+
+  if (events.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-zinc-200/70 bg-zinc-50/70 text-xs text-zinc-600 dark:border-zinc-800/80 dark:bg-zinc-900/35 dark:text-zinc-400">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-100/70 dark:hover:bg-zinc-800/60"
+        aria-expanded={open}
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="min-w-0 flex-1 truncate font-medium text-zinc-600 dark:text-zinc-300">
+          {getAssistantTimelineEventLabel(events.at(-1)!.content)}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+          {events.length}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-zinc-200/70 px-2.5 py-1.5 dark:border-zinc-800/80">
+          {events.map((event, index) => {
+            const expanded = expandedEventId === event.id
+            const label = getAssistantTimelineEventLabel(event.content)
+            const summary = getAssistantTimelineEventSummary(event.content)
+            const duration = formatEventDuration(event.content)
+            return (
+              <div key={event.id} className={index > 0 ? 'mt-1' : ''}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedEventId((current) => current === event.id ? null : event.id)}
+                  className="flex w-full min-w-0 items-center gap-2 rounded px-1 py-1 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/70"
+                  aria-expanded={expanded}
+                >
+                  <ChevronRight
+                    size={11}
+                    className={`shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                  />
+                  <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-200">
+                    {label}
+                  </span>
+                  {summary && (
+                    <span className="min-w-0 flex-1 truncate text-zinc-400 dark:text-zinc-500">
+                      {summary}
+                    </span>
+                  )}
+                  {duration && (
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                      {duration}
+                    </span>
+                  )}
+                </button>
+                {expanded && (
+                  <div className="ml-4 mt-1 rounded-lg bg-white/60 px-2 py-1 dark:bg-zinc-950/35">
+                    <ContentBlock
+                      sessionId={sessionId}
+                      content={event.content}
+                      isActive
+                      autoExpandWhenActive
+                      contentBlockIndex={event.contentBlockIndex}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Message({
   sessionId = null,
   message,
@@ -655,8 +839,11 @@ export function Message({
   liveActivity,
   streamingStartedAt,
   showStreamingStatus = true,
+  showStreamingDots = true,
   autoExpandActiveBlocks = true,
   showThinkingBlocks = true,
+  collapseInlineEvents: collapseInlineEventsProp = false,
+  collapsedEventMessages,
   showCopyAction = false,
   onCopyTurn,
   readAloudAction,
@@ -769,11 +956,90 @@ export function Message({
     ),
     [message.content, showThinkingBlocks],
   )
+  const collapseInlineEvents =
+    collapseInlineEventsProp
+    && !isUser
+    && visibleContent.some((content) => !isAssistantTimelineEventContent(content))
+    && visibleContent.some(isAssistantTimelineEventContent)
+  const primaryVisibleContent = useMemo(
+    () =>
+      collapseInlineEvents
+        ? visibleContent.filter((content) => !isAssistantTimelineEventContent(content))
+        : visibleContent,
+    [collapseInlineEvents, visibleContent],
+  )
+  const inlineTimelineEvents = useMemo(
+    () =>
+      collapseInlineEvents
+        ? buildAssistantTimelineEventsFromContent({
+            messageId: message.id,
+            content: visibleContent,
+            showThinkingBlocks,
+          })
+        : [],
+    [collapseInlineEvents, message.id, showThinkingBlocks, visibleContent],
+  )
+  const assistantTimelineEvents = useMemo(
+    () => [
+      ...inlineTimelineEvents,
+      ...buildAssistantTimelineEvents(collapsedEventMessages, showThinkingBlocks),
+    ],
+    [collapsedEventMessages, inlineTimelineEvents, showThinkingBlocks],
+  )
 
   const activeIndex = findActiveBlockIndex(
-    visibleContent,
+    primaryVisibleContent,
     Boolean(isStreaming),
   )
+  const inlineTimelineInsertIndex =
+    collapseInlineEvents
+      ? visibleContent.findIndex(isAssistantTimelineEventContent)
+      : -1
+  const renderAssistantContentBlocks = () => {
+    const nodes: React.ReactNode[] = []
+    let insertedTimeline = false
+
+    visibleContent.forEach((content, i) => {
+      const isTimelineEvent = isAssistantTimelineEventContent(content)
+      if (collapseInlineEvents && isTimelineEvent) {
+        if (!insertedTimeline && i === inlineTimelineInsertIndex) {
+          insertedTimeline = true
+          nodes.push(
+            <AssistantEventTimeline
+              key="assistant-events"
+              sessionId={sessionId}
+              events={assistantTimelineEvents}
+            />,
+          )
+        }
+        return
+      }
+
+      nodes.push(
+        <ContentBlock
+          key={i}
+          sessionId={sessionId}
+          content={content}
+          isActive={i === activeIndex}
+          autoExpandWhenActive={autoExpandActiveBlocks}
+          contentBlockIndex={i}
+          selectionContext={selectionContext}
+        />,
+      )
+    })
+
+    if (!insertedTimeline && assistantTimelineEvents.length > 0) {
+      nodes.push(
+        <AssistantEventTimeline
+          key="assistant-events"
+          sessionId={sessionId}
+          events={assistantTimelineEvents}
+        />,
+      )
+    }
+
+    return nodes
+  }
   const selectionButtonVisible = showSelectionAction
   const selectionButtonDisabled = selectionButtonVisible
     && (Boolean(isStreaming) || assistantActionsLocked || !onToggleSelectionMode)
@@ -824,7 +1090,7 @@ export function Message({
               )}
             </div>
           )}
-          {visibleContent.map((content, i) => (
+          {primaryVisibleContent.map((content, i) => (
               <ContentBlock
                 key={i}
                 sessionId={sessionId}
@@ -843,17 +1109,7 @@ export function Message({
                 : ''
             }`}
           >
-            {visibleContent.map((content, i) => (
-              <ContentBlock
-                key={i}
-                sessionId={sessionId}
-                content={content}
-                isActive={i === activeIndex}
-                autoExpandWhenActive={autoExpandActiveBlocks}
-                contentBlockIndex={i}
-                selectionContext={selectionContext}
-              />
-            ))}
+            {renderAssistantContentBlocks()}
           </div>
 
           {isStreaming && showStreamingStatus && (
@@ -863,7 +1119,7 @@ export function Message({
             />
           )}
 
-          {isStreaming && !showStreamingStatus && (
+          {isStreaming && !showStreamingStatus && showStreamingDots && (
             <StreamingDots />
           )}
 
