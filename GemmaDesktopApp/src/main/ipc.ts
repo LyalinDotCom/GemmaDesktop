@@ -794,6 +794,7 @@ const primaryModelHoldCounts = new Map<string, number>()
 const helperModelHoldCounts = new Map<string, number>()
 const primaryModelAvailabilityIssues = new Map<string, PrimaryModelAvailabilityIssue>()
 const optionalPrimaryWarmupFailureReports = new Map<string, string>()
+const reportedOllamaProfileMismatchTargets = new Set<string>()
 let activePrimaryModelTarget: PrimaryModelTarget | null = null
 let primaryWarmupPromise: Promise<void> | null = null
 let lastOptionalPrimaryWarmupWarningKey: string | null = null
@@ -802,6 +803,21 @@ const pendingModelLoadTargets = new Map<string, PrimaryModelTarget>()
 let primaryModelLoadPromise: Promise<PrimaryModelTarget> | null = null
 let primaryModelLoadTarget: PrimaryModelTarget | null = null
 let modelLifecycleQueue: Promise<void> = Promise.resolve()
+
+function reportOllamaProfileMismatchOnce(
+  target: PrimaryModelTarget,
+  profile: OllamaManagedModelProfile | undefined,
+): void {
+  const warningKey = `${modelTargetKey(target)}:${profile?.num_ctx ?? 'unknown'}`
+  if (reportedOllamaProfileMismatchTargets.has(warningKey)) {
+    return
+  }
+
+  reportedOllamaProfileMismatchTargets.add(warningKey)
+  console.warn(
+    `[gemma-desktop] Tracked Ollama model ${target.modelId} is resident with a context that does not match the managed profile; keeping it resident because the selected model identity is authoritative.`,
+  )
+}
 
 function logBackgroundFailure(action: string, error: unknown): void {
   console.warn(`[gemma-desktop] ${action}:`, error)
@@ -2445,10 +2461,7 @@ async function isTrackedModelTargetResident(
 
     const profile = resolveManagedOllamaLoadProfile(currentSettings, target)
     if (!ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)) {
-      console.warn(
-        `[gemma-desktop] Tracked Ollama model ${target.modelId} is resident with a context that does not match the managed profile; reloading it.`,
-      )
-      return false
+      reportOllamaProfileMismatchOnce(target, profile)
     }
 
     return true
@@ -3265,33 +3278,21 @@ async function loadModelForRuntime(
       target.modelId,
     ).catch(() => undefined)
 
-    if (
-      loadedModel
-      && ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)
-    ) {
+    if (loadedModel) {
+      if (!ollamaLoadedConfigMatchesManagedProfile(loadedModel.config, profile)) {
+        reportOllamaProfileMismatchOnce(target, profile)
+      }
       appendModelLifecycleLog({
         action: 'load',
         status: 'skipped',
         target,
-        message: 'Model is already loaded with the managed profile.',
+        message: 'Selected model is already loaded.',
       })
       return target
     }
 
     const releasePendingLoad = markModelLoadPending(target)
     try {
-      if (loadedModel) {
-        await unloadOllamaModel(
-          currentSettings.runtimes.ollama.endpoint,
-          target.modelId,
-        ).catch((error) => {
-          if (isModelNotLoadedError(error)) {
-            return
-          }
-          throw wrapLocalRuntimeLoadError(error, currentSettings, target, 'unloading')
-        })
-      }
-
       try {
         await loadOllamaModel(
           currentSettings.runtimes.ollama.endpoint,
