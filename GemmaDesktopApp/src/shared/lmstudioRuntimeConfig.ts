@@ -34,15 +34,18 @@ const LMSTUDIO_CONTEXT_PRESET_VALUES = [
 
 function pickDefaultGemmaContextBySize(
   sizeId: GemmaSizeId,
-  _totalMemoryBytes: number,
+  totalMemoryBytes: number,
 ): number {
   switch (sizeId) {
     case 'e2b':
     case 'e4b':
       return 131_072
     case '26b':
+      return totalMemoryBytes > 32 * 1024 ** 3 ? 262_144 : 131_072
     case '31b':
-      return 262_144
+      if (totalMemoryBytes >= 96 * 1024 ** 3) return 262_144
+      if (totalMemoryBytes > 32 * 1024 ** 3) return 131_072
+      return 65_536
   }
 }
 
@@ -206,7 +209,7 @@ export function normalizeLmStudioSettings(
           ? normalized
           : {
               ...normalized,
-              context_length: Math.max(
+              context_length: Math.min(
                 normalized.context_length ?? catalogMaxContext,
                 catalogMaxContext,
               ),

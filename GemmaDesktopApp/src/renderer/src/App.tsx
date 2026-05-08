@@ -2354,9 +2354,6 @@ export function App() {
       sessions={globalChatSession.talkSessions}
       currentSessionId={globalChatSession.sessionId}
       busy={globalChatBusy || globalChatSession.loading}
-      onFocusCurrentSession={() => {
-        setGlobalComposerFocusKey((current) => current + 1)
-      }}
       onSelectSession={(sessionId) => {
         void globalChatSession.selectTalkSession(sessionId)
       }}

@@ -3,6 +3,7 @@ import {
   buildLmStudioLoadOptionsRecord,
   buildLmStudioRequestOptionsRecord,
   getDefaultLmStudioSettings,
+  normalizeLmStudioSettings,
   normalizeLmStudioManagedModelProfile,
   resolveManagedLmStudioProfile,
 } from '../../src/shared/lmstudioRuntimeConfig'
@@ -17,7 +18,7 @@ describe('lmstudio runtime config', () => {
     )
 
     expect(profile).toEqual(expect.objectContaining({
-      context_length: 262_144,
+      context_length: 131_072,
       temperature: 1,
       top_p: 0.95,
       top_k: 64,
@@ -26,17 +27,36 @@ describe('lmstudio runtime config', () => {
       num_experts: 4,
     }))
     expect(buildLmStudioLoadOptionsRecord(profile)).toEqual({
-      context_length: 262_144,
+      context_length: 131_072,
       num_experts: 4,
       flash_attention: true,
       offload_kv_cache_to_gpu: true,
     })
     expect(buildLmStudioRequestOptionsRecord(profile)).toEqual({
-      context_length: 262_144,
+      context_length: 131_072,
       temperature: 1,
       top_p: 0.95,
       top_k: 64,
     })
+  })
+
+  it('uses larger Gemma context defaults on high-memory machines', () => {
+    const settings = getDefaultLmStudioSettings(128 * 1024 ** 3)
+
+    expect(settings.modelProfiles['gemma4:26b']?.context_length).toBe(262_144)
+    expect(settings.modelProfiles['gemma4:31b']?.context_length).toBe(262_144)
+  })
+
+  it('keeps persisted managed Gemma context at or below the catalog maximum', () => {
+    const settings = normalizeLmStudioSettings({
+      modelProfiles: {
+        'gemma4:26b': { context_length: 131_072 },
+        'gemma4:31b': { context_length: 65_536 },
+      },
+    }, getDefaultLmStudioSettings(128 * 1024 ** 3))
+
+    expect(settings.modelProfiles['gemma4:26b']?.context_length).toBe(131_072)
+    expect(settings.modelProfiles['gemma4:31b']?.context_length).toBe(65_536)
   })
 
   it('infers Gemma defaults from LM Studio model identifiers', () => {
@@ -49,7 +69,7 @@ describe('lmstudio runtime config', () => {
     )
 
     expect(profile).toEqual(expect.objectContaining({
-      context_length: 262_144,
+      context_length: 131_072,
       temperature: 1,
       top_p: 0.95,
       top_k: 64,

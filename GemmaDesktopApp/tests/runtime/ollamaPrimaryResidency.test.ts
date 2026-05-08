@@ -12,8 +12,9 @@ describe('Ollama primary residency tracking', () => {
     )?.[0]
 
     expect(residencyCheck).toBeDefined()
-    expect(residencyCheck).toContain('reportOllamaProfileMismatchOnce(target, profile)')
+    expect(residencyCheck).toContain('return true')
     expect(residencyCheck).not.toContain('context that does not match the managed profile; reloading it')
+    expect(residencyCheck).not.toContain('ollamaLoadedConfigMatchesManagedProfile')
   })
 
   it('does not reload an already-resident selected Ollama model just to correct context metadata', () => {

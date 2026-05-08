@@ -684,7 +684,7 @@ describe('doctor helpers', () => {
     )
     expect(gemmaContextIssue).toBeDefined()
     expect(gemmaContextIssue?.detail).toContain('32K context')
-    expect(gemmaContextIssue?.detail).toContain("requested 256K")
+    expect(gemmaContextIssue?.detail).toContain("requested 128K")
   })
 
   it('warns when helper and primary defaults differ while Ollama is limited to one loaded model', () => {

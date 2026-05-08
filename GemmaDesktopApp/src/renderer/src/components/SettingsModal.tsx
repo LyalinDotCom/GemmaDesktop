@@ -26,7 +26,14 @@ import type { NotificationPermissionState } from '@shared/notifications'
 import {
   OLLAMA_CONTEXT_PRESET_VALUES,
   formatOllamaContextPreset,
+  getDefaultOllamaSettings,
 } from '@shared/ollamaRuntimeConfig'
+import {
+  getDefaultLmStudioSettings,
+} from '@shared/lmstudioRuntimeConfig'
+import {
+  getDefaultOmlxSettings,
+} from '@shared/omlxRuntimeConfig'
 import {
   READ_ALOUD_VOICE_OPTIONS,
   clampReadAloudSpeed,
@@ -347,6 +354,14 @@ export function SettingsModal({
     commitUpdate({ runtimes })
   }
 
+  const applyRecommendedModelProfile = (totalMemoryBytes: number) => {
+    const ollama = getDefaultOllamaSettings(totalMemoryBytes)
+    const lmstudio = getDefaultLmStudioSettings(totalMemoryBytes)
+    const omlx = getDefaultOmlxSettings(totalMemoryBytes)
+    setLocal({ ...local, ollama, lmstudio, omlx })
+    commitUpdate({ ollama, lmstudio, omlx })
+  }
+
   const handleOllamaProfileContextChange = (modelId: string, nextValue: number) => {
     const ollama = {
       ...local.ollama,
@@ -498,6 +513,41 @@ export function SettingsModal({
                       </div>
                     </SettingsRow>
 
+                  </SettingsSection>
+
+                  <SettingsSection
+                    title="Recommended Model Profiles"
+                    description="Apply Gemma Desktop's context-window defaults for the memory class you want this machine to behave like."
+                  >
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => applyRecommendedModelProfile(32 * 1024 ** 3)}
+                        className="rounded-lg border border-zinc-200 bg-white p-3 text-left transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+                      >
+                        <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          32 GB balanced
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                          26B at 128K, 31B at 64K. Keeps serious coding context while avoiding avoidable swap pressure.
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyRecommendedModelProfile(128 * 1024 ** 3)}
+                        className="rounded-lg border border-zinc-200 bg-white p-3 text-left transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+                      >
+                        <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          128 GB maximum
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                          26B and 31B at 256K. Uses the larger memory budget for deep repo work and long sessions.
+                        </div>
+                      </button>
+                    </div>
+                    <Note>
+                      These presets update Ollama, LM Studio, and oMLX managed Gemma profiles. Individual context controls remain editable.
+                    </Note>
                   </SettingsSection>
 
                   <SettingsSection title="Composer" description="How the message input behaves.">

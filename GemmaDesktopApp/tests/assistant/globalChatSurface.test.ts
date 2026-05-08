@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AssistantHome } from '../../src/renderer/src/components/AssistantHome'
-import { AssistantHomeSessionControls } from '../../src/renderer/src/components/AssistantHomeSessionControls'
+import {
+  AssistantHomeSessionControls,
+  listSelectableAssistantHomeSessions,
+} from '../../src/renderer/src/components/AssistantHomeSessionControls'
 import { ChatCanvas } from '../../src/renderer/src/components/ChatCanvas'
 import { GlobalChatSwitchBar } from '../../src/renderer/src/components/GlobalChatSwitchBar'
 import { TalkPanel } from '../../src/renderer/src/components/TalkPanel'
@@ -172,7 +175,6 @@ describe('Assistant Chat surface copy', () => {
       ],
       currentSessionId: 'talk-00000000-0000-4000-8000-000000000000',
       busy: false,
-      onFocusCurrentSession: () => {},
       onSelectSession: () => {},
       onStartNewSession: () => {},
     })
@@ -192,17 +194,17 @@ describe('Assistant Chat surface copy', () => {
     const controlsIndex = markup.indexOf('assistant-home-session-controls')
     const transcriptIndex = markup.indexOf('assistant-home-transcript w-full')
 
-    expect(markup).toContain('>Current chat<')
-    expect(markup).toContain('>Last session<')
+    expect(markup).not.toContain('>Current chat<')
+    expect(markup).not.toContain('>Last session<')
     expect(markup).toContain('aria-label="Search Assistant Chat sessions"')
     expect(markup).toContain('aria-label="Start new Assistant Chat session"')
     expect(markup).toContain('lucide-plus')
-    expect(markup).toContain('assistant-home-session-controls no-drag relative z-[90]')
+    expect(markup).toContain('assistant-home-session-controls no-drag relative z-[140] w-full')
     expect(controlsIndex).toBeGreaterThanOrEqual(0)
     expect(controlsIndex).toBeLessThan(transcriptIndex)
   })
 
-  it('disables Last session and session search when there is no previous chat content', () => {
+  it('disables session search when there is no previous chat content', () => {
     const markup = renderToStaticMarkup(
       createElement(AssistantHomeSessionControls, {
         sessions: [
@@ -225,17 +227,56 @@ describe('Assistant Chat surface copy', () => {
         ],
         currentSessionId: 'talk-00000000-0000-4000-8000-000000000000',
         busy: false,
-        onFocusCurrentSession: () => {},
         onSelectSession: () => {},
         onStartNewSession: () => {},
       }),
     )
 
-    expect(markup).toContain('title="No previous Assistant Chat session"')
+    expect(markup).not.toContain('No previous Assistant Chat session')
+    expect(markup).not.toContain('Last session')
     expect(markup).toContain('placeholder="No saved chats yet"')
     expect(markup).toContain('title="No saved Assistant Chat sessions"')
     expect(markup).toContain('title="Send a message before starting a new Assistant Chat session"')
-    expect(markup.match(/disabled=""/g)?.length ?? 0).toBe(4)
+    expect(markup.match(/disabled=""/g)?.length ?? 0).toBe(3)
+  })
+
+  it('orders selectable Assistant Chat sessions by most recent update first', () => {
+    const sessions = listSelectableAssistantHomeSessions([
+      {
+        id: 'current',
+        title: 'Assistant Chat',
+        lastMessage: 'Current thread',
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_000_000,
+        messageCount: 2,
+      },
+      {
+        id: 'older',
+        title: 'Assistant Chat',
+        lastMessage: 'Older thread',
+        createdAt: 1_690_000_000_000,
+        updatedAt: 1_695_000_000_000,
+        messageCount: 2,
+      },
+      {
+        id: 'newer',
+        title: 'Assistant Chat',
+        lastMessage: 'Newer thread',
+        createdAt: 1_696_000_000_000,
+        updatedAt: 1_699_000_000_000,
+        messageCount: 2,
+      },
+      {
+        id: 'empty',
+        title: 'Assistant Chat',
+        lastMessage: '',
+        createdAt: 1_701_000_000_000,
+        updatedAt: 1_701_000_000_000,
+        messageCount: 0,
+      },
+    ], 'current')
+
+    expect(sessions.map((session) => session.id)).toEqual(['newer', 'older'])
   })
 
   it('keeps expanded Assistant Home chat history in the reserved space above the composer', () => {
