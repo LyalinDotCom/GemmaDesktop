@@ -25,6 +25,23 @@ describe('project browser helpers', () => {
     expect(normalizeProjectBrowserAgentUrl('localhost:3000')).toBe('http://localhost:3000/')
     expect(normalizeProjectBrowserUrl('localhost:3000')).toBe('http://localhost:3000/')
     expect(normalizeProjectBrowserUrl('https://example.com')).toBe('https://example.com/')
+    expect(normalizeProjectBrowserUrl('https://example.com/docs).')).toBe('https://example.com/docs')
+  })
+
+  it('unwraps Google result redirects before agent navigation', () => {
+    expect(normalizeProjectBrowserAgentUrl(
+      'https://www.google.com/url?q=https%3A%2F%2Fwww.reuters.com%2Fworld%2Fdavid-attenborough-says-he-is-completely-overwhelmed-by-birthday-greetings-2026-05-08%2F&sa=U',
+    )).toBe(
+      'https://www.reuters.com/world/david-attenborough-says-he-is-completely-overwhelmed-by-birthday-greetings-2026-05-08/',
+    )
+
+    expect(normalizeProjectBrowserAgentUrl(
+      'https://www.google.com/search?q=reuters+david+attenborough',
+    )).toBe('https://www.google.com/search?q=reuters+david+attenborough')
+
+    expect(() => normalizeProjectBrowserAgentUrl(
+      'https://www.google.com/url?sa=U&ved=2ah',
+    )).toThrow('could not find a website URL')
   })
 
   it('normalizes user-entered website addresses without the agent localhost restriction', () => {

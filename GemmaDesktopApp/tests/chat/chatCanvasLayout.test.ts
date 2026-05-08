@@ -288,6 +288,13 @@ describe('ChatCanvas layout', () => {
                 completedAt: 3200,
               },
               { type: 'text', text: 'The page is open.' },
+              {
+                type: 'tool_call',
+                toolName: 'Gemma low helper',
+                input: { modelId: 'gemma4:e2b' },
+                status: 'success',
+                summary: 'Checked the final answer',
+              },
             ],
             timestamp: 2000,
           },
@@ -304,10 +311,48 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('I will open the page.')
     expect(markup).toContain('The page is open.')
     expect(markup).toContain('browser open')
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
     expect(markup).not.toContain('Events')
     expect(markup).not.toContain('Thinking / browser open')
+    expect(markup).not.toContain('Gemma low helper')
+    expect(markup).not.toContain('Checked the final answer')
     expect(markup).not.toContain('Preparing browser navigation.')
     expect(markup).not.toContain('Opened.')
+  })
+
+  it('collapses event-only streaming content before visible text arrives', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Open Hacker News' }],
+            timestamp: 1000,
+          },
+        ],
+        streamingContent: [
+          { type: 'thinking', text: 'Preparing browser navigation.' },
+          {
+            type: 'tool_call',
+            toolName: 'browser',
+            input: { operation: 'open' },
+            status: 'running',
+            startedAt: 2200,
+          },
+        ],
+        isGenerating: true,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        streamingStatusPlacement: 'bottom',
+      }),
+    )
+
+    expect(markup).toContain('browser open')
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
+    expect(markup).not.toContain('Preparing browser navigation.')
   })
 
   it('does not render in-message streaming dots when streaming status is placed below the chat', () => {
@@ -336,6 +381,33 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('The summary is arriving.')
     expect(markup).toContain('assistant-chat-bottom-status')
     expect(markup).not.toContain('assistant-streaming-dots mt-2')
+  })
+
+  it('does not render in-message streaming dots when streaming status is external', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Test' }],
+            timestamp: 1000,
+          },
+        ],
+        streamingContent: [
+          { type: 'text', text: 'Working on it.' },
+        ],
+        isGenerating: true,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        streamingStatusPlacement: 'external',
+      }),
+    )
+
+    expect(markup).toContain('Working on it.')
+    expect(markup).not.toContain('assistant-streaming-dots')
   })
 
   it('ignores hidden background process notices when choosing latest assistant metadata', () => {

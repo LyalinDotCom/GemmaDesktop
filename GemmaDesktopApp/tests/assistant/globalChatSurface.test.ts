@@ -660,10 +660,8 @@ describe('Assistant Chat surface copy', () => {
       }),
     )
 
-    const dotsIndex = markup.indexOf('assistant-streaming-dots')
-
-    expect(markup).toContain('aria-label="Working"')
-    expect(dotsIndex).toBeGreaterThanOrEqual(0)
+    expect(markup).not.toContain('aria-label="Working"')
+    expect(markup).not.toContain('assistant-streaming-dots')
     expect(markup).not.toContain('assistant-chat-bottom-status')
   })
 

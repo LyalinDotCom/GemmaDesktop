@@ -680,7 +680,12 @@ function buildAssistantTimelineEvents(
 function isAssistantTimelineEventContent(
   content: MessageContent,
 ): content is AssistantEventContent {
-  return content.type === 'thinking' || content.type === 'tool_call'
+  return content.type === 'thinking'
+    || (content.type === 'tool_call' && content.toolName !== 'Gemma low helper')
+}
+
+function isInternalCollapsedAssistantEventContent(content: MessageContent): boolean {
+  return content.type === 'tool_call' && content.toolName === 'Gemma low helper'
 }
 
 function buildAssistantTimelineEventsFromContent(input: {
@@ -760,7 +765,10 @@ function AssistantEventTimeline({
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-zinc-200/70 bg-zinc-50/70 text-xs text-zinc-600 dark:border-zinc-800/80 dark:bg-zinc-900/35 dark:text-zinc-400">
+    <div
+      data-assistant-event-timeline="true"
+      className="mt-2 rounded-lg border border-zinc-200/70 bg-zinc-50/70 text-xs text-zinc-600 dark:border-zinc-800/80 dark:bg-zinc-900/35 dark:text-zinc-400"
+    >
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -959,7 +967,6 @@ export function Message({
   const collapseInlineEvents =
     collapseInlineEventsProp
     && !isUser
-    && visibleContent.some((content) => !isAssistantTimelineEventContent(content))
     && visibleContent.some(isAssistantTimelineEventContent)
   const primaryVisibleContent = useMemo(
     () =>
@@ -1000,6 +1007,10 @@ export function Message({
     let insertedTimeline = false
 
     visibleContent.forEach((content, i) => {
+      if (collapseInlineEvents && isInternalCollapsedAssistantEventContent(content)) {
+        return
+      }
+
       const isTimelineEvent = isAssistantTimelineEventContent(content)
       if (collapseInlineEvents && isTimelineEvent) {
         if (!insertedTimeline && i === inlineTimelineInsertIndex) {

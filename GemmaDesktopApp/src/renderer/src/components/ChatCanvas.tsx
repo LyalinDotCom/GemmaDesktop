@@ -784,7 +784,7 @@ export function ChatCanvas({
                     isStreaming
                     liveActivity={liveActivity}
                     showStreamingStatus={streamingStatusPlacement === 'inline'}
-                    showStreamingDots={streamingStatusPlacement !== 'bottom'}
+                    showStreamingDots={streamingStatusPlacement === 'inline'}
                     autoExpandActiveBlocks={autoExpandActiveBlocks}
                     showThinkingBlocks={showThinkingBlocks}
                     collapseInlineEvents
@@ -830,7 +830,7 @@ export function ChatCanvas({
               isStreaming
               liveActivity={liveActivity}
               showStreamingStatus={streamingStatusPlacement === 'inline'}
-              showStreamingDots={streamingStatusPlacement !== 'bottom'}
+              showStreamingDots={streamingStatusPlacement === 'inline'}
               autoExpandActiveBlocks={autoExpandActiveBlocks}
               showThinkingBlocks={showThinkingBlocks}
               collapseInlineEvents

@@ -211,8 +211,57 @@ function looksLikeLocalAddressWithoutProtocol(input: string): boolean {
   return /^(?:localhost|(?:[a-z0-9-]+\.)*localhost|(?:127\.0\.0\.1|0\.0\.0\.0)|\[?::1\]?)(?::\d+)?(?:[/?#].*)?$/i.test(input)
 }
 
+function trimCopiedUrlText(input: string): string {
+  let trimmed = input.trim().replace(/^['"`<]+|['"`>]+$/g, '')
+  while (/[.,;:]+$/.test(trimmed)) {
+    trimmed = trimmed.slice(0, -1).trimEnd()
+  }
+  while (
+    /[)\]}]+$/.test(trimmed)
+    && (trimmed.match(/[)\]}]/g)?.length ?? 0) > (trimmed.match(/[([{]/g)?.length ?? 0)
+  ) {
+    trimmed = trimmed.slice(0, -1).trimEnd()
+  }
+  return trimmed
+}
+
+function isGoogleProjectBrowserUrl(parsed: URL): boolean {
+  const hostname = parsed.hostname.toLowerCase()
+  return hostname === 'google.com' || hostname.endsWith('.google.com')
+}
+
+function extractGoogleRedirectDestination(parsed: URL): string | null {
+  if (!isGoogleProjectBrowserUrl(parsed)) {
+    return null
+  }
+
+  if (!parsed.pathname.startsWith('/url')) {
+    return null
+  }
+
+  for (const key of ['q', 'url']) {
+    const value = parsed.searchParams.get(key)
+    if (!value) {
+      continue
+    }
+
+    try {
+      const destination = new URL(trimCopiedUrlText(value))
+      if (destination.protocol === 'http:' || destination.protocol === 'https:') {
+        return destination.toString()
+      }
+    } catch {
+      // Keep looking for a usable destination parameter.
+    }
+  }
+
+  throw new Error(
+    'Project Browser could not find a website URL inside the Google result redirect.',
+  )
+}
+
 export function normalizeProjectBrowserUserUrl(input: string): string {
-  const trimmed = input.trim()
+  const trimmed = trimCopiedUrlText(input)
   if (!trimmed) {
     throw new Error('Project Browser requires a URL.')
   }
@@ -246,6 +295,10 @@ export function normalizeProjectBrowserUserUrl(input: string): string {
 
 export function normalizeProjectBrowserAgentUrl(input: string): string {
   const normalized = normalizeProjectBrowserUserUrl(input)
+  const googleRedirectDestination = extractGoogleRedirectDestination(new URL(normalized))
+  if (googleRedirectDestination) {
+    return normalizeProjectBrowserAgentUrl(googleRedirectDestination)
+  }
 
   if (!isAllowedProjectBrowserAgentUrl(normalized)) {
     throw new Error(
