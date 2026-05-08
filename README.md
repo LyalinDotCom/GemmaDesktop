@@ -313,6 +313,8 @@ npm run dev
 
 From there, the in-app settings let you swap runtimes, install other Gemma sizes, point at LM Studio or llama.cpp, configure tools, and inspect what's actually loaded through the Doctor panel.
 
+If you want to contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md) and the repository guidance in [AGENTS.md](AGENTS.md).
+
 ---
 
 ## Alpha & safety
