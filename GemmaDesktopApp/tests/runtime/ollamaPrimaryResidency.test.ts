@@ -20,7 +20,7 @@ describe('Ollama primary residency tracking', () => {
   it('does not reload an already-resident selected Ollama model just to correct context metadata', () => {
     const ipcSource = fs.readFileSync(ipcSourcePath, 'utf8')
     const ollamaLoadPath = ipcSource.match(
-      /if \(target\.runtimeId === 'ollama-native' \|\| target\.runtimeId === 'ollama-openai'\) \{[\s\S]*?\n  \}\n\n  if \(isLmStudioModelRuntime/,
+      /if \(target\.runtimeId === 'ollama-native' \|\| target\.runtimeId === 'ollama-openai'\) \{[\s\S]*?\n {2}\}\n\n {2}if \(isLmStudioModelRuntime/,
     )?.[0]
 
     expect(ollamaLoadPath).toBeDefined()

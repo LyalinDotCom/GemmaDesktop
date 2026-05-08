@@ -959,6 +959,19 @@ export interface MenuBarPopupState {
   captureBusy: boolean
 }
 
+export interface AppDataResetRequest {
+  assistantChat?: 'all'
+  assistantChatSessionIds?: string[]
+  sessions?: 'all'
+  settings?: boolean
+}
+
+export interface AppDataResetResult {
+  assistantChatSessionsDeleted: number
+  sessionsDeleted: number
+  settingsReset: boolean
+}
+
 export interface GemmaDesktopBridge {
   sidebar: {
     get(): Promise<SidebarState>
@@ -1084,6 +1097,9 @@ export interface GemmaDesktopBridge {
     startSession(): Promise<SessionDetail>
     switchSession(sessionId: string): Promise<SessionDetail>
     clearSession(): Promise<SessionDetail>
+  }
+  appData: {
+    reset(input: AppDataResetRequest): Promise<AppDataResetResult>
   }
   globalChat: {
     getState(): Promise<GlobalChatState>

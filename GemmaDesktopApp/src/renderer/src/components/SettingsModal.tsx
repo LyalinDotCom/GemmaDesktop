@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import {
   Bell,
+  Database,
   ExternalLink,
   Eye,
   EyeOff,
   FolderOpen,
   Loader2,
   RotateCcw,
+  Trash2,
   X,
 } from 'lucide-react'
 import {
@@ -16,12 +18,14 @@ import {
 import type {
   AppSettings,
   AppToolPolicyMode,
+  AppDataResetResult,
   ModelSummary,
   ReadAloudInspection,
   ReadAloudTestInput,
   SpeechInspection,
   TerminalAppInfo,
 } from '@/types'
+import type { GlobalChatConversationSummary } from '@shared/globalChat'
 import type { NotificationPermissionState } from '@shared/notifications'
 import {
   OLLAMA_CONTEXT_PRESET_VALUES,
@@ -85,6 +89,7 @@ export type SettingsTab =
   | 'chrome'
   | 'integrations'
   | 'tools'
+  | 'data'
   | 'about'
 
 const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
@@ -100,6 +105,7 @@ const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['chrome', 'Browser'],
   ['integrations', 'Integrations'],
   ['tools', 'Tools'],
+  ['data', 'Data & Defaults'],
   ['about', 'About'],
 ] as const
 
@@ -258,6 +264,35 @@ function formatNotificationPermissionLabel(
   }
 }
 
+function formatDataResetResult(result: AppDataResetResult): string {
+  const parts = [
+    result.assistantChatSessionsDeleted > 0
+      ? `${result.assistantChatSessionsDeleted} Assistant Chat conversation${
+        result.assistantChatSessionsDeleted === 1 ? '' : 's'
+      }`
+      : null,
+    result.sessionsDeleted > 0
+      ? `${result.sessionsDeleted} work chat${result.sessionsDeleted === 1 ? '' : 's'}`
+      : null,
+    result.settingsReset ? 'settings reset' : null,
+  ].filter(Boolean)
+
+  return parts.length > 0 ? `Done: ${parts.join(', ')}.` : 'Nothing changed.'
+}
+
+function formatDataSessionTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return 'Unknown time'
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp))
+}
+
 export function SettingsModal({
   settings,
   models,
@@ -277,6 +312,13 @@ export function SettingsModal({
   const [local, setLocal] = useState(settings)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [dataBusy, setDataBusy] = useState<string | null>(null)
+  const [dataError, setDataError] = useState<string | null>(null)
+  const [dataNotice, setDataNotice] = useState<string | null>(null)
+  const [assistantChatSessions, setAssistantChatSessions] = useState<
+    GlobalChatConversationSummary[]
+  >([])
+  const [workChatCount, setWorkChatCount] = useState(0)
   const [installedTerminals, setInstalledTerminals] = useState<TerminalAppInfo[]>([])
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -321,6 +363,64 @@ export function SettingsModal({
       .catch((error) => { console.error('Failed to inspect installed terminals:', error) })
     return () => { cancelled = true }
   }, [])
+
+  const refreshDataSummary = async () => {
+    const [talkSessions, sessions] = await Promise.all([
+      window.gemmaDesktopBridge.talk.listSessions(),
+      window.gemmaDesktopBridge.sessions.list(),
+    ])
+    setAssistantChatSessions(talkSessions)
+    setWorkChatCount(sessions.length)
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'data') {
+      return
+    }
+
+    let cancelled = false
+    void Promise.all([
+      window.gemmaDesktopBridge.talk.listSessions(),
+      window.gemmaDesktopBridge.sessions.list(),
+    ])
+      .then(([talkSessions, sessions]) => {
+        if (cancelled) return
+        setAssistantChatSessions(talkSessions)
+        setWorkChatCount(sessions.length)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setDataError(error instanceof Error ? error.message : String(error))
+      })
+    return () => { cancelled = true }
+  }, [activeTab])
+
+  const runDataReset = async (
+    busyLabel: string,
+    confirmMessage: string,
+    input: Parameters<typeof window.gemmaDesktopBridge.appData.reset>[0],
+  ) => {
+    if (!window.confirm(confirmMessage)) {
+      return
+    }
+
+    setDataBusy(busyLabel)
+    setDataError(null)
+    setDataNotice(null)
+    try {
+      const result = await window.gemmaDesktopBridge.appData.reset(input)
+      setDataNotice(formatDataResetResult(result))
+      if (result.settingsReset) {
+        const updatedSettings = await window.gemmaDesktopBridge.settings.get()
+        setLocal(updatedSettings)
+      }
+      await refreshDataSummary()
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDataBusy(null)
+    }
+  }
 
   const handleClose = () => {
     void Promise.resolve(onUpdate(local)).catch((error) => {
@@ -487,8 +587,8 @@ export function SettingsModal({
           </nav>
 
           {/* Content */}
-          <div ref={contentScrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-            <div className="space-y-6 px-8 py-6">
+          <div ref={contentScrollRef} className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="min-w-0 space-y-6 px-8 py-6">
               {activeTab === 'general' && (
                 <>
                   <SettingsSection title="Appearance" description="Theme preference.">
@@ -1506,6 +1606,168 @@ export function SettingsModal({
 
                   <Note>Disabling a tool here hard-blocks it even if a prompt or mode preset would otherwise allow it.</Note>
                 </SettingsSection>
+              )}
+
+              {activeTab === 'data' && (
+                <>
+                  <SettingsSection
+                    title="Reset Levels"
+                    description="Choose how far to return Gemma Desktop toward a fresh start. Memory and installed Skills are never removed here."
+                  >
+                    {dataError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                        {dataError}
+                      </div>
+                    )}
+                    {dataNotice && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+                        {dataNotice}
+                      </div>
+                    )}
+
+                    <div className="grid min-w-0 gap-3">
+                      <div className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                              <Database size={15} />
+                              Assistant Chat history
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                              Deletes global Assistant Chat conversations. This does not touch project work chats.
+                            </p>
+                          </div>
+                          <Button
+                            variant="danger"
+                            disabled={dataBusy !== null || assistantChatSessions.length === 0}
+                            onClick={() => void runDataReset(
+                              'assistant-chat-all',
+                              'Delete all Assistant Chat history? This cannot be undone.',
+                              { assistantChat: 'all' },
+                            )}
+                          >
+                            <Trash2 size={12} />
+                            Delete All
+                          </Button>
+                        </div>
+                        <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                          {assistantChatSessions.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                              No saved Assistant Chat conversations.
+                            </div>
+                          ) : assistantChatSessions.map((session) => (
+                            <div
+                              key={session.id}
+                            className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+                          >
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                                  {session.title || 'Assistant Chat'}
+                                </div>
+                                <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  {session.lastMessage || formatDataSessionTime(session.updatedAt)}
+                                </div>
+                              </div>
+                              <Button
+                                variant="danger"
+                                disabled={dataBusy !== null}
+                                onClick={() => void runDataReset(
+                                  `assistant-chat-${session.id}`,
+                                  `Delete "${session.title || 'Assistant Chat'}"? This cannot be undone.`,
+                                  { assistantChatSessionIds: [session.id] },
+                                )}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                              Work chat history
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                              Deletes visible project and work conversations from the session store.
+                            </p>
+                            <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {workChatCount} saved work chat{workChatCount === 1 ? '' : 's'}
+                            </div>
+                          </div>
+                          <Button
+                            variant="danger"
+                            disabled={dataBusy !== null || workChatCount === 0}
+                            onClick={() => void runDataReset(
+                              'work-chats',
+                              'Delete all saved work chat history? This cannot be undone.',
+                              { sessions: 'all' },
+                            )}
+                          >
+                            <Trash2 size={12} />
+                            Delete All
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                              Settings defaults
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                              Restores app settings, runtime endpoints, model profile defaults, tools, and integrations to the current built-in defaults.
+                            </p>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            disabled={dataBusy !== null}
+                            onClick={() => void runDataReset(
+                              'settings',
+                              'Reset settings to current defaults? API keys and custom runtime endpoints in settings will be cleared.',
+                              { settings: true },
+                            )}
+                          >
+                            <RotateCcw size={12} />
+                            Reset Defaults
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 rounded-lg border border-red-200 bg-red-50/60 p-4 dark:border-red-900/60 dark:bg-red-950/20">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-red-800 dark:text-red-200">
+                              Fresh start
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-red-700/80 dark:text-red-300/80">
+                              Deletes Assistant Chat history, work chat history, and resets settings to defaults. Memory and installed Skills are preserved.
+                            </p>
+                          </div>
+                          <Button
+                            variant="danger"
+                            disabled={dataBusy !== null}
+                            onClick={() => void runDataReset(
+                              'fresh-start',
+                              'Reset generated data and settings? This deletes chat history and clears settings, but preserves Memory and installed Skills.',
+                              { assistantChat: 'all', sessions: 'all', settings: true },
+                            )}
+                          >
+                            <Trash2 size={12} />
+                            Fresh Start
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Note>
+                      These actions require confirmation and are blocked while a conversation is running.
+                    </Note>
+                  </SettingsSection>
+                </>
               )}
 
               {activeTab === 'about' && (

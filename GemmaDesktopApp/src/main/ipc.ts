@@ -1105,6 +1105,19 @@ type AppSettingsRecord = {
   }
 }
 
+type AppDataResetRequest = {
+  assistantChat?: 'all'
+  assistantChatSessionIds?: string[]
+  sessions?: 'all'
+  settings?: boolean
+}
+
+type AppDataResetResult = {
+  assistantChatSessionsDeleted: number
+  sessionsDeleted: number
+  settingsReset: boolean
+}
+
 let settings: AppSettingsRecord | null = null
 let storageResetRequired = false
 let browserToolManager: BrowserSessionManager | null = null
@@ -4415,6 +4428,21 @@ async function saveSettings(
         : current.defaultProjectDirectory,
   }
 
+  next.defaultProjectDirectory = await ensureDirectoryExists(
+    next.defaultProjectDirectory,
+  )
+  settings = next
+
+  await writeFileAtomic(
+    getSettingsPath(),
+    JSON.stringify(next, null, 2),
+    'utf-8',
+  )
+  return next
+}
+
+async function resetSettingsToDefaults(): Promise<AppSettingsRecord> {
+  const next = getDefaultSettings()
   next.defaultProjectDirectory = await ensureDirectoryExists(
     next.defaultProjectDirectory,
   )
@@ -8170,6 +8198,128 @@ async function clearTalkSessionInternal(): Promise<Record<string, unknown>> {
   await broadcastSessionsChanged()
   await broadcastGlobalChatChanged()
   return detail
+}
+
+async function deleteTalkSessionsInternal(sessionIds: string[]): Promise<number> {
+  const normalizedSessionIds = [...new Set(
+    sessionIds
+      .map((sessionId) => sessionId.trim())
+      .filter((sessionId) => isTalkSessionId(sessionId) && sessionId !== TALK_SESSION_ID),
+  )]
+  let deletedCount = 0
+  let deletedCurrentTalkSession = false
+
+  for (const sessionId of normalizedSessionIds) {
+    if (isSessionExecutionBusy(sessionId)) {
+      throw new Error('Cannot delete Assistant Chat history while it is running.')
+    }
+
+    const persisted = await getPersistedSession(sessionId)
+    const snapshot = liveSessions.get(sessionId)?.snapshot() ?? persisted?.snapshot
+    if (!snapshot || !isTalkSessionSnapshot(snapshot)) {
+      continue
+    }
+
+    deletedCurrentTalkSession = deletedCurrentTalkSession || currentTalkSessionId === sessionId
+    liveSessions.delete(sessionId)
+    await browserToolManager?.disconnectSession(sessionId)
+    await chromeDevtoolsToolManager?.disconnectSession(sessionId)
+    await store.remove(sessionId)
+    deletedCount += 1
+  }
+
+  if (deletedCurrentTalkSession) {
+    await setCurrentTalkSessionId(null)
+  }
+
+  return deletedCount
+}
+
+async function deleteVisibleSessionInternal(sessionId: string): Promise<boolean> {
+  const snapshot =
+    liveSessions.get(sessionId)?.snapshot()
+    ?? store.getSnapshot(sessionId)
+    ?? (await getPersistedSession(sessionId))?.snapshot
+  if (!snapshot || isHiddenSessionSnapshot(snapshot) || isTalkSessionSnapshot(snapshot)) {
+    return false
+  }
+  if (isSessionExecutionBusy(sessionId)) {
+    throw new Error('Cannot delete a session while it is running.')
+  }
+
+  globalChatController.clearIfAssignedSession(sessionId)
+  shellSessionManager.closeAllForSession(sessionId)
+  clearScheduledShellFlush(sessionId)
+  liveSessions.delete(sessionId)
+  await browserToolManager?.disconnectSession(sessionId)
+  await chromeDevtoolsToolManager?.disconnectSession(sessionId)
+  await store.remove(sessionId)
+  return true
+}
+
+async function resetAppDataInternal(
+  input: AppDataResetRequest,
+): Promise<AppDataResetResult> {
+  const result: AppDataResetResult = {
+    assistantChatSessionsDeleted: 0,
+    sessionsDeleted: 0,
+    settingsReset: false,
+  }
+
+  if (input.assistantChat === 'all') {
+    const summaries = await listTalkSessionSummariesInternal()
+    result.assistantChatSessionsDeleted = await deleteTalkSessionsInternal(
+      summaries.map((summary) => summary.id),
+    )
+  } else if (Array.isArray(input.assistantChatSessionIds)) {
+    result.assistantChatSessionsDeleted = await deleteTalkSessionsInternal(
+      input.assistantChatSessionIds,
+    )
+  }
+
+  if (input.sessions === 'all') {
+    for (const meta of store.listMeta()) {
+      if (await deleteVisibleSessionInternal(meta.id)) {
+        result.sessionsDeleted += 1
+      }
+    }
+  }
+
+  if (input.settings === true) {
+    const previousSettings = await getSettingsState()
+    const nextSettings = await resetSettingsToDefaults()
+    await refreshBootstrapModelSelection(
+      nextSettings,
+      nextSettings as unknown as Record<string, unknown>,
+    )
+    await reconcileDefaultPrimarySessionsForSettingsChange(
+      previousSettings,
+      nextSettings,
+    )
+    await refreshSessionPolicies()
+    await reconfigureBrowserToolManager(nextSettings)
+    gemmaDesktop?.updateIntegrations({
+      geminiApiKey: nextSettings.integrations.geminiApi.apiKey,
+      geminiApiModel: nextSettings.integrations.geminiApi.model,
+    })
+    gemmaDesktop?.updateAdapters(createConfiguredRuntimeAdapters(nextSettings))
+    broadcastEnvironmentModelsChanged()
+    await refreshKeepAwakeState()
+    broadcastSettingsChanged(nextSettings)
+    broadcastSpeechStatusChanged(await inspectSpeechStatus())
+    broadcastReadAloudStatusChanged(await inspectReadAloudStatus())
+    result.settingsReset = true
+  }
+
+  if (result.assistantChatSessionsDeleted > 0) {
+    globalChatController.clearAssignment()
+    await broadcastGlobalChatChanged()
+  }
+  if (result.sessionsDeleted > 0 || result.assistantChatSessionsDeleted > 0) {
+    await broadcastSessionsChanged()
+  }
+
+  return result
 }
 
 async function runSessionCompactionInternal(
@@ -12627,6 +12777,11 @@ export function registerIpcHandlers(): void {
     return detail
   })
 
+  ipcMain.handle('app-data:reset', async (_, input: AppDataResetRequest | undefined) => {
+    assertNoConversationExecutionRunning()
+    return await resetAppDataInternal(input ?? {})
+  })
+
   ipcMain.handle(
     'sessions:create',
     async (
@@ -12995,23 +13150,21 @@ export function registerIpcHandlers(): void {
       summary: `Delete session ${sessionId}`,
       data: { sessionId },
     })
-    const snapshot =
-      liveSessions.get(sessionId)?.snapshot()
-      ?? store.getSnapshot(sessionId)
-      ?? (await getPersistedSession(sessionId))?.snapshot
-    if (snapshot && isTalkSessionSnapshot(snapshot)) {
-      throw new Error('Assistant Chat cannot be deleted.')
+    const wasAssignedGlobalChat =
+      globalChatController.getState(currentTalkSessionId ?? undefined).target.kind === 'assigned'
+    const deleted = await deleteVisibleSessionInternal(sessionId)
+    if (!deleted) {
+      const snapshot =
+        liveSessions.get(sessionId)?.snapshot()
+        ?? store.getSnapshot(sessionId)
+        ?? (await getPersistedSession(sessionId))?.snapshot
+      if (snapshot && isTalkSessionSnapshot(snapshot)) {
+        throw new Error('Assistant Chat cannot be deleted.')
+      }
     }
-    if (isSessionExecutionBusy(sessionId)) {
-      throw new Error('Cannot delete a session while it is running.')
-    }
-    const globalChatCleared = globalChatController.clearIfAssignedSession(sessionId)
-    shellSessionManager.closeAllForSession(sessionId)
-    clearScheduledShellFlush(sessionId)
-    liveSessions.delete(sessionId)
-    await browserToolManager?.disconnectSession(sessionId)
-    await chromeDevtoolsToolManager?.disconnectSession(sessionId)
-    await store.remove(sessionId)
+    const globalChatCleared =
+      wasAssignedGlobalChat
+      && globalChatController.getState(currentTalkSessionId ?? undefined).target.kind !== 'assigned'
     await broadcastSessionsChanged()
     if (globalChatCleared) {
       await broadcastGlobalChatChanged()

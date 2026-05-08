@@ -36,6 +36,7 @@ const EXPECTED_IPC_CHANNELS = [
   'talk:start-session',
   'talk:switch-session',
   'talk:clear-session',
+  'app-data:reset',
   'sessions:create',
   'sessions:get',
   'sessions:save-draft',

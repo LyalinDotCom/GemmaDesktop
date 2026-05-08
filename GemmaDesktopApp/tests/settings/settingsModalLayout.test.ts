@@ -171,7 +171,7 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('h-[min(78vh,760px)]')
     expect(markup).toContain('aria-label="Settings sections"')
     expect(markup).toContain('w-44 shrink-0 overflow-y-auto border-r')
-    expect(markup).toContain('scrollbar-thin min-h-0 flex-1 overflow-y-auto')
+    expect(markup).toContain('scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden')
     expect(markup).toContain('LM Studio')
     expect(markup).toContain('llama.cpp')
     expect(markup).toContain('oMLX')

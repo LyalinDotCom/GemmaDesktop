@@ -214,6 +214,10 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
     clearSession: () => ipcRenderer.invoke('talk:clear-session'),
   },
 
+  appData: {
+    reset: (input: unknown) => ipcRenderer.invoke('app-data:reset', input),
+  },
+
   globalChat: {
     getState: () => ipcRenderer.invoke('global-chat:get-state'),
     getSession: () => ipcRenderer.invoke('global-chat:get-session'),

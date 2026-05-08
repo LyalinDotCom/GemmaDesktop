@@ -237,6 +237,9 @@ describe('preload bridge', () => {
       startSession: () => Promise<unknown>
       switchSession: (sessionId: string) => Promise<unknown>
     }
+    const appData = bridge.appData as {
+      reset: (input: unknown) => Promise<unknown>
+    }
 
     await globalChat.getState()
     await globalChat.getSession()
@@ -246,6 +249,7 @@ describe('preload bridge', () => {
     await talk.listSessions()
     await talk.startSession()
     await talk.switchSession('talk-00000000-0000-4000-8000-000000000000')
+    await appData.reset({ assistantChat: 'all' })
 
     expect(invoke).toHaveBeenCalledWith('global-chat:get-state')
     expect(invoke).toHaveBeenCalledWith('global-chat:get-session')
@@ -258,6 +262,7 @@ describe('preload bridge', () => {
       'talk:switch-session',
       'talk-00000000-0000-4000-8000-000000000000',
     )
+    expect(invoke).toHaveBeenCalledWith('app-data:reset', { assistantChat: 'all' })
 
     const unsubscribeChanged = globalChat.onChanged(() => {})
     const changedHandler = on.mock.calls.find(
