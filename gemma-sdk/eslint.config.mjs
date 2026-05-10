@@ -124,6 +124,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/sdk-agent/src/**/*.test.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+    },
+  },
+  {
     files: ["packages/sdk-tools/src/runtime.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",

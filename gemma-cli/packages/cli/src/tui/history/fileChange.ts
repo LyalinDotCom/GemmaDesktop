@@ -1,4 +1,4 @@
-import type { FileChange, FileChangeMeta, FileHunk } from 'gemma-cli-core';
+import type { FileChange, FileChangeMeta, FileHunk } from '@gemma-sdk/agent';
 import type { Style, StyleToken } from '../theme.js';
 import { highlight } from '../markdown/syntax.js';
 import { wrapStyled } from '../markdown/wrapStyled.js';

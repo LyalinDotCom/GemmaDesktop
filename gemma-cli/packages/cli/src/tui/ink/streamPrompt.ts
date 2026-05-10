@@ -16,7 +16,7 @@ import { createRunModelActivityRecorder, recordRunError, recordRunResult, record
 import { clipStart } from '../text/clip.js';
 import { formatDuration, runCompletionMessage } from '../duration.js';
 import { createTokenRateState, recordTokenRateChunk } from '../tokenRate.js';
-import type { AgentTurn, ToolCall } from 'gemma-cli-core';
+import type { AgentTurn, ToolCall } from '@gemma-sdk/agent';
 
 const progressRedrawIntervalMs = 120;
 

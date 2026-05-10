@@ -28,7 +28,7 @@ import {
   type Skill,
   type Tool,
   type WorkspacePermissionHandler
-} from 'gemma-cli-core';
+} from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 
 export function detectAgentEnvironment(cwd?: string): AgentEnvironment {

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { Tool } from 'gemma-cli-core';
+import type { Tool } from '@gemma-sdk/agent';
 
 export interface ShellInput {
   command: string;

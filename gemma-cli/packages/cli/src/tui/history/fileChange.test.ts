@@ -3,7 +3,7 @@ import { renderFileChangeEntry, renderChangeHeader } from './fileChange.js';
 import { renderHistoryEntry } from './render.js';
 import { plainText } from '../markdown/types.js';
 import type { HistoryEntry } from './types.js';
-import type { FileChangeMeta } from 'gemma-cli-core';
+import type { FileChangeMeta } from '@gemma-sdk/agent';
 
 describe('renderChangeHeader', () => {
   it('renders a created header in success color with line count', () => {

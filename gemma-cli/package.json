@@ -11,12 +11,12 @@
     "gemma": "packages/cli/dist/index.js"
   },
   "scripts": {
-    "build": "npm run build --workspace gemma-cli-core && npm run build --workspace gemma-cli",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "start": "npm run start --workspace gemma-cli --",
+    "build": "npm --prefix .. run build:gemma-cli",
+    "test": "npm --prefix .. run test:gemma-cli",
+    "typecheck": "npm --prefix .. run typecheck:gemma-cli",
+    "start": "npm --prefix .. --workspace gemma-cli run start --",
     "dev": "npm run build && npm run start --",
-    "snapshot:tui": "npm run snapshot:tui --workspace gemma-cli",
+    "snapshot:tui": "npm --prefix .. --workspace gemma-cli run snapshot:tui",
     "smoke:tui-resize": "npm run build && node scripts/tui-resize-smoke.mjs",
     "release:dry-run": "node scripts/release.mjs --dry-run",
     "release:publish": "node scripts/release.mjs"

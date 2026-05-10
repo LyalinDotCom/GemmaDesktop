@@ -25,8 +25,8 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@gemma-sdk/agent": "0.1.0",
     "ansi-escapes": "^7.3.0",
-    "gemma-cli-core": "0.1.11",
     "ink": "npm:@jrichman/ink@^6.6.9",
     "react": "^19.2.5"
   },

@@ -1,6 +1,6 @@
 import { createRuntime, type Runtime } from './runtime.js';
 import type { CliOptions } from './args.js';
-import { listLmStudioModels, listOllamaModels } from 'gemma-cli-core';
+import { listLmStudioModels, listOllamaModels } from '@gemma-sdk/agent';
 import { cliVersion } from './version.js';
 
 interface JsonRpcRequest {

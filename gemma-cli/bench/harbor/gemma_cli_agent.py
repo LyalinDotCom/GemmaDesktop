@@ -98,7 +98,7 @@ class GemmaCliAgent(BaseInstalledAgent):
         remote_packages: list[str] = []
 
         if self.core_tarball:
-            remote_core = "/installed-agent/gemma-cli-core.tgz"
+            remote_core = "/installed-agent/@gemma-sdk/agent.tgz"
             await environment.upload_file(self.core_tarball, remote_core)
             remote_packages.append(remote_core)
 

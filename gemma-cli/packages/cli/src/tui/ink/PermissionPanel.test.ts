@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { permissionPanelLayout } from './PermissionPanel.js';
-import type { WorkspacePermissionRequest } from 'gemma-cli-core';
+import type { WorkspacePermissionRequest } from '@gemma-sdk/agent';
 
 const request: WorkspacePermissionRequest = {
   tool: 'write_file',

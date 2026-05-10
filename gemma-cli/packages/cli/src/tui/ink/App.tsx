@@ -31,7 +31,7 @@ import { ThinkingPreview } from './ThinkingPreview.js';
 import { useTerminalSize } from './useTerminalSize.js';
 import { tokenRateLabel } from '../tokenRate.js';
 import type { SessionModelInfo } from '../../tui.js';
-import type { WorkspacePermissionRequest } from 'gemma-cli-core';
+import type { WorkspacePermissionRequest } from '@gemma-sdk/agent';
 
 type ModelSelection = Pick<SessionModelInfo, 'name' | 'provider'>;
 

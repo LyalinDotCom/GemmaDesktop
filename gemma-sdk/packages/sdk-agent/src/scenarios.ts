@@ -23,7 +23,7 @@ export const scenarios: Scenario[] = [
   {
     id: 'workspace-search',
     description: 'Use a read-only command to locate TypeScript source files.',
-    prompt: 'Use search_paths with glob "packages/core/src/**/*.ts" to list TypeScript files. Then answer with a short responsibility summary.'
+    prompt: 'Use search_paths with glob "gemma-sdk/packages/sdk-agent/src/**/*.ts" to list TypeScript files. Then answer with a short responsibility summary.'
   }
 ];
 

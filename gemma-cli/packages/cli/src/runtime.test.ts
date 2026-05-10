@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Skill } from 'gemma-cli-core';
+import type { Skill } from '@gemma-sdk/agent';
 import { resolveRuntimeSkills } from './runtime.js';
 
 describe('resolveRuntimeSkills', () => {

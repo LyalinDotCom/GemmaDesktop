@@ -2,7 +2,7 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/core"
+      "path": "../gemma-sdk/packages/sdk-agent"
     },
     {
       "path": "./packages/cli"

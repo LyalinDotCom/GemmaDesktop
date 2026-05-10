@@ -74,7 +74,7 @@ export function buildRunnerCommand(runner: TestRunner, options: { file?: string;
       return { command: 'go', args: ['test', '-json', ...(file ? [file] : ['./...']), ...(name ? ['-run', name] : [])] };
     case 'cargo-test':
       return { command: 'cargo', args: ['test', ...(name ? [name] : []), ...(file ? ['--', file] : [])] };
-    default:
+    case 'unknown':
       return undefined;
   }
 }

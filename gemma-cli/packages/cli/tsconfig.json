@@ -22,7 +22,7 @@
   ],
   "references": [
     {
-      "path": "../core"
+      "path": "../../../gemma-sdk/packages/sdk-agent"
     }
   ]
 }

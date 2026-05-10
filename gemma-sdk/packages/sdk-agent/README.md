@@ -1,4 +1,4 @@
-# gemma-cli-core
+# @gemma-sdk/agent
 
 Internal support package for `gemma-cli`.
 

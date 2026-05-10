@@ -55,7 +55,7 @@ if [[ "$GEMMA_PACKAGE" == "local" ]]; then
   local_pack_dir="${PACK_DIR:-/tmp/gemma-cli-tbench2-packs}"
   mkdir -p "$local_pack_dir"
   npm run build
-  core_pack="$(npm pack --workspace gemma-cli-core --pack-destination "$local_pack_dir" --silent | tail -n 1)"
+  core_pack="$(npm pack --workspace @gemma-sdk/agent --pack-destination "$local_pack_dir" --silent | tail -n 1)"
   cli_pack="$(npm pack --workspace gemma-cli --pack-destination "$local_pack_dir" --silent | tail -n 1)"
   core_tarball="$local_pack_dir/$core_pack"
   cli_tarball="$local_pack_dir/$cli_pack"

@@ -1,6 +1,6 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin as defaultInput, stdout as defaultOutput } from 'node:process';
-import { ensureOllamaRunning, inferAttachmentCapabilities, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from 'gemma-cli-core';
+import { ensureOllamaRunning, inferAttachmentCapabilities, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 import { createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, recordSessionModelSelection, sessionMessages, type DiagnosticContext, type StoredSession, type StoredSessionMessage } from './diagnostics.js';
 import { isLocalProvider, readModelPreference, writeModelPreference, type ModelPreference } from './modelPreferences.js';

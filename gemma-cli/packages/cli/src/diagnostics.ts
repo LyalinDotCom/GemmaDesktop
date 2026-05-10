@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AgentModelActivityEvent, AgentRunResult, ChatMessage, ToolCall, ToolResult } from 'gemma-cli-core';
+import type { AgentModelActivityEvent, AgentRunResult, ChatMessage, ToolCall, ToolResult } from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 
 const maxPromptHistoryMessages = 24;

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { AgentTurn, ModelProvider } from 'gemma-cli-core';
+import type { AgentTurn, ModelProvider } from '@gemma-sdk/agent';
 import {
   appendInterruptedRunToRuntimeHistory,
   clearTerminal,

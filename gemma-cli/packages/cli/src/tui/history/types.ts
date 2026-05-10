@@ -1,4 +1,4 @@
-import type { FileChangeMeta } from 'gemma-cli-core';
+import type { FileChangeMeta } from '@gemma-sdk/agent';
 import type { StyledLine } from '../markdown/types.js';
 
 export type HistoryKind =

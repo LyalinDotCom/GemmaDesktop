@@ -242,7 +242,7 @@ function userSkillDir(): string {
   return join(home, 'skills');
 }
 
-function withSkillSource(skill: Skill, cwd: string): Skill {
+function withSkillSource(skill: Skill, _cwd: string): Skill {
   const userRoot = resolve(userSkillDir());
   const skillPath = resolve(skill.path);
   return {

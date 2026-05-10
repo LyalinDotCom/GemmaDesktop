@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, streamText, type JSONValue, type ModelMessage, type TextStreamPart } from 'ai';
+import { generateText, streamText, type JSONValue, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 import { contentToText, resolveBinaryAssetForRequest, resolveImageAssetForRequest } from '../content.js';
 import { shouldEnableProviderReasoning } from '../modelProfiles.js';
 import type { ChatMessage, ContentPart, GenerateOptions, ModelProvider, StreamChunk } from '../types.js';
@@ -42,6 +42,8 @@ const whitespaceOnlyContentStallLimitChars = 4096;
 type LocalProviderOptions = Record<string, Record<string, JSONValue | undefined>>;
 type UserModelContent = Extract<ModelMessage, { role: 'user' }>['content'];
 type UserModelPart = Exclude<UserModelContent, string>[number];
+type LocalToolSet = ToolSet;
+type LocalTextStreamPart = TextStreamPart<LocalToolSet>;
 
 export class OpenAICompatibleLocalProvider implements ModelProvider {
   readonly name: string;
@@ -284,8 +286,26 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
     }
   }
 
-  private chunkFromStreamPart(part: TextStreamPart<any>, options: GenerateOptions): StreamChunk | undefined {
+  private chunkFromStreamPart(part: LocalTextStreamPart, options: GenerateOptions): StreamChunk | undefined {
     switch (part.type) {
+      case 'text-start':
+      case 'text-end':
+      case 'reasoning-start':
+      case 'reasoning-end':
+      case 'tool-input-start':
+      case 'tool-input-end':
+      case 'tool-input-delta':
+      case 'source':
+      case 'file':
+      case 'tool-call':
+      case 'tool-result':
+      case 'tool-error':
+      case 'tool-output-denied':
+      case 'tool-approval-request':
+      case 'start-step':
+      case 'finish-step':
+      case 'start':
+        return undefined;
       case 'text-delta':
         return withRaw({ content: streamPartText(part), done: false }, part, options);
       case 'reasoning-delta':
@@ -301,8 +321,6 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
         throw part.error instanceof Error ? part.error : new Error(String(part.error));
       case 'raw':
         return options.includeRawChunks ? { raw: { provider: this.providerName, data: part.rawValue }, done: false } : undefined;
-      default:
-        return undefined;
     }
   }
 
@@ -434,7 +452,7 @@ async function convertAttachmentPart(part: Exclude<ContentPart, { type: 'text' }
   return { type: 'text', text: `[${part.type.replace(/_url$/, '')}:${part.url}]` };
 }
 
-function streamPartText(part: TextStreamPart<any>): string {
+function streamPartText(part: LocalTextStreamPart): string {
   const value = (part as unknown as { text?: unknown; delta?: unknown }).text
     ?? (part as unknown as { text?: unknown; delta?: unknown }).delta;
   return typeof value === 'string' ? value : '';
@@ -533,7 +551,7 @@ function parseToolCallArguments(text: string): unknown {
   }
 }
 
-function isOpenAICompatibleToolCallFinish(part: TextStreamPart<any>): boolean {
+function isOpenAICompatibleToolCallFinish(part: LocalTextStreamPart): boolean {
   if (part.type !== 'finish') {
     return false;
   }

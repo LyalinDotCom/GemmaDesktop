@@ -207,7 +207,7 @@ function looksLikeDoubleEscapedPatch(text: string): boolean {
   try {
     files = parsePatch(text);
   } catch {
-    return /(?:^|\n)(?:--- |\+\+\+ |@@ )/.test(text) && /\\n(?=(?:--- |\+\+\+ |@@ |[ +\-]))/.test(text);
+    return /(?:^|\n)(?:--- |\+\+\+ |@@ )/.test(text) && /\\n(?=(?:--- |\+\+\+ |@@ |[ +-]))/.test(text);
   }
   return files.some((file) => file.hunks.some((hunk) => {
     if (!hunk.lines.some((line) => line.includes('\\n'))) {

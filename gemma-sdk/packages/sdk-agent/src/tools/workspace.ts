@@ -728,7 +728,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
         includeIgnored: 'Whether to include ignored files.'
       },
       requiredParameters: ['query'],
-      examples: [{ query: 'createWorkspaceTools', path: 'packages/core/src' }],
+      examples: [{ query: 'createWorkspaceTools', path: 'gemma-sdk/packages/sdk-agent/src' }],
       async run(args) {
         try {
           const query = firstString(args, ['query']);
@@ -797,7 +797,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
         maxTotalBytes: 'Optional total output budget, clamped to 2097152.'
       },
       requiredParameters: [],
-      examples: [{ requests: [{ path: 'package.json' }, { path: 'packages/core/src/agent.ts', offset: 1, limit: 80 }] }],
+      examples: [{ requests: [{ path: 'package.json' }, { path: 'gemma-sdk/packages/sdk-agent/src/agent.ts', offset: 1, limit: 80 }] }],
       async run(args) {
         try {
           const requests = Array.isArray(args.requests) && args.requests.length > 0
@@ -1200,7 +1200,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
         path: 'Workspace-relative source file path.'
       },
       requiredParameters: ['path'],
-      examples: [{ path: 'packages/core/src/agent.ts' }],
+      examples: [{ path: 'gemma-sdk/packages/sdk-agent/src/agent.ts' }],
       async run(args) {
         try {
           const file = await resolveExistingInside(cwd, firstString(args, ['path', 'name', 'file', 'target']), pathPermission('list_symbols', 'read source file'));
@@ -1229,7 +1229,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
       requiredParameters: ['name'],
       examples: [
         { name: 'buildAgentSystemPrompt' },
-        { name: 'parsePatch', path: 'packages/core/src' }
+        { name: 'parsePatch', path: 'gemma-sdk/packages/sdk-agent/src' }
       ],
       async run(args) {
         try {
@@ -1883,7 +1883,7 @@ function parseCommand(command: string): string[] {
   return tokens.map((token) => token.replace(/^['"]|['"]$/g, ''));
 }
 
-async function runAllowedCommand(command: string, cwd: string, outputLimit: number): Promise<string> {
+async function _runAllowedCommand(command: string, cwd: string, outputLimit: number): Promise<string> {
   if (/[;&|`$<>\n\r\v]/.test(command)) {
     throw new Error('Shell control operators and redirection are not allowed.');
   }
@@ -2672,11 +2672,11 @@ function buildOutsideWorkspacePermissionRequest(command: string, workspace: stri
 }
 
 function hasParentPathReference(command: string): boolean {
-  return /(^|[\s"'=(:])\.\.(?=$|[\/\\\s"'`;|&<>)])/.test(command) || /[\/\\]\.\.(?=$|[\/\\\s"'`;|&<>)])/.test(command);
+  return /(^|[\s"'=(:])\.\.(?=$|[/\\\s"'`;|&<>)])/.test(command) || /[/\\]\.\.(?=$|[/\\\s"'`;|&<>)])/.test(command);
 }
 
 function hasHomePathReference(command: string): boolean {
-  return /(^|[\s"'=(:])~(?:[\/\\]|$)/.test(command);
+  return /(^|[\s"'=(:])~(?:[/\\]|$)/.test(command);
 }
 
 function extractAbsolutePathReferences(command: string): string[] {

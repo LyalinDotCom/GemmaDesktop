@@ -90,7 +90,7 @@ Inside the TUI, useful slash commands include:
 This repository publishes two npm packages:
 
 - `gemma-cli`
-- `gemma-cli-core`
+- `@gemma-sdk/agent`
 
 The workspace publishes from the current `0.x.y` version. After a successful real publish, the release script bumps all package versions to the next patch version, such as `0.1.2`, and commits that bump.
 

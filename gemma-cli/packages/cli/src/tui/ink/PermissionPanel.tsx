@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { clip } from '../text/clip.js';
-import type { WorkspacePermissionRequest } from 'gemma-cli-core';
+import type { WorkspacePermissionRequest } from '@gemma-sdk/agent';
 
 interface Props {
   request: WorkspacePermissionRequest;

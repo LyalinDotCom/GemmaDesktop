@@ -1,4 +1,4 @@
-import type { ChatMessage } from 'gemma-cli-core';
+import type { ChatMessage } from '@gemma-sdk/agent';
 
 export interface CliOptions {
   provider: 'ollama' | 'lmstudio';

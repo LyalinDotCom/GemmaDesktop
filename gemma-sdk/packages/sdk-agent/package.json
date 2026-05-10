@@ -1,14 +1,14 @@
 {
-  "name": "gemma-cli-core",
-  "version": "0.1.11",
-  "description": "Core agent, model providers, and tools for the unofficial Gemma CLI coding agent.",
+  "name": "@gemma-sdk/agent",
+  "version": "0.1.0",
+  "description": "Gemma-optimized agent loop, model providers, and workspace tools for Gemma products.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "UNLICENSED",
   "scripts": {
     "build": "tsc -b",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. src/*.test.ts src/providers/*.test.ts src/tools/*.test.ts",
     "typecheck": "tsc -b"
   },
   "files": [

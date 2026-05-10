@@ -4,7 +4,7 @@ This file is the single feature tracker for the Gemma CLI MVP. Gemini CLI is the
 
 | Feature Area | Gemini CLI Baseline | Gemma CLI Target | Status |
 | --- | --- | --- | --- |
-| Package architecture | Multi-package Node/TypeScript workspace with CLI and core packages | Independent Node/TypeScript workspace with `packages/cli` and `packages/core` | Enabled |
+| Package architecture | Multi-package Node/TypeScript workspace with CLI and core packages | Independent Node/TypeScript workspace with `packages/cli` and `gemma-sdk/packages/sdk-agent` | Enabled |
 | CLI entrypoint | `gemini` binary with interactive and non-interactive flows | `gemma` binary defaults to interactive TUI; `-p`/`--prompt`, scenarios, provider, model, and token-budget flags run headless | Enabled |
 | Model provider: local | Gemini is hosted-first | Ollama provider targeting local Gemma models, defaulting to `gemma4:26b` | Enabled |
 | Agent loop | Full agent runtime with model/tool coordination | Compact JSON action loop: answer or request one tool call per turn, including recovery for tool calls nested in local-model answer text | Enabled |

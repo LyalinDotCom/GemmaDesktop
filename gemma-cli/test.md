@@ -603,8 +603,8 @@ In RUN_TARGET, add a helpful README with examples and do a cleanup pass on the p
 - Verification after fixes:
   - `npm run build`
   - `npm test`
-  - `npm test --workspace packages/core -- workspace.test.ts agent.test.ts modelProfiles.test.ts`
-  - Repacked `/tmp/gemma-cli-core-0.1.2.tgz` and `/tmp/gemma-cli-0.1.2.tgz`
+  - `npm test --workspace gemma-sdk/packages/sdk-agent -- workspace.test.ts agent.test.ts modelProfiles.test.ts`
+  - Repacked `/tmp/@gemma-sdk/agent-0.1.2.tgz` and `/tmp/gemma-cli-0.1.2.tgz`
 
 ### Harbor Terminal-Bench Targeted Run 02
 
@@ -618,10 +618,10 @@ In RUN_TARGET, add a helpful README with examples and do a cleanup pass on the p
 - Finding from failed targeted run 01: `exec_command` returned promptly for `node /app/server.js &`, but the background service died after stdio closed, so the verifier could not reach port 8080.
 - Runtime fix added before targeted run 02: `exec_command` now detects shell background operators and redirects background command stdio to temporary logs while the launching shell exits. This lets common background servers continue running without requiring the model to know `nohup`, while still capturing short startup output and stderr launch failures.
 - Verification after the fix:
-  - `npm test --workspace packages/core -- workspace.test.ts`
-  - `npm test --workspace packages/core -- workspace.test.ts agent.test.ts modelProfiles.test.ts`
+  - `npm test --workspace gemma-sdk/packages/sdk-agent -- workspace.test.ts`
+  - `npm test --workspace gemma-sdk/packages/sdk-agent -- workspace.test.ts agent.test.ts modelProfiles.test.ts`
   - `npm run build`
-  - Repacked `/tmp/gemma-cli-core-0.1.2.tgz` with shasum `142891553213640e3028819a2dcad539e1cd96e3`
+  - Repacked `/tmp/@gemma-sdk/agent-0.1.2.tgz` with shasum `142891553213640e3028819a2dcad539e1cd96e3`
 
 ### Apply Patch 26B Targeted Runs 01-03
 
@@ -639,7 +639,7 @@ In RUN_TARGET, add a helpful README with examples and do a cleanup pass on the p
   - Run 03 then exposed a worse tool-design failure: Gemma's corrected patch used `+++ b/n/src/main.js` instead of `+++ b/src/main.js`. The old patcher treated this as a rename and wrote `n/src/main.js`, while leaving the original `src/main.js` in place. Gemma noticed the suspicious `renamed n/src/main.js` result and started inspecting, but the correction loop was slow and the run was stopped after enough evidence was collected.
   - Runtime fix added: `applyPatch` now rejects implicit renames from mismatched `---`/`+++` headers before applying any hunks, unless a future caller explicitly opts into renames. This converts the `b/n/src/main.js` typo into a clean model-facing error instead of a workspace mutation.
 - Verification after the fix:
-  - `npm run test --workspace gemma-cli-core -- src/tools/applyPatch.test.ts`
+  - `npm run test --workspace @gemma-sdk/agent -- src/tools/applyPatch.test.ts`
   - `npm run build`
   - `npm test`
 
@@ -660,6 +660,6 @@ In RUN_TARGET, add a helpful README with examples and do a cleanup pass on the p
   - Short progress run `22ed0812`: Gemma created `test-projects/live-progress-run01`; the script finished before the default 15s handoff, proving short finite commands still return normally.
   - Long progress run `cd2c6b36`: Gemma created `test-projects/live-progress-run02`, ran a 3-second interval progress script, received `commandId: cmd_1` after the 15s handoff with output through `avg=24.0ms`, called `wait_command`, received `avg=25.0ms`, `avg=26.0ms`, and `Command exited with 0`, then answered with the final average.
 - Validation:
-  - `npm test --workspace gemma-cli-core -- src/tools/workspace.test.ts`
+  - `npm test --workspace @gemma-sdk/agent -- src/tools/workspace.test.ts`
   - `npm run build`
   - `npm test`

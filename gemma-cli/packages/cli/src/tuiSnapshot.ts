@@ -1,7 +1,7 @@
 import { renderTuiFrame } from './tuiRenderer.js';
 import { slashSuggestions, type TuiSession } from './tui.js';
 import type { Runtime } from './runtime.js';
-import type { ModelProvider } from 'gemma-cli-core';
+import type { ModelProvider } from '@gemma-sdk/agent';
 
 const provider: ModelProvider = {
   name: 'ollama',

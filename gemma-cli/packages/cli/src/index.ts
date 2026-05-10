@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { findScenario, listLmStudioModels, listOllamaModels, scenarios } from 'gemma-cli-core';
-import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from 'gemma-cli-core';
+import { findScenario, listLmStudioModels, listOllamaModels, scenarios } from '@gemma-sdk/agent';
+import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from '@gemma-sdk/agent';
 import { runAcp } from './acp.js';
 import { parseArgs } from './args.js';
 import { appendEvent, createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, sessionMessages, type DiagnosticContext } from './diagnostics.js';
