@@ -272,7 +272,7 @@ gemma-cli/         The canonical terminal coding-agent product. Its newest
                    agent loop, tool design, diagnostics, and Gemma-optimized
                    runtime behavior are being moved into the shared SDK.
 
-GemmaDesktopSDK/   The current SDK home during migration. Sessions, runtime
+gemma-sdk/   The current SDK home during migration. Sessions, runtime
                    adapters, tool execution, prompts, attachments, tracing,
                    and capabilities live here until the shared packages move
                    to neutral @gemma-sdk/* naming.

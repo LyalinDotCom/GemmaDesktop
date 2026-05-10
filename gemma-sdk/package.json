@@ -1,5 +1,5 @@
 {
-  "name": "gemma-desktop-sdk-workspace",
+  "name": "gemma-sdk",
   "private": true,
   "type": "module",
   "scripts": {

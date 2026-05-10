@@ -183,11 +183,11 @@ Use these two standard lanes by default:
 
 The standard commands are:
 
-- minimal targeted validation: `npm --workspace GemmaDesktopSDK run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemmadesktop-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace GemmaDesktopApp run test -- tests/<category>/<file>.test.ts`
+- minimal targeted validation: `npm --workspace gemma-sdk run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemmadesktop-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace GemmaDesktopApp run test -- tests/<category>/<file>.test.ts`
 - full deterministic repo validation: `npm run check`
 - full repo validation including live-model lanes: `npm run check:full`
-- SDK deterministic suite only: `npm --workspace GemmaDesktopSDK run check`
-- SDK full suite including live routing and live research: `npm --workspace GemmaDesktopSDK run check:full`
+- SDK deterministic suite only: `npm --workspace gemma-sdk run check`
+- SDK full suite including live routing and live research: `npm --workspace gemma-sdk run check:full`
 - CLI deterministic suite only: `npm --workspace gemmadesktop-cli run check`
 - App deterministic suite only: `npm --workspace GemmaDesktopApp run check`
 - App full suite including live research: `npm --workspace GemmaDesktopApp run check:full`

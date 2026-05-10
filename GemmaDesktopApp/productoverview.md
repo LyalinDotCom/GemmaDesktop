@@ -5,18 +5,18 @@ Inspection snapshot: April 16, 2026
 Scope:
 
 - Primary focus: `GemmaDesktopApp`
-- Extended scope: sibling `../GemmaDesktopSDK`
+- Extended scope: sibling `../gemma-sdk`
 - Source basis: repo source, tests, scripts, package manifests, `../specs`
 
 Interpretation rules used in this document:
 
-- "Implemented" means present in checked-in code in `GemmaDesktopApp` and/or `GemmaDesktopSDK`.
+- "Implemented" means present in checked-in code in `GemmaDesktopApp` and/or `gemma-sdk`.
 - "Spec direction" means declared in `../specs` and useful for product context, but not necessarily fully shipped.
 - When behavior depends on runtime discovery, the app can surface more models than the curated defaults.
 
 ## 1. Executive Snapshot
 
-`GemmaDesktopApp` is not just a local-model chat window. It is an Electron desktop shell for a local-first AI workbench built on `GemmaDesktopSDK`, with explicit support for:
+`GemmaDesktopApp` is not just a local-model chat window. It is an Electron desktop shell for a local-first AI workbench built on `gemma-sdk`, with explicit support for:
 
 - normal conversations
 - research conversations
@@ -32,7 +32,7 @@ Interpretation rules used in this document:
 - automations
 - skills installation and activation
 
-`GemmaDesktopSDK` is the actual backend platform underneath that experience. It provides:
+`gemma-sdk` is the actual backend platform underneath that experience. It provides:
 
 - runtime adapters
 - capability-aware model inspection
@@ -47,7 +47,7 @@ Interpretation rules used in this document:
 This repo is already fairly large:
 
 - `GemmaDesktopApp`: 137 files under `src`, 65 test files, about 285 test cases
-- `GemmaDesktopSDK`: 7 workspace packages, 134 files under `packages`, 35 test files, about 122 test cases
+- `gemma-sdk`: 7 workspace packages, 134 files under `packages`, 35 test files, about 122 test cases
 
 ## 2. What GemmaDesktopApp Is Right Now
 
@@ -67,7 +67,7 @@ Technically, the app is:
 - Electron main process for orchestration, system integrations, storage, tool gating, and SDK access
 - React renderer for the UI
 - typed preload bridge for renderer-to-main IPC
-- `GemmaDesktopSDK` for runtime inspection, sessions, tool runtime, research, and tracing
+- `gemma-sdk` for runtime inspection, sessions, tool runtime, research, and tracing
 
 ## 3. End-User Feature Inventory
 
@@ -512,9 +512,9 @@ Default model targets in code:
 
 The app can still surface non-Gemma models discovered from runtimes through the fallback model lists.
 
-### 4.2 Supported Runtime Adapters In GemmaDesktopSDK
+### 4.2 Supported Runtime Adapters In gemma-sdk
 
-`GemmaDesktopSDK` currently creates these adapters by default:
+`gemma-sdk` currently creates these adapters by default:
 
 - `ollama-native`
 - `ollama-openai`
@@ -603,7 +603,7 @@ Default Build-mode tools:
 - `workspace_editor_agent`
 - `workspace_command_agent`
 
-### 5.2 Core Direct Tools From GemmaDesktopSDK
+### 5.2 Core Direct Tools From gemma-sdk
 
 Host/direct tools registered in the SDK:
 
@@ -632,7 +632,7 @@ What these tools imply:
 - browser-like fetch and readable extraction
 - No-key HTML web search across Google and Bing with auto fallback
 
-### 5.3 Delegated Agent Tools From GemmaDesktopSDK
+### 5.3 Delegated Agent Tools From gemma-sdk
 
 Delegated tools start child model sessions and are intentionally named as agents:
 
@@ -770,7 +770,7 @@ Current prompt loading behavior:
 - the planning prompt is composed from `baseline.md` plus `plan.md` with tool-name substitutions
 - the SDK then adds its own fallback/model/environment/tool-context/mode layers around the app custom prompt
 
-## 8. GemmaDesktopSDK Deep Overview
+## 8. gemma-sdk Deep Overview
 
 ### 8.1 SDK Package Map
 
@@ -1008,7 +1008,7 @@ Highlighted upstreams include:
 - `rehype-highlight`
 - `highlight.js`
 
-### 9.5 Direct Dependencies Inside GemmaDesktopSDK Packages
+### 9.5 Direct Dependencies Inside gemma-sdk Packages
 
 SDK package-level direct dependencies:
 
@@ -1052,7 +1052,7 @@ Monorepo-specific behavior:
 
 ### 10.2 SDK Scripts
 
-Important `GemmaDesktopSDK` scripts:
+Important `gemma-sdk` scripts:
 
 - `build`
 - `build:no-check`
@@ -1101,7 +1101,7 @@ Representative `GemmaDesktopApp` test areas:
 - Chrome MCP
 - doctor panel
 
-Representative `GemmaDesktopSDK` test areas:
+Representative `gemma-sdk` test areas:
 
 - environment inspection
 - delegated tools
@@ -1137,9 +1137,9 @@ The current codebase already reflects a lot of that direction:
 - session-local and project-local persistence
 - deep environment/doctor surfaces
 
-### 11.2 GemmaDesktopSDK V1 Direction From Specs
+### 11.2 gemma-sdk V1 Direction From Specs
 
-The SDK spec positions `GemmaDesktopSDK` as:
+The SDK spec positions `gemma-sdk` as:
 
 - a dependency-light TypeScript SDK
 - runtime-aware
@@ -1174,7 +1174,7 @@ Spec non-goals worth noting:
 - doctoring and environment awareness
 - a meaningful SDK platform under the UI
 
-`GemmaDesktopSDK` is not just a provider wrapper. It is already acting as:
+`gemma-sdk` is not just a provider wrapper. It is already acting as:
 
 - a runtime abstraction layer
 - a session engine

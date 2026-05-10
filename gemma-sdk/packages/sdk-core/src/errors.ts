@@ -51,7 +51,7 @@ export function isGemmaDesktopError(value: unknown): value is GemmaDesktopError 
 export function toGemmaDesktopError(
   value: unknown,
   fallbackKind: GemmaDesktopErrorKind = "configuration_invalid",
-  fallbackMessage = "An unexpected GemmaDesktopSDK error occurred.",
+  fallbackMessage = "An unexpected gemma-sdk error occurred.",
 ): GemmaDesktopError {
   if (value instanceof GemmaDesktopError) {
     return value;
