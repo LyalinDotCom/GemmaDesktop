@@ -1,0 +1,27 @@
+{
+  "name": "gemma-cli-core",
+  "version": "0.1.11",
+  "description": "Core agent, model providers, and tools for the unofficial Gemma CLI coding agent.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/providers/ollamaContext.*",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.45",
+    "ai": "^6.0.174"
+  }
+}

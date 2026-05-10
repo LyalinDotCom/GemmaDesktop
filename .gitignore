@@ -42,10 +42,14 @@ pnpm-debug.log*
 
 # Local runtime / benchmark data
 .gemma/
+.gemmacli/
 .benchmarks/
 .artifacts/
 .runs/
 .snapshots/
+gemma-testing/
+test-project/
+test-projects/
 
 # macOS
 .DS_Store

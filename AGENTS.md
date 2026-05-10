@@ -42,15 +42,17 @@ They need software that understands:
 
 ## Repo Shape
 
-`GemmaDesktopSDK` is the foundation of this repository.
+The shared SDK is the foundation of this repository. Its package identity is moving from desktop-owned naming toward `@gemma-sdk/*` because both runnable products depend on it.
 
 The SDK should make runtimes, model behavior, tooling, and failure modes more legible rather than hiding them behind pleasant but misleading abstractions.
 
 Do not let app convenience bypass SDK contracts. If a behavior matters across runtimes, encode it in the SDK, test it in the SDK, and document it clearly.
 
-`GemmaDesktopApp` should prove the SDK can power a polished end-user experience.
+`gemma-cli` is the canonical terminal coding-agent product. Its newest agent loop, tool design, diagnostics, model-profile behavior, and Gemma-optimized runtime lessons are the dominant source for shared SDK capability when they overlap older desktop SDK behavior.
 
-`gemmadesktop-cli` is the headless SDK parity harness for the same product behavior. It should make SDK-backed desktop features testable without building or launching Electron.
+`GemmaDesktopApp` should prove the SDK can power a polished end-user experience. As the repository naming matures, treat `gemma-desktop` as the runnable desktop product identity even when some paths still use the older folder name during migration.
+
+`gemmadesktop-cli` is temporary migration material. Preserve any useful parity coverage, scenarios, or SDK contract tests before deleting it, but do not treat it as a long-term runnable product.
 
 The projects in this repo should strengthen each other. None of them should become an excuse to bypass the SDK or skip the documentation work.
 
@@ -98,7 +100,7 @@ When a commit includes multiple coordinated workstreams, the commit body should 
 
 ### P0 SDK/Desktop/CLI Parity
 
-`gemmadesktop-cli` parity is P0. When changing `GemmaDesktopApp` in a way that adds, removes, or materially changes SDK-backed behavior, update the headless CLI in the same change unless there is a concrete reason it cannot apply.
+CLI parity is P0. During the migration, `gemma-cli` is becoming the canonical headless product and `gemmadesktop-cli` exists only until its useful coverage is preserved elsewhere. When changing `GemmaDesktopApp` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli`, the SDK harness, or the temporary `gemmadesktop-cli` path unless there is a concrete reason it cannot apply.
 
 This includes runtime adapter wiring, session creation, mode and tool surfaces, request metadata, model/runtime defaults, research flows, attachment behavior, tool orchestration, debugging and trace output, and any SDK option the desktop app relies on.
 

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmitOnError": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

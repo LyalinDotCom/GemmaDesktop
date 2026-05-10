@@ -1,0 +1,339 @@
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  Agent,
+  assertContentSupported,
+  buildAgentSystemPrompt,
+  buildGemmaThinkingInstructions,
+  buildPromptContentWithMedia,
+  contentToText,
+  createWorkspaceTools,
+  detectSkillsForPrompt,
+  getOllamaModelCapabilities,
+  inferAttachmentCapabilities,
+  listLmStudioModelInfos,
+  LmStudioProvider,
+  loadSkills,
+  mergeSkills,
+  OllamaProvider,
+  prepareOllama,
+  skillsToSystemContext,
+  type AgentEnvironment,
+  type AgentRunResult,
+  type AgentRunOptions,
+  type ChatMessage,
+  type ModelProvider,
+  type StreamingModelProvider,
+  type Skill,
+  type Tool,
+  type WorkspacePermissionHandler
+} from 'gemma-cli-core';
+import type { CliOptions } from './args.js';
+
+export function detectAgentEnvironment(cwd?: string): AgentEnvironment {
+  const shellEnv = process.env.SHELL ?? process.env.ComSpec ?? '';
+  const shell = shellEnv ? path.basename(shellEnv) : undefined;
+  const now = new Date();
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: `${os.type()} ${os.release()}`,
+    shell,
+    nodeVersion: process.version,
+    date: now.toISOString().slice(0, 10),
+    time: formatLocalTime(now),
+    timezone: detectTimezone(),
+    git: cwd ? detectGitContext(cwd) : undefined
+  };
+}
+
+function formatLocalTime(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', timeZoneName: 'short', hour12: false
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function detectTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+function detectGitContext(cwd: string): { branch?: string; dirty?: boolean; repoRoot?: string; lastCommit?: string } | undefined {
+  const run = (args: string[]): string | undefined => {
+    try {
+      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 1500 }).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const repoRoot = run(['rev-parse', '--show-toplevel']);
+  if (!repoRoot) return undefined;
+  const branch = run(['rev-parse', '--abbrev-ref', 'HEAD']);
+  const status = run(['status', '--porcelain']);
+  const lastCommit = run(['log', '-1', '--pretty=%h %s']);
+  return {
+    branch,
+    dirty: status === undefined ? undefined : status.length > 0,
+    repoRoot,
+    lastCommit
+  };
+}
+
+export interface RuntimeHostOptions {
+  outsideWorkspacePermission?: WorkspacePermissionHandler;
+}
+
+export interface Runtime {
+  provider: ModelProvider;
+  model: string;
+  selectedModel?: string;
+  cwd: string;
+  maxTurns?: number;
+  contextTokens?: number;
+  requestedContextTokens?: number;
+  loadedContextTokens?: number;
+  providerReasoning?: boolean;
+  systemPrompt?: string;
+  systemPromptTokens?: number;
+  attachmentCapabilities?: ReturnType<typeof inferAttachmentCapabilities>;
+  tools: Tool[];
+  skills: Skill[];
+  history?: ChatMessage[];
+  lastUserContent?: ChatMessage['content'];
+  run(prompt: string, options?: RuntimeRunOptions): Promise<AgentRunResult>;
+  stream(prompt: string, options?: { signal?: AbortSignal }): AsyncIterable<{ content?: string; thinking?: string; done?: boolean }>;
+}
+
+export interface RuntimeRunOptions {
+  signal?: AbortSignal;
+  onModelStart?: AgentRunOptions['onModelStart'];
+  onModelActivity?: AgentRunOptions['onModelActivity'];
+  onToolStart?: AgentRunOptions['onToolStart'];
+  onTurn?: AgentRunOptions['onTurn'];
+}
+
+export function resolveRuntimeSkills(base: Skill[], prompt: string, options: { cwd?: string; dirs?: string[] } = {}): Skill[] {
+  return mergeSkills(base, detectSkillsForPrompt(prompt, options));
+}
+
+export async function createRuntime(options: CliOptions, hostOptions: RuntimeHostOptions = {}): Promise<Runtime> {
+  const selectedModel = options.model ?? defaultModelForProvider(options.provider);
+  if (options.provider === 'ollama') {
+    await prepareOllama({
+      model: selectedModel,
+      baseUrl: options.ollamaUrl,
+      autoStart: options.ollamaAutoStart
+    });
+  }
+  const providerCapabilities = await resolveProviderAttachmentCapabilities(options.provider, selectedModel, {
+    ollamaUrl: options.ollamaUrl,
+    lmStudioUrl: options.lmStudioUrl
+  });
+  const model = selectedModel;
+  const contextTokens = providerCapabilities.contextTokens ?? options.contextTokens;
+  const provider =
+    options.provider === 'lmstudio'
+        ? new LmStudioProvider({
+            model,
+            baseUrl: options.lmStudioUrl,
+            contextTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            reasoning: providerCapabilities.supportsReasoning
+          })
+        : new OllamaProvider({
+            model,
+            baseUrl: options.ollamaUrl,
+            contextTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK
+          });
+  const tools = createWorkspaceTools({
+    cwd: options.cwd,
+    yolo: options.yolo,
+    shellIdleTimeoutMs: options.shellIdleTimeoutMs,
+    outsideWorkspacePermission: hostOptions.outsideWorkspacePermission
+  });
+  const attachmentCapabilities = inferAttachmentCapabilities({
+    provider: options.provider,
+    model: selectedModel,
+    displayName: providerCapabilities.displayName,
+    explicitImage: providerCapabilities.supportsImage,
+    explicitAudio: providerCapabilities.supportsAudio
+  });
+  const skills = await loadSkills({ cwd: options.cwd, selected: options.skills });
+  const systemContext = skillsToSystemContext(skills);
+  const environment = detectAgentEnvironment(options.cwd);
+  const systemPrompt = buildAgentSystemPrompt({ tools, systemContext, workspace: options.cwd, model, reasoningMode: options.reasoningMode, environment, yolo: options.yolo ?? false });
+  const systemPromptTokens = Math.ceil(systemPrompt.length / 4);
+  const history = options.history ?? [];
+  const runtime: Runtime = {
+    provider,
+    model,
+    selectedModel,
+    cwd: options.cwd,
+    maxTurns: options.maxTurns,
+    contextTokens,
+    requestedContextTokens: options.contextTokens,
+    loadedContextTokens: providerCapabilities.contextTokens,
+    providerReasoning: providerCapabilities.supportsReasoning,
+    systemPrompt,
+    systemPromptTokens,
+    attachmentCapabilities,
+    tools,
+    skills,
+    history,
+    async run(_prompt: string, _runOptions: RuntimeRunOptions = {}) {
+      throw new Error('Runtime run not initialized.');
+    },
+    async *stream(_prompt: string, _streamOptions: { signal?: AbortSignal } = {}) {
+      throw new Error('Runtime stream not initialized.');
+    }
+  };
+
+  const runPrompt = async (prompt: string, runOptions: RuntimeRunOptions = {}) => {
+    const media = await buildPromptContentWithMedia(prompt, options.cwd, attachmentCapabilities);
+    assertContentSupported(media.content, attachmentCapabilities, model, options.provider);
+    runtime.lastUserContent = media.content;
+    const promptText = Array.isArray(media.content)
+      ? media.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n')
+      : prompt;
+    const attachments = Array.isArray(media.content) ? media.content.filter((part) => part.type !== 'text') : undefined;
+    const runSkills = resolveRuntimeSkills(skills, promptText, { cwd: options.cwd });
+    const runSystemContext = skillsToSystemContext(runSkills);
+    runtime.systemPrompt = buildAgentSystemPrompt({
+      tools,
+      systemContext: runSystemContext,
+      workspace: options.cwd,
+      model,
+      reasoningMode: options.reasoningMode,
+      environment,
+      yolo: options.yolo ?? false
+    });
+    runtime.systemPromptTokens = Math.ceil(runtime.systemPrompt.length / 4);
+    const agent = new Agent({
+      provider,
+      tools,
+      maxTurns: options.maxTurns ?? null,
+      workspace: options.cwd,
+      model,
+      reasoningMode: options.reasoningMode,
+      generation: {
+        maxTokens: options.maxTokens,
+        contextTokens,
+        temperature: options.temperature,
+        topP: options.topP,
+        topK: options.topK,
+        reasoningMode: options.reasoningMode,
+        includeRawChunks: true,
+        signal: runOptions.signal
+      },
+      systemContext: runSystemContext,
+      environment,
+      history,
+      yolo: options.yolo ?? false
+    });
+    return agent.run(promptText, {
+      attachments,
+      onModelStart: runOptions.onModelStart,
+      onModelActivity: runOptions.onModelActivity,
+      onToolStart: runOptions.onToolStart,
+      onTurn: runOptions.onTurn
+    });
+  };
+
+  runtime.run = runPrompt;
+  runtime.stream = async function* stream(prompt: string, streamOptions = {}) {
+      if (!isStreamingProvider(provider)) {
+        streamOptions.signal?.throwIfAborted();
+        const result = await runPrompt(prompt, { signal: streamOptions.signal });
+        yield { content: result.answer, done: true };
+        return;
+      }
+
+      const streamSkills = resolveRuntimeSkills(skills, prompt, { cwd: options.cwd });
+      const streamSystemContext = skillsToSystemContext(streamSkills);
+      yield* provider.generateStream([
+        {
+          role: 'system',
+          content: [
+            buildGemmaThinkingInstructions(model, options.reasoningMode),
+            'You are Gemma CLI, a helpful local command-line assistant.',
+            'Answer normally. Do not wrap the response in JSON in TUI streaming mode.',
+            streamSystemContext.length > 0 ? `Additional skills and instructions:\n${streamSystemContext.join('\n\n')}` : ''
+          ].filter(Boolean).join('\n')
+        },
+        { role: 'user', content: prompt }
+      ], {
+        maxTokens: options.maxTokens,
+        contextTokens,
+        temperature: options.temperature,
+        topP: options.topP,
+        topK: options.topK,
+        reasoningMode: options.reasoningMode,
+        includeRawChunks: true,
+        signal: streamOptions.signal
+      });
+    };
+  return runtime;
+}
+
+function defaultModelForProvider(provider: CliOptions['provider']): string {
+  return provider === 'ollama' ? 'gemma4:26b' : 'gemma-3-27b-it';
+}
+
+function isStreamingProvider(provider: ModelProvider): provider is StreamingModelProvider {
+  return typeof (provider as Partial<StreamingModelProvider>).generateStream === 'function';
+}
+
+async function resolveProviderAttachmentCapabilities(
+  provider: CliOptions['provider'],
+  model: string,
+  options: { ollamaUrl?: string; lmStudioUrl?: string }
+): Promise<{ displayName?: string; supportsImage?: boolean; supportsAudio?: boolean; supportsReasoning?: boolean; contextTokens?: number }> {
+  try {
+    if (provider === 'ollama') {
+      return await getOllamaModelCapabilities(model, options.ollamaUrl);
+    }
+    if (provider === 'lmstudio') {
+      const infos = await listLmStudioModelInfos(options.lmStudioUrl);
+      const exact = infos.find((info) => info.name === model);
+      return {
+        displayName: exact?.displayName,
+        supportsImage: exact?.supportsImage,
+        supportsAudio: false,
+        supportsReasoning: exact?.supportsReasoning
+      };
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+export function formatRunResult(result: AgentRunResult): string {
+  const toolLines = result.turns
+    .filter((turn) => turn.kind === 'tool' && turn.toolCall)
+    .map((turn) => {
+      const status = turn.toolResult?.meta?.presentation === 'notice'
+        ? 'notice'
+        : turn.toolResult?.ok ? 'ok' : 'failed';
+      return `tool ${turn.toolCall?.tool}: ${status}`;
+    });
+  return [...toolLines, result.answer].join('\n');
+}
+
+export function messageContentToText(content: ChatMessage['content']): string {
+  return contentToText(content);
+}

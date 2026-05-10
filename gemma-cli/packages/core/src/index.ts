@@ -1,0 +1,38 @@
+export { Agent, buildAgentSystemPrompt, renderEnvironmentBlock } from './agent.js';
+export type { AgentEnvironment, AgentOptions, AgentSystemPromptOptions } from './agent.js';
+export { assertContentSupported, buildPromptContentWithMedia, contentToText, inferAttachmentCapabilities, inferMimeTypeFromPath, resolveBinaryAssetForRequest, resolveImageAssetForRequest } from './content.js';
+export { buildGemma4Prompt, buildGemmaThinkingInstructions, modelProfileFor, normalizeGemmaModelOutput, parseGemmaNativeToolCall, renderGemmaNativeToolDeclarations, shouldEnableProviderReasoning } from './modelProfiles.js';
+export type { ModelProfile, ModelProfileFamily } from './modelProfiles.js';
+export { listLmStudioModelInfos, listLmStudioModels, LmStudioProvider } from './providers/lmStudioProvider.js';
+export { ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, OllamaProvider, prepareOllama } from './providers/ollamaProvider.js';
+export { createWorkspaceTools } from './tools/workspace.js';
+export { findScenario, scenarios } from './scenarios.js';
+export { detectSkillsForPrompt, listInstalledSkills, loadSkills, mergeSkills, skillsToSystemContext } from './skills.js';
+export type {
+  AgentRunResult,
+  AgentRunOptions,
+  AgentModelActivityEvent,
+  AgentModelEvent,
+  AgentToolStartEvent,
+  AgentTurn,
+  AgentTurnEvent,
+  ChatMessage,
+  ContentPart,
+  GenerateOptions,
+  MessageContent,
+  ModelProvider,
+  StreamChunk,
+  StreamingModelProvider,
+  Tool,
+  ToolCall,
+  ToolResult,
+  ToolResultMeta,
+  FileChangeMeta,
+  FileChange,
+  FileHunk
+} from './types.js';
+export type { AttachmentCapabilities, PromptAttachmentResult, ResolvedImageAsset } from './content.js';
+export type { LoadSkillsOptions, Skill } from './skills.js';
+export type { LmStudioModelInfo } from './providers/lmStudioProvider.js';
+export type { OllamaModelCapabilities, OllamaModelInfo } from './providers/ollamaProvider.js';
+export type { WorkspacePermissionHandler, WorkspacePermissionRequest } from './tools/workspace.js';

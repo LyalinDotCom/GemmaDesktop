@@ -1,0 +1,37 @@
+{
+  "name": "gemma-cli-workspace",
+  "version": "0.1.11",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "bin": {
+    "gemma": "packages/cli/dist/index.js"
+  },
+  "scripts": {
+    "build": "npm run build --workspace gemma-cli-core && npm run build --workspace gemma-cli",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "start": "npm run start --workspace gemma-cli --",
+    "dev": "npm run build && npm run start --",
+    "snapshot:tui": "npm run snapshot:tui --workspace gemma-cli",
+    "smoke:tui-resize": "npm run build && node scripts/tui-resize-smoke.mjs",
+    "release:dry-run": "node scripts/release.mjs --dry-run",
+    "release:publish": "node scripts/release.mjs"
+  },
+  "devDependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^20.17.16",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.13",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

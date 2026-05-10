@@ -268,18 +268,24 @@ The product idea is simple: make this stack legible from inside the interface, s
 ## Repository layout
 
 ```
-GemmaDesktopSDK/   The SDK. Sessions, runtime adapters, tool execution, prompts,
-                   attachments, tracing, capabilities — the contracts the rest
-                   of the system depends on.
+gemma-cli/         The canonical terminal coding-agent product. Its newest
+                   agent loop, tool design, diagnostics, and Gemma-optimized
+                   runtime behavior are being moved into the shared SDK.
 
-GemmaDesktopApp/   The Electron + React desktop app. Proves the SDK can power
-                   a polished end-user experience.
+GemmaDesktopSDK/   The current SDK home during migration. Sessions, runtime
+                   adapters, tool execution, prompts, attachments, tracing,
+                   and capabilities live here until the shared packages move
+                   to neutral @gemma-sdk/* naming.
 
-gemmadesktop-cli/  The headless parity harness. Same SDK, same behavior,
-                   testable from a terminal — no Electron required.
+GemmaDesktopApp/   The Electron + React desktop app. The runnable product
+                   identity is Gemma Desktop / gemma-desktop.
+
+gemmadesktop-cli/  Temporary legacy parity harness. Its useful coverage should
+                   be preserved in the SDK harness or gemma-cli before this
+                   package is removed.
 ```
 
-The SDK is the foundation. The app and the CLI are both consumers of it, and any SDK-backed behavior is expected to land on both surfaces in lockstep.
+The SDK is the foundation. Gemma CLI and Gemma Desktop are both consumers of it, and any SDK-backed behavior is expected to stay testable from a headless path as well as the desktop app.
 
 ---
 

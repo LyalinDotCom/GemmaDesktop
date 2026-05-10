@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+npm-debug.log*
+__pycache__/
+.gemmacli/
+test-project/
+test-projects/
+gemma-testing/
+hey.md

@@ -1,0 +1,44 @@
+{
+  "name": "gemma-cli",
+  "version": "0.1.11",
+  "description": "Unofficial local-first coding agent optimized for Gemma models.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "gemma": "dist/index.js"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "gemma",
+    "ollama",
+    "lm-studio",
+    "coding-agent",
+    "cli",
+    "local-ai"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "snapshot:tui": "node dist/tuiSnapshot.js",
+    "test": "vitest run",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "ansi-escapes": "^7.3.0",
+    "gemma-cli-core": "0.1.11",
+    "ink": "npm:@jrichman/ink@^6.6.9",
+    "react": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
