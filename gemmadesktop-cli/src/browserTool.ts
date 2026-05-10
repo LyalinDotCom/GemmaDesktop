@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ToolExecutionContext } from "@gemma-desktop/sdk-core";
-import type { RegisteredTool } from "@gemma-desktop/sdk-tools";
+import type { ToolExecutionContext } from "@gemma-sdk/core";
+import type { RegisteredTool } from "@gemma-sdk/tools";
 
 const execFileAsync = promisify(execFile);
 const AGENT_BROWSER_PACKAGE = "agent-browser@0.26.0";

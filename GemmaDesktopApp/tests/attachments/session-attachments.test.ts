@@ -11,7 +11,7 @@ const {
   renderPdfPagesMock: vi.fn(),
 }))
 
-vi.mock('@gemma-desktop/sdk-node', () => ({
+vi.mock('@gemma-sdk/node', () => ({
   PDF_RENDERER_INFO: {
     name: 'pdf-to-img',
     version: '5.0.0',

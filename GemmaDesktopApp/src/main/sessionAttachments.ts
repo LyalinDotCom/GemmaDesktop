@@ -4,12 +4,12 @@ import os from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { pathToFileURL } from 'url'
-import type { SessionInput, SessionCapabilityContext } from '@gemma-desktop/sdk-core'
+import type { SessionInput, SessionCapabilityContext } from '@gemma-sdk/core'
 import {
   PDF_RENDERER_INFO,
   inspectPdfDocument,
   renderPdfPages,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import {
   attachmentKindLabels,
   deriveAttachmentSupport,

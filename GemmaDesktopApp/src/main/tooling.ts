@@ -1,6 +1,6 @@
-import type { ModeSelection } from '@gemma-desktop/sdk-core'
+import type { ModeSelection } from '@gemma-sdk/core'
 import path from 'path'
-import { parseToolCallInput } from '@gemma-desktop/sdk-core'
+import { parseToolCallInput } from '@gemma-sdk/core'
 import {
   GET_PROJECT_BROWSER_ERRORS_TOOL,
   EXTRACT_PROJECT_BROWSER_TEXT_TOOL,

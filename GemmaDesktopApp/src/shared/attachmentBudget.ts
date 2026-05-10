@@ -1,5 +1,5 @@
 import type { AttachmentSupport } from './attachmentSupport'
-import type { AttachmentKind } from '@gemma-desktop/sdk-core'
+import type { AttachmentKind } from '@gemma-sdk/core'
 
 export interface AttachmentBudgetItem {
   kind: AttachmentKind

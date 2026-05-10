@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
+import { createGemmaDesktop } from "@gemma-sdk/node";
 import {
   createLiveRuntimeAdapters,
   isOllamaLiveEnabled,

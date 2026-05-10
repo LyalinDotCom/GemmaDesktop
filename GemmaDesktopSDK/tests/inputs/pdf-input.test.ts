@@ -6,7 +6,7 @@ import {
   extractPdfText,
   inspectPdfDocument,
   renderPdfPages,
-} from "@gemma-desktop/sdk-node";
+} from "@gemma-sdk/node";
 
 function escapePdfString(value: string): string {
   return value

@@ -778,13 +778,13 @@ The sibling SDK workspace currently contains 7 packages:
 
 | Package | Purpose |
 | --- | --- |
-| `@gemma-desktop/sdk-core` | shared runtime/session/event/trace/prompt contracts |
-| `@gemma-desktop/sdk-harness` | scenario runner and benchmark harness |
-| `@gemma-desktop/sdk-node` | high-level Node entry point, session factory, research runner, PDF helpers |
-| `@gemma-desktop/sdk-runtime-ollama` | Ollama native and OpenAI-compatible adapters |
-| `@gemma-desktop/sdk-runtime-lmstudio` | LM Studio native and OpenAI-compatible adapters |
-| `@gemma-desktop/sdk-runtime-llamacpp` | llama.cpp server adapter |
-| `@gemma-desktop/sdk-tools` | tool registry, permission policy, host tools, web and workspace tooling |
+| `@gemma-sdk/core` | shared runtime/session/event/trace/prompt contracts |
+| `@gemma-sdk/harness` | scenario runner and benchmark harness |
+| `@gemma-sdk/node` | high-level Node entry point, session factory, research runner, PDF helpers |
+| `@gemma-sdk/runtime-ollama` | Ollama native and OpenAI-compatible adapters |
+| `@gemma-sdk/runtime-lmstudio` | LM Studio native and OpenAI-compatible adapters |
+| `@gemma-sdk/runtime-llamacpp` | llama.cpp server adapter |
+| `@gemma-sdk/tools` | tool registry, permission policy, host tools, web and workspace tooling |
 
 ### 8.2 sdk-core
 
@@ -934,13 +934,13 @@ The SDK test suite covers areas such as:
 
 | Dependency | Version | Role |
 | --- | --- | --- |
-| `@gemma-desktop/sdk-core` | local workspace | core contracts from sibling SDK |
-| `@gemma-desktop/sdk-harness` | local workspace | harness support |
-| `@gemma-desktop/sdk-node` | local workspace | high-level SDK entry point |
-| `@gemma-desktop/sdk-runtime-llamacpp` | local workspace | llama.cpp adapter |
-| `@gemma-desktop/sdk-runtime-lmstudio` | local workspace | LM Studio adapters |
-| `@gemma-desktop/sdk-runtime-ollama` | local workspace | Ollama adapters |
-| `@gemma-desktop/sdk-tools` | local workspace | tool runtime and built-ins |
+| `@gemma-sdk/core` | local workspace | core contracts from sibling SDK |
+| `@gemma-sdk/harness` | local workspace | harness support |
+| `@gemma-sdk/node` | local workspace | high-level SDK entry point |
+| `@gemma-sdk/runtime-llamacpp` | local workspace | llama.cpp adapter |
+| `@gemma-sdk/runtime-lmstudio` | local workspace | LM Studio adapters |
+| `@gemma-sdk/runtime-ollama` | local workspace | Ollama adapters |
+| `@gemma-sdk/tools` | local workspace | tool runtime and built-ins |
 | `@huggingface/transformers` | `3.5.1` | read-aloud model loading and local inference helpers |
 | `@modelcontextprotocol/sdk` | `1.29.0` | MCP client plumbing |
 | `@xterm/addon-fit` | `0.11.0` | terminal fit behavior |
@@ -1012,12 +1012,12 @@ Highlighted upstreams include:
 
 SDK package-level direct dependencies:
 
-- `sdk-harness` -> `@gemma-desktop/sdk-core`
+- `sdk-harness` -> `@gemma-sdk/core`
 - `sdk-node` -> core, harness, all runtime adapters, tools, `pdf-to-img`
-- `sdk-runtime-llamacpp` -> `@gemma-desktop/sdk-core`
-- `sdk-runtime-lmstudio` -> `@gemma-desktop/sdk-core`
-- `sdk-runtime-ollama` -> `@gemma-desktop/sdk-core`
-- `sdk-tools` -> `@gemma-desktop/sdk-core`, `@mozilla/readability`, `ajv`, `fast-xml-parser`, `got-scraping`, `jsdom`
+- `sdk-runtime-llamacpp` -> `@gemma-sdk/core`
+- `sdk-runtime-lmstudio` -> `@gemma-sdk/core`
+- `sdk-runtime-ollama` -> `@gemma-sdk/core`
+- `sdk-tools` -> `@gemma-sdk/core`, `@mozilla/readability`, `ajv`, `fast-xml-parser`, `got-scraping`, `jsdom`
 
 SDK workspace dev dependencies:
 

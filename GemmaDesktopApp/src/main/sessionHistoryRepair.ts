@@ -2,7 +2,7 @@ import type {
   ContentPart,
   SessionMessage,
   SessionSnapshot,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   findMissingAppUserMessages,
   type SessionDetailMessage,

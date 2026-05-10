@@ -1,5 +1,5 @@
 {
-  "name": "@gemma-desktop/sdk-tools",
+  "name": "@gemma-sdk/tools",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,7 @@
     }
   },
   "dependencies": {
-    "@gemma-desktop/sdk-core": "0.1.0",
+    "@gemma-sdk/core": "0.1.0",
     "@google/genai": "^1.50.1",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.17.1",

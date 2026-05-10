@@ -9,7 +9,7 @@ import type {
   StructuredOutputSpec,
   ToolSubsessionRequest,
   ToolSubsessionResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   FINALIZE_BUILD_TOOL_NAME,
   GemmaDesktopError,
@@ -35,19 +35,19 @@ import {
   type SessionTurnOptions,
   type ToolDefinition,
   type TurnResult,
-} from "@gemma-desktop/sdk-core";
-import { HarnessRunner } from "@gemma-desktop/sdk-harness";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
-import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
-import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
-import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+} from "@gemma-sdk/core";
+import { HarnessRunner } from "@gemma-sdk/harness";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
+import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
+import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-sdk/runtime-ollama";
 import {
   ToolRegistry,
   ToolRuntime,
   createHostTools,
   type RegisteredTool,
   type ToolPermissionPolicy,
-} from "@gemma-desktop/sdk-tools";
+} from "@gemma-sdk/tools";
 import { extractPdfText as extractPdfTextFromPdf } from "./pdf.js";
 import { ResearchRunner, type ResearchRunOptions, type ResearchRunResult } from "./research.js";
 export {

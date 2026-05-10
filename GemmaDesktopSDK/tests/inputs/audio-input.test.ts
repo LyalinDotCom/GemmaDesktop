@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
 import { createMockServer } from "../helpers/mock-server.js";
 
 function createTinyWavBuffer(): Buffer {

@@ -8,7 +8,7 @@ import type {
   RuntimeAdapter,
   RuntimeIdentity,
   RuntimeInspectionResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   fetchJson,
   generateOpenAICompatibleResponse,
@@ -16,7 +16,7 @@ import {
   postJson,
   streamOpenAICompatibleResponse,
   withInferredModelFamilyCapabilities,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 export interface OmlxAdapterOptions {
   baseUrl?: string;

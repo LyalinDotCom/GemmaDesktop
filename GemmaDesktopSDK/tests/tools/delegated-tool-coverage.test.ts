@@ -13,8 +13,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("delegated tool coverage", () => {

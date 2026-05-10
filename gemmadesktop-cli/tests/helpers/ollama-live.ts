@@ -6,17 +6,17 @@ import type {
   LoadedModelInstance,
   RuntimeAdapter,
   RuntimeInspectionResult,
-} from "@gemma-desktop/sdk-core";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+} from "@gemma-sdk/core";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import {
   createLmStudioNativeAdapter,
   createLmStudioOpenAICompatibleAdapter,
-} from "@gemma-desktop/sdk-runtime-lmstudio";
-import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
+} from "@gemma-sdk/runtime-lmstudio";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
 import {
   createOllamaNativeAdapter,
   createOllamaOpenAICompatibleAdapter,
-} from "@gemma-desktop/sdk-runtime-ollama";
+} from "@gemma-sdk/runtime-ollama";
 
 const DEFAULT_RUNTIME_ENDPOINTS = {
   ollama: "http://127.0.0.1:11434",

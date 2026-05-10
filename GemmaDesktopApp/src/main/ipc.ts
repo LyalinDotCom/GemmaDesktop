@@ -16,14 +16,14 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import {
   createGemmaDesktop,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import type {
   GemmaDesktop,
   GemmaDesktopSession,
   ResearchRunResult,
   ResearchRunStatus,
   SessionDebugSnapshot,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import type {
   ConversationApprovalMode,
   SessionSnapshot,
@@ -34,17 +34,17 @@ import type {
   SessionInput,
   SessionMessage,
   StructuredOutputSpec,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   DEFAULT_CONVERSATION_APPROVAL_MODE,
   GemmaDesktopError,
   normalizeConversationApprovalMode,
   shouldRequireToolApproval,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   createHostTools,
   type RegisteredTool,
-} from '@gemma-desktop/sdk-tools'
+} from '@gemma-sdk/tools'
 import {
   buildSkillContextBundles,
   defaultSkillRoots,
@@ -58,7 +58,7 @@ import {
   searchSkillsCatalog,
   type InstalledSkillRecord,
 } from './skills'
-import type { ToolPermissionPolicy } from '@gemma-desktop/sdk-tools'
+import type { ToolPermissionPolicy } from '@gemma-sdk/tools'
 import {
   type AppSessionMode,
   ACTIVATE_SKILL_TOOL,

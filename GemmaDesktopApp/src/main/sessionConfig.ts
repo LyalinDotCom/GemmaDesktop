@@ -1,11 +1,11 @@
 import type {
   ConversationApprovalMode,
   SessionSnapshot,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   DEFAULT_CONVERSATION_APPROVAL_MODE,
   normalizeConversationApprovalMode,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   type AppSessionMode,
   type BaseSessionMode,

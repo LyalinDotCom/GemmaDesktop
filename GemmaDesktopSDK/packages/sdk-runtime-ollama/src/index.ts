@@ -11,7 +11,7 @@ import type {
   RuntimeInspectionResult,
   ToolDefinition,
   TokenUsage,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   detectCommandVersion,
   CANONICAL_ATTACHMENT_CAPABILITY_IDS,
@@ -22,7 +22,7 @@ import {
   resolveBinaryAssetForRequest,
   resolveImageAssetForRequest,
   withInferredModelFamilyCapabilities,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   fetchJson,
   fetchWithRetry,
@@ -30,7 +30,7 @@ import {
   parseJsonLines,
   postJson,
   streamOpenAICompatibleResponse,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 export interface OllamaAdapterOptions {
   baseUrl?: string;

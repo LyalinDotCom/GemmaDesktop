@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
-import { GemmaDesktopError } from "@gemma-desktop/sdk-core";
+import { GemmaDesktopError } from "@gemma-sdk/core";
 
 const DEFAULT_READ_LINE_LIMIT = 200;
 const DEFAULT_READ_MAX_BYTES = 50 * 1024;

@@ -109,7 +109,7 @@ import {
   createDefaultModelSelectionSettings,
   normalizeProviderRuntimeId,
 } from '@shared/sessionModelDefaults'
-import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
+import type { ConversationApprovalMode } from '@gemma-sdk/core'
 
 const DEFAULT_NOTIFICATION_PERMISSION_STATE: NotificationPermissionState = {
   status: 'default',

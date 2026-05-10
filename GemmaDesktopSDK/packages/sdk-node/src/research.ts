@@ -9,14 +9,14 @@ import {
   type StructuredOutputSpec,
   type ToolSubsessionRequest,
   type ToolSubsessionResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   ParallelHostExecutor,
   type BatchTaskResult,
   type FetchUrlInput,
   type FetchExecutionResult,
   type SearchExecutionResult,
-} from "@gemma-desktop/sdk-tools";
+} from "@gemma-sdk/tools";
 
 const DEFAULT_ARTIFACT_RELATIVE_DIRECTORY = path.join(".gemma", "research");
 const DEFAULT_MAX_CONCURRENT_MODEL_WORKERS = 1;

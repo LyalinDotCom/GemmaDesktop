@@ -1,4 +1,4 @@
-import type { SessionInput, StructuredOutputSpec } from '@gemma-desktop/sdk-core'
+import type { SessionInput, StructuredOutputSpec } from '@gemma-sdk/core'
 
 export interface ThinkingSummaryTaskInput {
   thinkingText: string

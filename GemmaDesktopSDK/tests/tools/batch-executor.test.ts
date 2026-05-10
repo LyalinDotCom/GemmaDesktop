@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { ParallelHostExecutor } from "@gemma-desktop/sdk-tools";
+import { ParallelHostExecutor } from "@gemma-sdk/tools";
 import { setSearchProviderForTests } from "../../packages/sdk-tools/src/web.js";
 import { createMockServer } from "../helpers/mock-server.js";
 

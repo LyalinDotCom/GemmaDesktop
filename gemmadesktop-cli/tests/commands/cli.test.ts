@@ -6,13 +6,13 @@ import {
   type EnvironmentInspectionResult,
   type SessionSnapshot,
   type TurnResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import type {
   CreateGemmaDesktopOptions,
   CreateSessionOptions,
   ResearchRunResult,
   SessionDebugSnapshot,
-} from "@gemma-desktop/sdk-node";
+} from "@gemma-sdk/node";
 import { describe, expect, it } from "vitest";
 import { runCli, type CliDependencies, type SessionLike } from "../../src/cli.js";
 import { DESKTOP_PARITY_RUNTIME_ADAPTER_IDS } from "../../src/desktopParity.js";

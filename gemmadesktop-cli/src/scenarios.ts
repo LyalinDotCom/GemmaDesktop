@@ -14,8 +14,8 @@ import {
   type StreamedTurnResult,
   type ToolResult,
   type TurnResult,
-} from "@gemma-desktop/sdk-core";
-import type { CreateSessionOptions, ResearchRunOptions, ResearchRunResult } from "@gemma-desktop/sdk-node";
+} from "@gemma-sdk/core";
+import type { CreateSessionOptions, ResearchRunOptions, ResearchRunResult } from "@gemma-sdk/node";
 import type { ScenarioCliOptions } from "./args.js";
 import { buildDesktopParitySessionMetadata } from "./metadata.js";
 

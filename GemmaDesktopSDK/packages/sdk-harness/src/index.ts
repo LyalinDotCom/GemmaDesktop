@@ -1,5 +1,5 @@
-import type { GemmaDesktopEvent, ModeSelection, SessionInput, TurnResult } from "@gemma-desktop/sdk-core";
-import { renderTrace } from "@gemma-desktop/sdk-core";
+import type { GemmaDesktopEvent, ModeSelection, SessionInput, TurnResult } from "@gemma-sdk/core";
+import { renderTrace } from "@gemma-sdk/core";
 
 export type BenchmarkClassification = "success" | "partial" | "failed" | "misconfigured";
 

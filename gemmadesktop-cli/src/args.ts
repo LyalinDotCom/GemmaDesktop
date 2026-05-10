@@ -5,7 +5,7 @@ import {
   type BuildTurnPolicyInput,
   type ConversationApprovalMode,
   type ModeSelection,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   type DesktopParityRuntimeEndpoints,
   resolveDefaultModelTarget,

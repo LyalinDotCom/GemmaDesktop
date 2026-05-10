@@ -1,9 +1,9 @@
 import os from "node:os";
-import type { RuntimeAdapter } from "@gemma-desktop/sdk-core";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
-import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
-import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
-import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import type { RuntimeAdapter } from "@gemma-sdk/core";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
+import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
+import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-sdk/runtime-ollama";
 
 export const DESKTOP_PARITY_DEFAULT_ENDPOINTS = {
   ollama: "http://127.0.0.1:11434",

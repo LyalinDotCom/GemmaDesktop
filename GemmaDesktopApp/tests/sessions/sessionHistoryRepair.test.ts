@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionSnapshot } from '@gemma-desktop/sdk-core'
+import type { SessionSnapshot } from '@gemma-sdk/core'
 import { restoreMissingUserHistoryFromAppMessages } from '../../src/main/sessionHistoryRepair'
 import type { SessionDetailMessage } from '../../src/main/sessionMessages'
 

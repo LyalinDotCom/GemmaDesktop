@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("ollama reasoning control", () => {

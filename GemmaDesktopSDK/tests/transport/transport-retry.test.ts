@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchJson, fetchWithRetry, isTransientFetchError } from "@gemma-desktop/sdk-core";
+import { fetchJson, fetchWithRetry, isTransientFetchError } from "@gemma-sdk/core";
 
 describe("isTransientFetchError", () => {
   it("recognises bare TypeError: fetch failed", () => {

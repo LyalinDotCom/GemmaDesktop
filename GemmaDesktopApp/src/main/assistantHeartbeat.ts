@@ -1,4 +1,4 @@
-import type { SessionMessage } from '@gemma-desktop/sdk-core'
+import type { SessionMessage } from '@gemma-sdk/core'
 
 export type AssistantHeartbeatDecision = {
   action: 'noop' | 'complete' | 'restart'

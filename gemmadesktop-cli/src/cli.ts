@@ -10,14 +10,14 @@ import {
   type SessionInput,
   type SessionSnapshot,
   type TurnResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   createGemmaDesktop,
   type CreateGemmaDesktopOptions,
   type CreateSessionOptions,
   type GemmaDesktopSession,
   type SessionDebugSnapshot,
-} from "@gemma-desktop/sdk-node";
+} from "@gemma-sdk/node";
 import {
   CliArgumentError,
   parseCliCommand,

@@ -2,9 +2,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
 import { createMockServer } from "../helpers/mock-server.js";
 
 function createTinyWavBuffer(): Buffer {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("environment inspection", () => {

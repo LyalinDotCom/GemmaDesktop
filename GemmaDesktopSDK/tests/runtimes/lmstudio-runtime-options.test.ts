@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createLmStudioNativeAdapter,
   createLmStudioOpenAICompatibleAdapter,
-} from "@gemma-desktop/sdk-runtime-lmstudio";
+} from "@gemma-sdk/runtime-lmstudio";
 import { createMockServer } from "../helpers/mock-server.js";
 
 function userMessage(text: string) {

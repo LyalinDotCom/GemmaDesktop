@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { ToolExecutionContext } from "@gemma-desktop/sdk-core";
-import { buildFileEditArtifact, buildLineDiff, FINALIZE_BUILD_TOOL_NAME, GemmaDesktopError, runShellCommand } from "@gemma-desktop/sdk-core";
+import type { ToolExecutionContext } from "@gemma-sdk/core";
+import { buildFileEditArtifact, buildLineDiff, FINALIZE_BUILD_TOOL_NAME, GemmaDesktopError, runShellCommand } from "@gemma-sdk/core";
 import type { RegisteredTool } from "./runtime.js";
 import {
   createWorkspaceSearchBackend,

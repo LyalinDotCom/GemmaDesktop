@@ -7,16 +7,16 @@ import type {
   ModelRecord,
   RuntimeAdapter,
   RuntimeIdentity,
-  RuntimeInspectionResult} from "@gemma-desktop/sdk-core";
+  RuntimeInspectionResult} from "@gemma-sdk/core";
 import {
   detectCommandVersion,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   fetchJson,
   generateOpenAICompatibleResponse,
   postJson,
   streamOpenAICompatibleResponse,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 export interface LlamaCppAdapterOptions {
   baseUrl?: string;

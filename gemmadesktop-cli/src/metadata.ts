@@ -1,4 +1,4 @@
-import type { ConversationApprovalMode, ModeSelection } from "@gemma-desktop/sdk-core";
+import type { ConversationApprovalMode, ModeSelection } from "@gemma-sdk/core";
 
 export const APP_SESSION_METADATA_KEY = "gemmaDesktopApp";
 export const REQUEST_PREFERENCES_METADATA_KEY = "requestPreferences";

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   EnvironmentInspectionResult,
   RuntimeInspectionResult,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   buildDoctorReport,
   collectDoctorCommandChecks,

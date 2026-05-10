@@ -10,7 +10,7 @@ import type {
   RuntimeIdentity,
   RuntimeInspectionResult,
   TokenUsage,
-  SessionMessage} from "@gemma-desktop/sdk-core";
+  SessionMessage} from "@gemma-sdk/core";
 import {
   contentPartsToText,
   detectCommandVersion,
@@ -18,14 +18,14 @@ import {
   parseToolCallInput,
   resolveImageAssetForRequest,
   withInferredModelFamilyCapabilities,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   fetchJson,
   generateOpenAICompatibleResponse,
   parseSse,
   postJson,
   streamOpenAICompatibleResponse,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 export interface LmStudioAdapterOptions {
   baseUrl?: string;

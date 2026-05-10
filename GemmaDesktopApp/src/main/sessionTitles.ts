@@ -1,4 +1,4 @@
-import type { SessionInput, StructuredOutputSpec } from '@gemma-desktop/sdk-core'
+import type { SessionInput, StructuredOutputSpec } from '@gemma-sdk/core'
 import type { ConversationKind } from './tooling'
 
 export const SESSION_TITLE_RESPONSE_FORMAT: StructuredOutputSpec = {

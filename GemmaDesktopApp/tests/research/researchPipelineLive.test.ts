@@ -12,7 +12,7 @@ import {
   createGemmaDesktop,
   type ResearchRunStatus,
   type ResearchSourceFamily,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import {
   buildResearchAssistantMessage,
   buildResearchLiveActivity,

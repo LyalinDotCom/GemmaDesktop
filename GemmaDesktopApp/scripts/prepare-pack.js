@@ -3,7 +3,7 @@
 /**
  * Prepares a clean staging app for electron-builder packaging.
  *
- * The @gemma-desktop/sdk-* packages are linked via file: from the GemmaDesktopSDK monorepo.
+ * The @gemma-sdk/* packages are linked via file: from the GemmaDesktopSDK monorepo.
  * At runtime, these packages require dependencies that live in the monorepo
  * root's node_modules. Packaging directly from the app repo's node_modules mixes
  * those runtime dependencies with electron-builder's own toolchain dependencies,

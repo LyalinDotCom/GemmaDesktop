@@ -93,7 +93,7 @@ import type {
   SpeechEvent,
   SpeechInspection,
 } from '@/types'
-import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
+import type { ConversationApprovalMode } from '@gemma-sdk/core'
 import {
   SPEECH_CHUNK_DURATION_MS,
   SPEECH_CHUNK_OVERLAP_MS,

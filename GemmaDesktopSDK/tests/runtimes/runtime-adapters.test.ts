@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
+import { createGemmaDesktop } from "@gemma-sdk/node";
 import type {
   ChatRequest,
   ChatResponse,
   RuntimeAdapter,
   RuntimeInspectionResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 function createRuntimeAdapter(input: {
   modelId: string;

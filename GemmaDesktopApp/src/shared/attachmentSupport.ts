@@ -3,7 +3,7 @@ import {
   type AttachmentKind as SdkAttachmentKind,
   type CapabilityRecord,
   resolveCapabilityStatus,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 
 export type AttachmentKind = SdkAttachmentKind
 

@@ -2,8 +2,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
 function messageText(message: Record<string, unknown>): string {

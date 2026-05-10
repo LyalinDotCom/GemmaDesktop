@@ -2,7 +2,7 @@ import { ShieldCheck, Zap } from 'lucide-react'
 import {
   normalizeConversationApprovalMode,
   type ConversationApprovalMode,
-} from '@gemma-desktop/sdk-core/approvalMode'
+} from '@gemma-sdk/core/approvalMode'
 
 interface ApprovalModeToggleProps {
   mode?: ConversationApprovalMode

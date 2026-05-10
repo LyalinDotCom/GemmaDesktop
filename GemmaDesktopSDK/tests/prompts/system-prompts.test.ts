@@ -7,9 +7,9 @@ import {
   SYSTEM_PROMPT_SECTION_TAG,
   type SessionMessage,
   type SystemPromptCatalog,
-} from "@gemma-desktop/sdk-core";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+} from "@gemma-sdk/core";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
 function collectSystemText(messages: Array<Record<string, unknown>>): string {

@@ -8,14 +8,14 @@ function local(path: string): string {
 export default defineConfig({
   resolve: {
     alias: {
-      "@gemma-desktop/sdk-core": local("./packages/sdk-core/src/index.ts"),
-      "@gemma-desktop/sdk-tools": local("./packages/sdk-tools/src/index.ts"),
-      "@gemma-desktop/sdk-harness": local("./packages/sdk-harness/src/index.ts"),
-      "@gemma-desktop/sdk-runtime-ollama": local("./packages/sdk-runtime-ollama/src/index.ts"),
-      "@gemma-desktop/sdk-runtime-lmstudio": local("./packages/sdk-runtime-lmstudio/src/index.ts"),
-      "@gemma-desktop/sdk-runtime-llamacpp": local("./packages/sdk-runtime-llamacpp/src/index.ts"),
-      "@gemma-desktop/sdk-runtime-omlx": local("./packages/sdk-runtime-omlx/src/index.ts"),
-      "@gemma-desktop/sdk-node": local("./packages/sdk-node/src/index.ts")
+      "@gemma-sdk/core": local("./packages/sdk-core/src/index.ts"),
+      "@gemma-sdk/tools": local("./packages/sdk-tools/src/index.ts"),
+      "@gemma-sdk/harness": local("./packages/sdk-harness/src/index.ts"),
+      "@gemma-sdk/runtime-ollama": local("./packages/sdk-runtime-ollama/src/index.ts"),
+      "@gemma-sdk/runtime-lmstudio": local("./packages/sdk-runtime-lmstudio/src/index.ts"),
+      "@gemma-sdk/runtime-llamacpp": local("./packages/sdk-runtime-llamacpp/src/index.ts"),
+      "@gemma-sdk/runtime-omlx": local("./packages/sdk-runtime-omlx/src/index.ts"),
+      "@gemma-sdk/node": local("./packages/sdk-node/src/index.ts")
     }
   },
   test: {

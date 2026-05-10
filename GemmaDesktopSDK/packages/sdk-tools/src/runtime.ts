@@ -6,8 +6,8 @@ import type {
   ToolExecutionContext,
   ToolExecutor,
   ToolResult,
-} from "@gemma-desktop/sdk-core";
-import { GemmaDesktopError, parseToolCallInput } from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
+import { GemmaDesktopError, parseToolCallInput } from "@gemma-sdk/core";
 
 export interface ToolPermissionDecision {
   allowed: boolean;

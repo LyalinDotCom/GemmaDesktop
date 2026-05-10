@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ToolRegistry, ToolRuntime } from "@gemma-desktop/sdk-tools";
+import { ToolRegistry, ToolRuntime } from "@gemma-sdk/tools";
 
 describe("tool runtime aliases", () => {
   function createBaseContext(toolCallId: string) {

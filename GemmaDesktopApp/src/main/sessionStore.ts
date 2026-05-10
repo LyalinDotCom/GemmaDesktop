@@ -1,6 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
-import type { SessionSnapshot } from '@gemma-desktop/sdk-core'
+import type { SessionSnapshot } from '@gemma-sdk/core'
 import type { AppSessionMode } from './tooling'
 import { normalizeAppSessionStorageScope } from './talkSession'
 import type { AppSessionStorageScope } from './talkSession'

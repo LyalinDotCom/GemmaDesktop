@@ -2,7 +2,7 @@ import { execFile } from 'child_process'
 import {
   normalizeConversationApprovalMode,
   type ConversationApprovalMode,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../shared/geminiModels'
 
 export { ASK_GEMINI_DEFAULT_MODEL } from '../shared/geminiModels'

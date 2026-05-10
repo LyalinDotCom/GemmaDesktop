@@ -1,7 +1,7 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RuntimeDebugEvent } from "@gemma-desktop/sdk-core";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import type { RuntimeDebugEvent } from "@gemma-sdk/core";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
 import { createMockServer } from "../helpers/mock-server.js";
 
 async function createHangingNdjsonServer(): Promise<{

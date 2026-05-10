@@ -1,4 +1,4 @@
-import type { ToolResult } from '@gemma-desktop/sdk-core'
+import type { ToolResult } from '@gemma-sdk/core'
 import type { FileEditContentBlock } from '../shared/fileEdits'
 import {
   sanitizeRenderableContentBlocks,

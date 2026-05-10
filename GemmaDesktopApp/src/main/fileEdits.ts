@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { FileEditArtifact } from '@gemma-desktop/sdk-core'
+import type { FileEditArtifact } from '@gemma-sdk/core'
 import type { FileEditContentBlock } from '../shared/fileEdits'
 
 const MUTATION_TOOL_NAMES = new Set([

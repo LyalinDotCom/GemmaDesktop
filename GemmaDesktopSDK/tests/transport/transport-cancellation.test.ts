@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GemmaDesktopError, parseJsonLines, parseSse } from "@gemma-desktop/sdk-core";
+import { GemmaDesktopError, parseJsonLines, parseSse } from "@gemma-sdk/core";
 
 function createHangingStream(onCancel: () => void): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({

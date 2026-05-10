@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import type { SessionMessage } from '@gemma-desktop/sdk-core'
+import type { SessionMessage } from '@gemma-sdk/core'
 import {
   EXIT_PLAN_MODE_TOOL,
   type AppSessionMode,

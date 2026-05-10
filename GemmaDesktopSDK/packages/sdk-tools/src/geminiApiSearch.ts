@@ -1,4 +1,4 @@
-import { GemmaDesktopError } from "@gemma-desktop/sdk-core";
+import { GemmaDesktopError } from "@gemma-sdk/core";
 import { GoogleGenAI, type GenerateContentResponse } from "@google/genai";
 
 export const GEMINI_API_SEARCH_DEFAULT_MODEL = "gemini-3-flash-preview";

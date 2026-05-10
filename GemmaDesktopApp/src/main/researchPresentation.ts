@@ -1,7 +1,7 @@
 import type {
   ResearchRunResult,
   ResearchRunStatus,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import path from 'path'
 import type {
   ResearchPanelProgressBlock,

@@ -1,5 +1,5 @@
 {
-  "name": "@gemma-desktop/sdk-core",
+  "name": "@gemma-sdk/core",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",

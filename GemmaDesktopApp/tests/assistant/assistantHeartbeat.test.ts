@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionMessage } from '@gemma-desktop/sdk-core'
+import type { SessionMessage } from '@gemma-sdk/core'
 import {
   applyAssistantCompletionMessage,
   buildAssistantHelperToolOutput,

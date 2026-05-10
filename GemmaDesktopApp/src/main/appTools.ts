@@ -4,12 +4,12 @@ import {
   renderWorkspaceReadFile,
   renderWorkspaceReadFiles,
   type RegisteredTool,
-} from '@gemma-desktop/sdk-tools'
+} from '@gemma-sdk/tools'
 import type {
   ConversationApprovalMode,
   JsonSchema,
   ModeSelection,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   ACTIVATE_SKILL_TOOL,
   ASK_USER_TOOL,

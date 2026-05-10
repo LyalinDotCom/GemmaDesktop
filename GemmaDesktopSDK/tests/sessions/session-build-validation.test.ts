@@ -11,12 +11,12 @@ import {
   type RuntimeAdapter,
   type RuntimeInspectionResult,
   type ShellCommandResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 import {
   ToolRegistry,
   ToolRuntime,
   type RegisteredTool,
-} from "@gemma-desktop/sdk-tools";
+} from "@gemma-sdk/tools";
 
 function createInspectionResult(identity: RuntimeAdapter["identity"]): RuntimeInspectionResult {
   return {

@@ -8,9 +8,9 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import type { ToolExecutionContext } from "@gemma-desktop/sdk-core";
-import { runShellCommand } from "@gemma-desktop/sdk-core";
-import { createHostTools, ToolRegistry, ToolRuntime } from "@gemma-desktop/sdk-tools";
+import type { ToolExecutionContext } from "@gemma-sdk/core";
+import { runShellCommand } from "@gemma-sdk/core";
+import { createHostTools, ToolRegistry, ToolRuntime } from "@gemma-sdk/tools";
 
 describe("host tools", () => {
   const tempDirectories: string[] = [];

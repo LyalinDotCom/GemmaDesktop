@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createGemmaDesktop, type ResearchRunStatus } from "@gemma-desktop/sdk-node";
+import { createGemmaDesktop, type ResearchRunStatus } from "@gemma-sdk/node";
 import {
   createLiveRuntimeAdapters,
   withLiveRuntimeModel,

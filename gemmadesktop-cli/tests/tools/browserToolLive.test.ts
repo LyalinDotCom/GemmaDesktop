@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import type { ToolExecutionContext, ToolResult } from "@gemma-desktop/sdk-core";
+import type { ToolExecutionContext, ToolResult } from "@gemma-sdk/core";
 import { createCliBrowserTool } from "../../src/browserTool.js";
 
 const runLiveBrowser = process.env.GEMMA_DESKTOP_RUN_BROWSER_TOOL_LIVE === "1";

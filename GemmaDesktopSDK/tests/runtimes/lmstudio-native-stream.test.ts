@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createLmStudioNativeAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
+import { createLmStudioNativeAdapter } from "@gemma-sdk/runtime-lmstudio";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("LM Studio native streaming", () => {

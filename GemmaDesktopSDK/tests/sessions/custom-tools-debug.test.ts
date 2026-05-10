@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   createGemmaDesktop,
   describeSessionSnapshot,
-} from "@gemma-desktop/sdk-node";
+} from "@gemma-sdk/node";
 import {
   composeSystemPrompt,
   resolveSessionSystemInstructions,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 describe("custom tool surfaces", () => {
   const customTool = {

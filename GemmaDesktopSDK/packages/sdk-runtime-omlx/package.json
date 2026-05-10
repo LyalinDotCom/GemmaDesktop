@@ -1,5 +1,5 @@
 {
-  "name": "@gemma-desktop/sdk-runtime-omlx",
+  "name": "@gemma-sdk/runtime-omlx",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,6 +11,6 @@
     }
   },
   "dependencies": {
-    "@gemma-desktop/sdk-core": "0.1.0"
+    "@gemma-sdk/core": "0.1.0"
   }
 }

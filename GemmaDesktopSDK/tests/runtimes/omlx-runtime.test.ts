@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createOmlxOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-omlx";
+import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("oMLX OpenAI-compatible runtime adapter", () => {

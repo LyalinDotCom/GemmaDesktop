@@ -10,7 +10,7 @@ import {
   type ToolDefinition,
   type ToolExecutor,
   type ToolResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 const DELEGATE_TOOL: ToolDefinition = {
   name: "delegate_task",

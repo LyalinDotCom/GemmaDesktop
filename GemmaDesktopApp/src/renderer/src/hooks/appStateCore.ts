@@ -1,7 +1,7 @@
 import {
   DEFAULT_CONVERSATION_APPROVAL_MODE,
   normalizeConversationApprovalMode,
-} from '@gemma-desktop/sdk-core/approvalMode'
+} from '@gemma-sdk/core/approvalMode'
 import {
   appendChatMessage,
   updateChatMessage,

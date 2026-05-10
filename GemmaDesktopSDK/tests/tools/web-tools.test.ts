@@ -2,8 +2,8 @@ import os from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { GemmaDesktopError, type ToolExecutionContext } from "@gemma-desktop/sdk-core";
-import { createHostTools } from "@gemma-desktop/sdk-tools";
+import { GemmaDesktopError, type ToolExecutionContext } from "@gemma-sdk/core";
+import { createHostTools } from "@gemma-sdk/tools";
 import {
   __testing as webTesting,
   setSearchProviderForTests,

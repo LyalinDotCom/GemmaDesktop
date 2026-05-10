@@ -1,5 +1,5 @@
 import { Readability } from "@mozilla/readability";
-import { GemmaDesktopError, type ToolProgressUpdate } from "@gemma-desktop/sdk-core";
+import { GemmaDesktopError, type ToolProgressUpdate } from "@gemma-sdk/core";
 import { XMLParser } from "fast-xml-parser";
 import { JSDOM } from "jsdom";
 import {

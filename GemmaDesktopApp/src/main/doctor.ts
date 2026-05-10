@@ -1,7 +1,7 @@
 import type {
   EnvironmentInspectionResult,
   RuntimeInspectionResult,
-} from '@gemma-desktop/sdk-core'
+} from '@gemma-sdk/core'
 import {
   findGemmaCatalogEntryByTag,
   getExpectedGemmaContextLength,

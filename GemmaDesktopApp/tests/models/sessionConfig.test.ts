@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionSnapshot } from '@gemma-desktop/sdk-core'
+import type { SessionSnapshot } from '@gemma-sdk/core'
 import {
   APP_SESSION_METADATA_KEY,
   createSessionMetadata,

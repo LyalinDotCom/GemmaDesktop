@@ -13,7 +13,7 @@ import type {
 import type {
   ResearchRunResult,
   ResearchRunStatus,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 
 function buildStatus(
   overrides: Partial<ResearchRunStatus> = {},

@@ -4,7 +4,7 @@ import {
   type ChatRequest,
   type RuntimeAdapter,
   type RuntimeInspectionResult,
-} from "@gemma-desktop/sdk-core";
+} from "@gemma-sdk/core";
 
 function createInspection(): RuntimeInspectionResult {
   return {

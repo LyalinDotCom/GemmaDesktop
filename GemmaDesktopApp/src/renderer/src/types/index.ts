@@ -48,7 +48,7 @@ import type {
   LoadDefaultModelsResult,
   ReloadModelsRequest,
 } from '@shared/modelLifecycle'
-import type { ConversationApprovalMode } from '@gemma-desktop/sdk-core'
+import type { ConversationApprovalMode } from '@gemma-sdk/core'
 import type {
   GlobalChatConversationSummary,
   GlobalChatOpenInAppRequest,

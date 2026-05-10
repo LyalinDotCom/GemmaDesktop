@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createLmStudioOpenAICompatibleAdapter } from "@gemma-desktop/sdk-runtime-lmstudio";
+import { createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("LM Studio OpenAI-compatible output sanitization", () => {

@@ -2,9 +2,9 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FINALIZE_BUILD_TOOL_NAME, parseToolCallInput } from "@gemma-desktop/sdk-core";
-import { createGemmaDesktop } from "@gemma-desktop/sdk-node";
-import { createLlamaCppServerAdapter } from "@gemma-desktop/sdk-runtime-llamacpp";
+import { FINALIZE_BUILD_TOOL_NAME, parseToolCallInput } from "@gemma-sdk/core";
+import { createGemmaDesktop } from "@gemma-sdk/node";
+import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("delegated tool sessions", () => {

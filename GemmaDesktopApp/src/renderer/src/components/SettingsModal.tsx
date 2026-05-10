@@ -1807,7 +1807,7 @@ export function SettingsModal({
                       label="Internal Foundation"
                       description={
                         <>
-                          Gemma Desktop also builds on our own <span className="font-mono">@gemma-desktop/sdk-*</span> packages for runtime adapters, attachments, tools, and session orchestration. Credits below focus on the upstream projects behind features people actually see and use.
+                          Gemma Desktop also builds on our own <span className="font-mono">@gemma-sdk/*</span> packages for runtime adapters, attachments, tools, and session orchestration. Credits below focus on the upstream projects behind features people actually see and use.
                         </>
                       }
                     />

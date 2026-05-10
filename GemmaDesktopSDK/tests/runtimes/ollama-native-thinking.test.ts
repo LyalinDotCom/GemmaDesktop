@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createOllamaNativeAdapter } from "@gemma-desktop/sdk-runtime-ollama";
+import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("Ollama native thinking", () => {

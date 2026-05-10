@@ -9,12 +9,12 @@ import {
   renderPdfPages,
   type GemmaDesktop,
   type GemmaDesktopSession,
-} from '@gemma-desktop/sdk-node'
+} from '@gemma-sdk/node'
 import type {
   SessionInput,
   StructuredOutputSpec,
-} from '@gemma-desktop/sdk-core'
-import { createWorkspaceSearchBackend } from '@gemma-desktop/sdk-tools'
+} from '@gemma-sdk/core'
+import { createWorkspaceSearchBackend } from '@gemma-sdk/tools'
 import {
   PDF_RENDER_SCALE,
   type PersistedPdfAttachment,
