@@ -3,6 +3,7 @@ import path from 'path'
 import { parseToolCallInput } from '@gemma-desktop/sdk-core'
 import {
   GET_PROJECT_BROWSER_ERRORS_TOOL,
+  EXTRACT_PROJECT_BROWSER_TEXT_TOOL,
   OPEN_PROJECT_BROWSER_TOOL,
   PROJECT_BROWSER_TOOL_NAMES,
   RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
@@ -354,6 +355,7 @@ export function buildCoBrowseToolInstructions(): string {
     'Do not use the managed browser, Chrome DevTools, fetch_url, or web_research_agent while CoBrowse is active.',
     `Use ${OPEN_PROJECT_BROWSER_TOOL} to open or refresh the visible browser for the requested http or https URL.`,
     `Use ${SEARCH_PROJECT_BROWSER_DOM_TOOL} to inspect the current visible page after it loads. When a DOM result includes href, use that exact URL instead of reconstructing or guessing a link.`,
+    `Use ${EXTRACT_PROJECT_BROWSER_TEXT_TOOL} when the user asks for full article text, readable page text, clean copy, or page data from the visible page.`,
     `Use ${GET_PROJECT_BROWSER_ERRORS_TOOL} when page load or console errors may explain a blocker.`,
     `If the visible page shows a CAPTCHA, bot block, login challenge, 2FA prompt, payment gate, or permission prompt, call ${RELEASE_PROJECT_BROWSER_TO_USER_TOOL} with a short reason and ask the user to complete it in the visible browser.`,
     'After control is released to the user, browser/search/DOM/error tools are blocked until the user clicks Release control.',

@@ -1,11 +1,13 @@
 export const OPEN_PROJECT_BROWSER_TOOL = 'open_project_browser'
 export const SEARCH_PROJECT_BROWSER_DOM_TOOL = 'search_project_browser_dom'
+export const EXTRACT_PROJECT_BROWSER_TEXT_TOOL = 'extract_project_browser_text'
 export const GET_PROJECT_BROWSER_ERRORS_TOOL = 'get_project_browser_errors'
 export const RELEASE_PROJECT_BROWSER_TO_USER_TOOL = 'release_project_browser_to_user'
 
 export const PROJECT_BROWSER_TOOL_NAMES = [
   OPEN_PROJECT_BROWSER_TOOL,
   SEARCH_PROJECT_BROWSER_DOM_TOOL,
+  EXTRACT_PROJECT_BROWSER_TEXT_TOOL,
   GET_PROJECT_BROWSER_ERRORS_TOOL,
 ] as const
 

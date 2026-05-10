@@ -265,4 +265,89 @@ describe('project browser helpers', () => {
       true,
     )
   })
+
+  it('prints truncation markers for bounded DOM text matches', async () => {
+    const manager = new ProjectBrowserManager(() => {})
+    const executeJavaScript = vi.fn(async () => ({
+      title: 'Article',
+      url: 'https://example.com/article',
+      matchCount: 1,
+      returnedCount: 1,
+      truncated: false,
+      matches: [
+        {
+          kind: 'selector',
+          pattern: 'article p',
+          tagName: 'p',
+          text: 'This paragraph is partial',
+          textTruncated: true,
+          attributes: {},
+        },
+      ],
+    }))
+
+    ;(manager as unknown as {
+      view: {
+        webContents: {
+          executeJavaScript: typeof executeJavaScript
+        }
+      }
+    }).view = {
+      webContents: {
+        executeJavaScript,
+      },
+    }
+
+    const result = await manager.searchDom({
+      selectors: ['article p'],
+      maxTextChars: 1200,
+    })
+
+    expect(result.output).toContain('This paragraph is partial […truncated…]')
+    expect(executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining('const maxTextChars = 1200;'),
+      true,
+    )
+  })
+
+  it('extracts readable page text without per-node snippet truncation', async () => {
+    const manager = new ProjectBrowserManager(() => {})
+    const executeJavaScript = vi.fn(async () => ({
+      title: 'Prince Harry Pays Tribute to David Attenborough Before 100th Birthday',
+      url: 'https://people.com/prince-harry-pays-tribute-to-david-attenborough-before-100th-birthday-11969941',
+      selectors: ['#people-article--sc_1-0 p'],
+      blockCount: 2,
+      charCount: 176,
+      truncated: false,
+      text: [
+        'Prince Harry is paying tribute to Sir David Attenborough ahead of the famed broadcaster’s 100th birthday.',
+        'In a heartfelt essay written for Time magazine, the Duke of Sussex reflected on Attenborough’s impact.',
+      ].join('\n\n'),
+    }))
+
+    ;(manager as unknown as {
+      view: {
+        webContents: {
+          executeJavaScript: typeof executeJavaScript
+        }
+      }
+    }).view = {
+      webContents: {
+        executeJavaScript,
+      },
+    }
+
+    const result = await manager.extractText({
+      selectors: ['#people-article--sc_1-0 p'],
+      maxChars: 250_000,
+    })
+
+    expect(result.output).toContain('Text blocks: 2')
+    expect(result.output).toContain('Prince Harry is paying tribute')
+    expect(result.output).not.toContain('[…truncated…]')
+    expect(executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining('const maxChars = 250000;'),
+      true,
+    )
+  })
 })

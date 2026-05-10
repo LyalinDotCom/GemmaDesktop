@@ -34,6 +34,7 @@ import {
   askGeminiCli,
 } from './geminiCli'
 import {
+  EXTRACT_PROJECT_BROWSER_TEXT_TOOL,
   GET_PROJECT_BROWSER_ERRORS_TOOL,
   OPEN_PROJECT_BROWSER_TOOL,
   RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
@@ -135,7 +136,8 @@ interface ProjectBrowserToolResult {
 interface ProjectBrowserManagerForTools {
   open(input: { sessionId: string; url: string; coBrowseActive: boolean; timeoutMs?: number; maxChars?: number }): Promise<ProjectBrowserToolResult>
   assertAgentBrowserControl(input: { sessionId: string; coBrowseActive: boolean }): void
-  searchDom(input: { selectors?: string[]; textPatterns?: string[]; maxMatches?: number; includeHtml?: boolean }): Promise<ProjectBrowserToolResult>
+  searchDom(input: { selectors?: string[]; textPatterns?: string[]; maxMatches?: number; includeHtml?: boolean; maxTextChars?: number; maxHtmlChars?: number }): Promise<ProjectBrowserToolResult>
+  extractText(input: { selectors?: string[]; excludeSelectors?: string[]; maxChars?: number }): Promise<ProjectBrowserToolResult>
   releaseControlToUser(input: { sessionId: string; reason?: string }): { controlOwner: string; controlReason?: string | null }
   getConsoleErrors(input: { maxItems?: number }): ProjectBrowserToolResult
 }
@@ -1010,7 +1012,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
   const searchProjectBrowserDomTool: RegisteredTool = {
     name: SEARCH_PROJECT_BROWSER_DOM_TOOL,
     description:
-      'Search the current Project Browser page for selectors or text patterns and return bounded DOM matches.',
+      'Search the current Project Browser page for selectors or text patterns and return bounded DOM matches. For full article/page text extraction, use extract_project_browser_text instead of stitching snippets.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1024,6 +1026,8 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         },
         maxMatches: { type: 'number' },
         includeHtml: { type: 'boolean' },
+        maxTextChars: { type: 'number' },
+        maxHtmlChars: { type: 'number' },
       },
       additionalProperties: false,
     },
@@ -1040,6 +1044,8 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
               textPatterns?: unknown
               maxMatches?: unknown
               includeHtml?: unknown
+              maxTextChars?: unknown
+              maxHtmlChars?: unknown
             }
           : {}
 
@@ -1055,6 +1061,14 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
             ? record.maxMatches
             : undefined,
         includeHtml: record.includeHtml === true,
+        maxTextChars:
+          typeof record.maxTextChars === 'number' && Number.isFinite(record.maxTextChars)
+            ? record.maxTextChars
+            : undefined,
+        maxHtmlChars:
+          typeof record.maxHtmlChars === 'number' && Number.isFinite(record.maxHtmlChars)
+            ? record.maxHtmlChars
+            : undefined,
       })
 
       appendDebugLog(context.sessionId, {
@@ -1067,6 +1081,66 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
           input: record,
           structuredOutput: result.structuredOutput,
         },
+      })
+
+      return result
+    },
+  }
+
+  const extractProjectBrowserTextTool: RegisteredTool = {
+    name: EXTRACT_PROJECT_BROWSER_TEXT_TOOL,
+    description:
+      'Extract readable text from the current Project Browser page. Use this when the user asks for the full article, page text, clean copy, or page data; it can return large text up to maxChars and reports if the extraction is truncated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selectors: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+        excludeSelectors: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+        maxChars: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    async execute(input: unknown, context) {
+      projectBrowserManager.assertAgentBrowserControl({
+        sessionId: context.sessionId,
+        coBrowseActive: isCoBrowseSessionMetadata(context.sessionMetadata),
+      })
+
+      const record =
+        input && typeof input === 'object' && !Array.isArray(input)
+          ? input as {
+              selectors?: unknown
+              excludeSelectors?: unknown
+              maxChars?: unknown
+            }
+          : {}
+
+      const result = await projectBrowserManager.extractText({
+        selectors: Array.isArray(record.selectors)
+          ? record.selectors.filter((entry): entry is string => typeof entry === 'string')
+          : undefined,
+        excludeSelectors: Array.isArray(record.excludeSelectors)
+          ? record.excludeSelectors.filter((entry): entry is string => typeof entry === 'string')
+          : undefined,
+        maxChars:
+          typeof record.maxChars === 'number' && Number.isFinite(record.maxChars)
+            ? record.maxChars
+            : undefined,
+      })
+
+      appendDebugLog(context.sessionId, {
+        layer: 'ipc',
+        direction: 'app->sdk',
+        event: 'project-browser.text-extracted',
+        summary: 'Extracted Project Browser readable text',
+        turnId: context.turnId,
+        data: result.structuredOutput,
       })
 
       return result
@@ -1406,6 +1480,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
     terminateBackgroundProcessTool,
     openProjectBrowserTool,
     searchProjectBrowserDomTool,
+    extractProjectBrowserTextTool,
     releaseProjectBrowserToUserTool,
     getProjectBrowserErrorsTool,
     askGeminiTool,

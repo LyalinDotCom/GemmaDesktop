@@ -11,6 +11,12 @@ const DEFAULT_OPEN_RESULT_MAX_CHARS = 3_500
 const MAX_OPEN_RESULT_MAX_CHARS = 8_000
 const DEFAULT_DOM_MATCH_LIMIT = 25
 const MAX_DOM_MATCH_LIMIT = 100
+const DEFAULT_DOM_MATCH_TEXT_CHARS = 300
+const MAX_DOM_MATCH_TEXT_CHARS = 2_000
+const DEFAULT_DOM_MATCH_HTML_CHARS = 400
+const MAX_DOM_MATCH_HTML_CHARS = 4_000
+const DEFAULT_EXTRACT_TEXT_MAX_CHARS = 50_000
+const MAX_EXTRACT_TEXT_CHARS = 250_000
 const DEFAULT_CONSOLE_ERROR_LIMIT = 50
 const MAX_CONSOLE_ERROR_LIMIT = 200
 const DEFAULT_OPEN_TIMEOUT_MS = 15_000
@@ -52,7 +58,19 @@ type ProjectBrowserDomSearchResult = {
     text?: string
     html?: string
     attributes: Record<string, string>
+    textTruncated?: boolean
+    htmlTruncated?: boolean
   }>
+}
+
+type ProjectBrowserTextExtractResult = {
+  title: string
+  url: string
+  selectors: string[]
+  blockCount: number
+  charCount: number
+  truncated: boolean
+  text: string
 }
 
 function now(): number {
@@ -735,6 +753,8 @@ export class ProjectBrowserManager {
     textPatterns?: string[]
     maxMatches?: number
     includeHtml?: boolean
+    maxTextChars?: number
+    maxHtmlChars?: number
   }): Promise<{
     output: string
     structuredOutput: Record<string, unknown>
@@ -760,6 +780,16 @@ export class ProjectBrowserManager {
       1,
       MAX_DOM_MATCH_LIMIT,
     )
+    const maxTextChars = clamp(
+      Number.isFinite(input.maxTextChars) ? Number(input.maxTextChars) : DEFAULT_DOM_MATCH_TEXT_CHARS,
+      80,
+      MAX_DOM_MATCH_TEXT_CHARS,
+    )
+    const maxHtmlChars = clamp(
+      Number.isFinite(input.maxHtmlChars) ? Number(input.maxHtmlChars) : DEFAULT_DOM_MATCH_HTML_CHARS,
+      80,
+      MAX_DOM_MATCH_HTML_CHARS,
+    )
 
     const result = await view.webContents.executeJavaScript(
       `(() => {
@@ -767,6 +797,8 @@ export class ProjectBrowserManager {
         const textPatterns = ${JSON.stringify(textPatterns)};
         const includeHtml = ${input.includeHtml === true ? 'true' : 'false'};
         const maxMatches = ${maxMatches};
+        const maxTextChars = ${maxTextChars};
+        const maxHtmlChars = ${maxHtmlChars};
         const matches = [];
         const seen = new Set();
 
@@ -824,6 +856,9 @@ export class ProjectBrowserManager {
           seen.add(element);
 
           const text = normalizeText(element);
+          const html = includeHtml && typeof element.outerHTML === 'string'
+            ? element.outerHTML
+            : '';
           matches.push({
             kind,
             pattern,
@@ -832,10 +867,12 @@ export class ProjectBrowserManager {
             className: typeof element.className === 'string' && element.className.trim().length > 0
               ? element.className.trim()
               : undefined,
-            text: text.length > 0 ? text.slice(0, 300) : undefined,
-            html: includeHtml && typeof element.outerHTML === 'string'
-              ? element.outerHTML.slice(0, 400)
+            text: text.length > 0 ? text.slice(0, maxTextChars) : undefined,
+            textTruncated: text.length > maxTextChars || undefined,
+            html: html.length > 0
+              ? html.slice(0, maxHtmlChars)
               : undefined,
+            htmlTruncated: html.length > maxHtmlChars || undefined,
             attributes: collectAttributes(element),
           });
         };
@@ -905,7 +942,8 @@ export class ProjectBrowserManager {
             match.id ? `id=${match.id}` : '',
             match.className ? `class=${match.className}` : '',
             ...formatDomMatchAttributes(match.attributes),
-            match.text ? `text="${match.text}"` : '',
+            match.text ? `text="${match.text}${match.textTruncated ? ' […truncated…]' : ''}"` : '',
+            match.htmlTruncated ? 'html=[…truncated…]' : '',
           ]
             .filter(Boolean)
             .join(' · '),
@@ -920,6 +958,157 @@ export class ProjectBrowserManager {
 
     if (result.truncated) {
       lines.push('', `Results were truncated at ${maxMatches} matches.`)
+    }
+
+    return {
+      output: lines.join('\n'),
+      structuredOutput: result,
+    }
+  }
+
+  async extractText(input?: {
+    selectors?: string[]
+    excludeSelectors?: string[]
+    maxChars?: number
+  }): Promise<{
+    output: string
+    structuredOutput: Record<string, unknown>
+  }> {
+    const view = this.requireView()
+    const selectors = Array.isArray(input?.selectors)
+      ? input.selectors.filter((entry): entry is string =>
+          typeof entry === 'string' && entry.trim().length > 0,
+        )
+      : []
+    const excludeSelectors = Array.isArray(input?.excludeSelectors)
+      ? input.excludeSelectors.filter((entry): entry is string =>
+          typeof entry === 'string' && entry.trim().length > 0,
+        )
+      : []
+    const maxChars = clamp(
+      Number.isFinite(input?.maxChars) ? Number(input?.maxChars) : DEFAULT_EXTRACT_TEXT_MAX_CHARS,
+      1_000,
+      MAX_EXTRACT_TEXT_CHARS,
+    )
+
+    const result = await view.webContents.executeJavaScript(
+      `(() => {
+        const requestedSelectors = ${JSON.stringify(selectors)};
+        const excludeSelectors = ${JSON.stringify(excludeSelectors)};
+        const maxChars = ${maxChars};
+        const defaultSelectors = ['article', 'main', '[role="main"]', 'body'];
+        const selectors = requestedSelectors.length > 0 ? requestedSelectors : defaultSelectors;
+        const fallbackExcludeSelectors = [
+          'script',
+          'style',
+          'noscript',
+          'svg',
+          'template',
+          'nav',
+          'header',
+          'footer',
+          'aside',
+          'form',
+          'button',
+          '[role="navigation"]',
+          '[role="complementary"]',
+          '[class*="comment" i]',
+          '[id*="comment" i]',
+          '[aria-label^="Comment" i]',
+          '[class*="related" i]',
+          '[class*="newsletter" i]',
+          '[class*="advert" i]',
+          '[class*="ad-" i]',
+          '[id*="ad-" i]',
+        ];
+        const exclusions = [...fallbackExcludeSelectors, ...excludeSelectors];
+        const normalizeText = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+        const seenElements = new Set();
+        const blocks = [];
+
+        const shouldSkip = (element) => {
+          if (!element || typeof element.matches !== 'function') return true;
+          return exclusions.some((selector) => {
+            try {
+              return element.matches(selector) || element.closest(selector);
+            } catch {
+              return false;
+            }
+          });
+        };
+
+        const pushText = (element) => {
+          if (!element || seenElements.has(element) || shouldSkip(element)) {
+            return;
+          }
+          seenElements.add(element);
+          const text = normalizeText(element.innerText || element.textContent || '');
+          if (text) {
+            blocks.push(text);
+          }
+        };
+
+        const collectFromRoot = (root) => {
+          if (!root || shouldSkip(root)) {
+            return;
+          }
+          const blockSelector = 'h1, h2, h3, p, li, blockquote';
+          let descendants = [];
+          try {
+            descendants = Array.from(root.querySelectorAll(blockSelector));
+          } catch {
+            descendants = [];
+          }
+          if (descendants.length === 0) {
+            pushText(root);
+            return;
+          }
+          descendants.forEach(pushText);
+        };
+
+        for (const selector of selectors) {
+          let roots = [];
+          try {
+            roots = Array.from(document.querySelectorAll(selector));
+          } catch {
+            continue;
+          }
+          roots.forEach(collectFromRoot);
+          if (blocks.length > 0 && requestedSelectors.length === 0) {
+            break;
+          }
+        }
+
+        const fullText = blocks.join('\\n\\n').trim();
+        return {
+          title: document.title || '',
+          url: window.location.href,
+          selectors,
+          blockCount: blocks.length,
+          charCount: fullText.length,
+          truncated: fullText.length > maxChars,
+          text: fullText.slice(0, maxChars),
+        };
+      })()`,
+      true,
+    ) as ProjectBrowserTextExtractResult
+
+    const lines = [
+      `Extracted text from Project Browser page ${result.url}.`,
+      `Title: ${result.title || 'Untitled page'}`,
+      `Selectors: ${result.selectors.join(', ')}`,
+      `Text blocks: ${result.blockCount}`,
+      `Characters: ${Math.min(result.text.length, result.charCount)}${result.truncated ? ` of ${result.charCount}` : ''}`,
+    ]
+
+    if (result.truncated) {
+      lines.push('Extraction was truncated. Increase maxChars if the user needs the complete text.')
+    }
+
+    if (result.text.trim().length > 0) {
+      lines.push('', result.text)
+    } else {
+      lines.push('', 'No readable text blocks were found.')
     }
 
     return {

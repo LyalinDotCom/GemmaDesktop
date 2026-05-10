@@ -389,6 +389,7 @@ import {
 } from './projectBrowser'
 import {
   GET_PROJECT_BROWSER_ERRORS_TOOL,
+  EXTRACT_PROJECT_BROWSER_TEXT_TOOL,
   OPEN_PROJECT_BROWSER_TOOL,
   PROJECT_BROWSER_TOOL_NAMES,
   RELEASE_PROJECT_BROWSER_TO_USER_TOOL,
@@ -5363,6 +5364,7 @@ function buildProjectBrowserInstructions(): string {
     '- Outside CoBrowse, use search_web for generic web discovery instead of turning Project Browser into a search engine.',
     `- Use ${OPEN_PROJECT_BROWSER_TOOL} to open or refresh the built-in browser against an http or https URL.`,
     `- Use ${SEARCH_PROJECT_BROWSER_DOM_TOOL} after opening a page when you need to confirm that specific UI text, selectors, or DOM states exist.`,
+    `- Use ${EXTRACT_PROJECT_BROWSER_TEXT_TOOL} when the user asks for full article text, readable page text, clean copy, or page data from the currently visible page.`,
     `- Use ${GET_PROJECT_BROWSER_ERRORS_TOOL} to inspect recent console and page-load errors without flooding context. Results can be truncated.`,
     '- If the page shows a CAPTCHA, bot block, login challenge, 2FA prompt, payment gate, or permission prompt, stop and ask the user to complete that browser-side action. Continue only after the user resumes.',
   ].join('\n')
