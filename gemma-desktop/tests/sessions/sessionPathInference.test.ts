@@ -16,8 +16,8 @@ describe('session path inference', () => {
   })
 
   it('uses an explicit file path from the current message', async () => {
-    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-default-'))
-    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-project-'))
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-project-'))
     cleanup.push(defaultDirectory, projectDirectory)
     const mainFile = path.join(projectDirectory, 'main.js')
     await writeFile(mainFile, 'console.log("hello")\n', 'utf8')
@@ -37,8 +37,8 @@ describe('session path inference', () => {
   })
 
   it('falls back to the latest user project path when retrying from the default workspace', async () => {
-    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-default-'))
-    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-project-'))
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-project-'))
     cleanup.push(defaultDirectory, projectDirectory)
 
     const inferred = await inferConversationWorkingDirectory({
@@ -68,7 +68,7 @@ describe('session path inference', () => {
   })
 
   it('ignores slash phrases like date/time', async () => {
-    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-default-'))
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
     cleanup.push(defaultDirectory)
 
     const inferred = await inferConversationWorkingDirectory({
@@ -83,9 +83,9 @@ describe('session path inference', () => {
   })
 
   it('does not resurrect an older project path once the session is already rooted elsewhere', async () => {
-    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-default-'))
-    const currentDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-current-'))
-    const olderProjectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-older-'))
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const currentDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-current-'))
+    const olderProjectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-older-'))
     cleanup.push(defaultDirectory, currentDirectory, olderProjectDirectory)
 
     const inferred = await inferConversationWorkingDirectory({
@@ -111,8 +111,8 @@ describe('session path inference', () => {
   })
 
   it('uses the parent directory for a not-yet-created file path when the folder exists', async () => {
-    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-default-'))
-    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-app-project-'))
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-project-'))
     const nestedDirectory = path.join(projectDirectory, 'src')
     cleanup.push(defaultDirectory, projectDirectory)
     await mkdir(nestedDirectory, { recursive: true })

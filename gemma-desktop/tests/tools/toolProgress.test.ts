@@ -273,7 +273,7 @@ describe('tool progress helpers', () => {
         structuredOutput: {
           summary: 'Ran the targeted worker inspector tests.',
           commands: [
-            { command: 'npm test -- workerInspector', cwd: 'GemmaDesktopApp' },
+            { command: 'npm test -- workerInspector', cwd: 'gemma-desktop' },
           ],
         },
       },
@@ -283,7 +283,7 @@ describe('tool progress helpers', () => {
     expect(updated[0]?.worker?.resultData?.commands).toEqual([
       {
         command: 'npm test -- workerInspector',
-        cwd: 'GemmaDesktopApp',
+        cwd: 'gemma-desktop',
       },
     ])
     expect(updated[0]?.worker?.counters).toEqual(

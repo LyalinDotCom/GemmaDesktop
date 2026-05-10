@@ -562,7 +562,7 @@ export class ChromeMcpService {
     })
 
     const client = this.deps.createClient?.() ?? new Client({
-      name: 'gemma-desktop-app-chrome-mcp',
+      name: 'gemma-desktop-chrome-mcp',
       version: '0.1.0',
     })
 

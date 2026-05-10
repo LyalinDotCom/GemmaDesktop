@@ -50,7 +50,7 @@ Do not let app convenience bypass SDK contracts. If a behavior matters across ru
 
 `gemma-cli` is the canonical terminal coding-agent product. Its newest agent loop, tool design, diagnostics, model-profile behavior, and Gemma-optimized runtime lessons are the dominant source for shared SDK capability when they overlap older desktop SDK behavior.
 
-`GemmaDesktopApp` should prove the SDK can power a polished end-user experience. As the repository naming matures, treat `gemma-desktop` as the runnable desktop product identity even when some paths still use the older folder name during migration.
+`gemma-desktop` should prove the SDK can power a polished end-user experience.
 
 `gemmadesktop-cli` is temporary migration material. Preserve any useful parity coverage, scenarios, or SDK contract tests before deleting it, but do not treat it as a long-term runnable product.
 
@@ -100,7 +100,7 @@ When a commit includes multiple coordinated workstreams, the commit body should 
 
 ### P0 SDK/Desktop/CLI Parity
 
-CLI parity is P0. During the migration, `gemma-cli` is becoming the canonical headless product and `gemmadesktop-cli` exists only until its useful coverage is preserved elsewhere. When changing `GemmaDesktopApp` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli`, the SDK harness, or the temporary `gemmadesktop-cli` path unless there is a concrete reason it cannot apply.
+CLI parity is P0. During the migration, `gemma-cli` is becoming the canonical headless product and `gemmadesktop-cli` exists only until its useful coverage is preserved elsewhere. When changing `gemma-desktop` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli`, the SDK harness, or the temporary `gemmadesktop-cli` path unless there is a concrete reason it cannot apply.
 
 This includes runtime adapter wiring, session creation, mode and tool surfaces, request metadata, model/runtime defaults, research flows, attachment behavior, tool orchestration, debugging and trace output, and any SDK option the desktop app relies on.
 
@@ -113,7 +113,7 @@ Future agents must treat CLI coverage as part of the acceptance criteria for SDK
 
 ### App Main-Process Architecture
 
-`GemmaDesktopApp/src/main/ipc.ts` is an IPC composition edge, not the home for product behavior. The durable direction is to keep Electron channel registration thin and move domain behavior into named main-process modules with explicit dependencies.
+`gemma-desktop/src/main/ipc.ts` is an IPC composition edge, not the home for product behavior. The durable direction is to keep Electron channel registration thin and move domain behavior into named main-process modules with explicit dependencies.
 
 Use this as the recommended template for new app-main work:
 
@@ -183,15 +183,16 @@ Use these two standard lanes by default:
 
 The standard commands are:
 
-- minimal targeted validation: `npm --workspace gemma-sdk run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemmadesktop-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace GemmaDesktopApp run test -- tests/<category>/<file>.test.ts`
+- minimal targeted validation: `npm --workspace gemma-sdk run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemma-cli run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemmadesktop-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace gemma-desktop run test -- tests/<category>/<file>.test.ts`
 - full deterministic repo validation: `npm run check`
 - full repo validation including live-model lanes: `npm run check:full`
 - SDK deterministic suite only: `npm --workspace gemma-sdk run check`
 - SDK full suite including live routing and live research: `npm --workspace gemma-sdk run check:full`
-- CLI deterministic suite only: `npm --workspace gemmadesktop-cli run check`
-- App deterministic suite only: `npm --workspace GemmaDesktopApp run check`
-- App full suite including live research: `npm --workspace GemmaDesktopApp run check:full`
-- App live research preflight: `npm --workspace GemmaDesktopApp run test:research-preflight`
+- Gemma CLI deterministic suite only: `npm run check:gemma-cli`
+- legacy parity CLI deterministic suite only: `npm --workspace gemmadesktop-cli run check`
+- App deterministic suite only: `npm --workspace gemma-desktop run check`
+- App full suite including live research: `npm --workspace gemma-desktop run check:full`
+- App live research preflight: `npm --workspace gemma-desktop run test:research-preflight`
 
 Agents must also use judgment instead of matching tests mechanically to filenames.
 
@@ -274,7 +275,7 @@ Settings, conversations, sessions, caches, and other generated state are fair ga
 
 ## App-Specific Note
 
-When diagnosing `GemmaDesktopApp` session state after the recent storage change, do not assume sessions are stored in one global `.gemma` directory. The app keeps a global list of open projects in application state, but each project's actual session data lives inside that project's hidden `.gemma/session-state` directory. In practice, inspect the global application state to find the relevant project path first, then open that project's `.gemma/session-state` folder when tracing or debugging a session.
+When diagnosing `gemma-desktop` session state after the recent storage change, do not assume sessions are stored in one global `.gemma` directory. The app keeps a global list of open projects in application state, but each project's actual session data lives inside that project's hidden `.gemma/session-state` directory. In practice, inspect the global application state to find the relevant project path first, then open that project's `.gemma/session-state` folder when tracing or debugging a session.
 
 ### Global Assistant Chat Diagnostics
 

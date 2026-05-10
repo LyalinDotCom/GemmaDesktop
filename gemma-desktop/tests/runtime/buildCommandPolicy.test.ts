@@ -3,7 +3,7 @@ import { evaluateBuildExecCommandPolicy } from '../../src/main/buildCommandPolic
 
 describe('build exec command policy', () => {
   it('allows common read-only inspection commands', () => {
-    expect(evaluateBuildExecCommandPolicy('rg "build mode" GemmaDesktopApp/src')).toMatchObject({
+    expect(evaluateBuildExecCommandPolicy('rg "build mode" gemma-desktop/src')).toMatchObject({
       kind: 'allow',
       rootCommand: 'rg',
     })

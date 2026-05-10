@@ -81,7 +81,7 @@ describe('worker inspector helpers', () => {
         commands: [
           {
             command: 'npm test -- workerInspector',
-            cwd: 'GemmaDesktopApp',
+            cwd: 'gemma-desktop',
           },
         ],
       },
@@ -99,7 +99,7 @@ describe('worker inspector helpers', () => {
       },
       {
         label: 'Commands',
-        values: ['npm test -- workerInspector (GemmaDesktopApp)'],
+        values: ['npm test -- workerInspector (gemma-desktop)'],
       },
     ])
   })

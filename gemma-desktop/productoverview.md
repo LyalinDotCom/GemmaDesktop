@@ -4,19 +4,19 @@ Inspection snapshot: April 16, 2026
 
 Scope:
 
-- Primary focus: `GemmaDesktopApp`
+- Primary focus: `gemma-desktop`
 - Extended scope: sibling `../gemma-sdk`
 - Source basis: repo source, tests, scripts, package manifests, `../specs`
 
 Interpretation rules used in this document:
 
-- "Implemented" means present in checked-in code in `GemmaDesktopApp` and/or `gemma-sdk`.
+- "Implemented" means present in checked-in code in `gemma-desktop` and/or `gemma-sdk`.
 - "Spec direction" means declared in `../specs` and useful for product context, but not necessarily fully shipped.
 - When behavior depends on runtime discovery, the app can surface more models than the curated defaults.
 
 ## 1. Executive Snapshot
 
-`GemmaDesktopApp` is not just a local-model chat window. It is an Electron desktop shell for a local-first AI workbench built on `gemma-sdk`, with explicit support for:
+`gemma-desktop` is not just a local-model chat window. It is an Electron desktop shell for a local-first AI workbench built on `gemma-sdk`, with explicit support for:
 
 - normal conversations
 - research conversations
@@ -46,12 +46,12 @@ Interpretation rules used in this document:
 
 This repo is already fairly large:
 
-- `GemmaDesktopApp`: 137 files under `src`, 65 test files, about 285 test cases
+- `gemma-desktop`: 137 files under `src`, 65 test files, about 285 test cases
 - `gemma-sdk`: 7 workspace packages, 134 files under `packages`, 35 test files, about 122 test cases
 
-## 2. What GemmaDesktopApp Is Right Now
+## 2. What gemma-desktop Is Right Now
 
-At a product level, `GemmaDesktopApp` currently looks like a local desktop AI assistant for developers that tries to expose machine reality instead of hiding it.
+At a product level, `gemma-desktop` currently looks like a local desktop AI assistant for developers that tries to expose machine reality instead of hiding it.
 
 Core identity visible in code and specs:
 
@@ -552,7 +552,7 @@ Examples visible in code:
 
 ### 4.4 Bootstrap Behavior
 
-`GemmaDesktopApp` has an explicit Ollama bootstrap path.
+`gemma-desktop` has an explicit Ollama bootstrap path.
 
 On startup/bootstrap it can:
 
@@ -930,7 +930,7 @@ The SDK test suite covers areas such as:
 
 ## 9. Dependency Inventory
 
-### 9.1 Direct Runtime Dependencies In GemmaDesktopApp
+### 9.1 Direct Runtime Dependencies In gemma-desktop
 
 | Dependency | Version | Role |
 | --- | --- | --- |
@@ -954,7 +954,7 @@ The SDK test suite covers areas such as:
 | `rehype-highlight` | `7.0.2` | code highlighting in markdown |
 | `remark-gfm` | `4.0.1` | GFM markdown features |
 
-### 9.2 Optional Native/Platform Dependencies In GemmaDesktopApp
+### 9.2 Optional Native/Platform Dependencies In gemma-desktop
 
 Optional PTY/runtime dependencies:
 
@@ -1033,7 +1033,7 @@ SDK workspace dev dependencies:
 
 ### 10.1 App Scripts
 
-Important `GemmaDesktopApp` scripts:
+Important `gemma-desktop` scripts:
 
 - `dev`
 - `build`
@@ -1083,7 +1083,7 @@ The repo includes a script that downloads and verifies pinned Kokoro ONNX assets
 
 ### 10.5 Test Coverage Shape
 
-Representative `GemmaDesktopApp` test areas:
+Representative `gemma-desktop` test areas:
 
 - skills
 - shell history and shell sessions
@@ -1119,7 +1119,7 @@ Representative `gemma-sdk` test areas:
 
 The sibling specs add important context beyond what is already implemented.
 
-### 11.1 GemmaDesktopApp V1 Direction From Specs
+### 11.1 gemma-desktop V1 Direction From Specs
 
 Spec framing says the app should be:
 
@@ -1162,7 +1162,7 @@ Spec non-goals worth noting:
 
 ## 12. Bottom Line
 
-`GemmaDesktopApp` already has the shape of a serious local-model desktop workbench rather than a thin chat shell. The codebase includes:
+`gemma-desktop` already has the shape of a serious local-model desktop workbench rather than a thin chat shell. The codebase includes:
 
 - a multi-lane conversation product
 - runtime-aware model orchestration

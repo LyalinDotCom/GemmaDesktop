@@ -309,7 +309,7 @@ describe.sequential('app live deep research harness', () => {
 
       await withLiveRuntimeModel({ runtimeId, modelId, adapters }, async () => {
         const harnessRoot = await mkdtemp(
-          path.join(os.tmpdir(), 'gemma-desktop-app-live-research-'),
+          path.join(os.tmpdir(), 'gemma-desktop-live-research-'),
         )
         const resultsDirectory = path.join(harnessRoot, 'results')
         await mkdir(resultsDirectory, { recursive: true })

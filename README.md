@@ -272,12 +272,11 @@ gemma-cli/         The canonical terminal coding-agent product. Its newest
                    agent loop, tool design, diagnostics, and Gemma-optimized
                    runtime behavior are being moved into the shared SDK.
 
-gemma-sdk/   The current SDK home during migration. Sessions, runtime
-                   adapters, tool execution, prompts, attachments, tracing,
-                   and capabilities live here until the shared packages move
-                   to neutral @gemma-sdk/* naming.
+gemma-sdk/         The shared SDK home. Sessions, runtime adapters, tool
+                   execution, prompts, attachments, tracing, and capabilities
+                   live here under neutral @gemma-sdk/* package names.
 
-GemmaDesktopApp/   The Electron + React desktop app. The runnable product
+gemma-desktop/     The Electron + React desktop app. The runnable product
                    identity is Gemma Desktop / gemma-desktop.
 
 gemmadesktop-cli/  Temporary legacy parity harness. Its useful coverage should
