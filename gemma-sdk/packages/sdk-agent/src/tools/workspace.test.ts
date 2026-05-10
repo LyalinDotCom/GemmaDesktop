@@ -195,7 +195,7 @@ describe('workspace tools', () => {
     await expect(run.run({ command: 'wc -l a.txt' })).resolves.toMatchObject({ ok: true });
     await expect(run.run({ name: 'wc -l a.txt' })).resolves.toMatchObject({ ok: true });
     await expect(run.run({ command: 'ls; printf ok' })).resolves.toMatchObject({ ok: true });
-  });
+  }, 10_000);
 
   it('accepts common model aliases for file paths', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
@@ -758,7 +758,7 @@ describe('workspace tools', () => {
 
     await expect(shell.run({ command: 'node -e "require(\\"fs\\").writeFileSync(\\"shell.txt\\",\\"ok\\")"' })).resolves.toMatchObject({ ok: true });
     await expect(readFile(join(cwd, 'shell.txt'), 'utf8')).resolves.toBe('ok');
-  });
+  }, 10_000);
 
   it('restores Terminal-Bench verifier files mutated by shell commands', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));

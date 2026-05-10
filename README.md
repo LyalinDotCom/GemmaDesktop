@@ -278,10 +278,6 @@ gemma-sdk/         The shared SDK home. Sessions, runtime adapters, tool
 
 gemma-desktop/     The Electron + React desktop app. The runnable product
                    identity is Gemma Desktop / gemma-desktop.
-
-gemmadesktop-cli/  Temporary legacy parity harness. Its useful coverage should
-                   be preserved in the SDK harness or gemma-cli before this
-                   package is removed.
 ```
 
 The SDK is the foundation. Gemma CLI and Gemma Desktop are both consumers of it, and any SDK-backed behavior is expected to stay testable from a headless path as well as the desktop app.

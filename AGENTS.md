@@ -52,8 +52,6 @@ Do not let app convenience bypass SDK contracts. If a behavior matters across ru
 
 `gemma-desktop` should prove the SDK can power a polished end-user experience.
 
-`gemmadesktop-cli` is temporary migration material. Preserve any useful parity coverage, scenarios, or SDK contract tests before deleting it, but do not treat it as a long-term runnable product.
-
 The projects in this repo should strengthen each other. None of them should become an excuse to bypass the SDK or skip the documentation work.
 
 ## Quality Bar
@@ -100,7 +98,7 @@ When a commit includes multiple coordinated workstreams, the commit body should 
 
 ### P0 SDK/Desktop/CLI Parity
 
-CLI parity is P0. During the migration, `gemma-cli` is becoming the canonical headless product and `gemmadesktop-cli` exists only until its useful coverage is preserved elsewhere. When changing `gemma-desktop` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli`, the SDK harness, or the temporary `gemmadesktop-cli` path unless there is a concrete reason it cannot apply.
+CLI parity is P0. `gemma-cli` is the canonical headless product. When changing `gemma-desktop` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli` or the SDK harness unless there is a concrete reason it cannot apply.
 
 This includes runtime adapter wiring, session creation, mode and tool surfaces, request metadata, model/runtime defaults, research flows, attachment behavior, tool orchestration, debugging and trace output, and any SDK option the desktop app relies on.
 
@@ -183,13 +181,12 @@ Use these two standard lanes by default:
 
 The standard commands are:
 
-- minimal targeted validation: `npm --workspace gemma-sdk run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemma-cli run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemmadesktop-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace gemma-desktop run test -- tests/<category>/<file>.test.ts`
+- minimal targeted validation: `npm --workspace gemma-sdk run test -- tests/<category>/<file>.test.ts`, `npm --workspace gemma-cli run test -- tests/<category>/<file>.test.ts`, or `npm --workspace gemma-desktop run test -- tests/<category>/<file>.test.ts`
 - full deterministic repo validation: `npm run check`
 - full repo validation including live-model lanes: `npm run check:full`
 - SDK deterministic suite only: `npm --workspace gemma-sdk run check`
 - SDK full suite including live routing and live research: `npm --workspace gemma-sdk run check:full`
 - Gemma CLI deterministic suite only: `npm run check:gemma-cli`
-- legacy parity CLI deterministic suite only: `npm --workspace gemmadesktop-cli run check`
 - App deterministic suite only: `npm --workspace gemma-desktop run check`
 - App full suite including live research: `npm --workspace gemma-desktop run check:full`
 - App live research preflight: `npm --workspace gemma-desktop run test:research-preflight`
