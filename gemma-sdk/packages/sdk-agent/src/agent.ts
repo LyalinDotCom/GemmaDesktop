@@ -228,7 +228,7 @@ export class Agent {
     }
 
     if (turns.at(-1)?.kind === 'tool') {
-      return await this.runFinalResponsePass(messages, options, startedAt, turns, maxTurns);
+      return await this.runFinalResponsePass(prompt, messages, options, startedAt, turns, maxTurns);
     }
 
     const answer = `Stopped after ${maxTurns} turns without a final answer.`;
@@ -264,6 +264,7 @@ export class Agent {
   }
 
   private async runFinalResponsePass(
+    prompt: string,
     messages: ChatMessage[],
     options: AgentRunOptions,
     startedAt: number,
@@ -298,6 +299,17 @@ export class Agent {
       completionReason = 'final_response_malformed';
     } else if ('answer' in action) {
       answer = action.answer;
+      const evidenceBlocker = buildFinalResponseEvidenceBlocker(prompt, answer, turns, [...this.tools.values()]);
+      if (evidenceBlocker) {
+        answer = [
+          `Stopped after ${maxTurns} turns immediately after tool use.`,
+          'The final summary pass could not be accepted as completed because the session evidence is incomplete.',
+          evidenceBlocker,
+          'Resume the session or increase --max-turns so the agent can run the missing validation after the latest file change.'
+        ].join(' ');
+        completionStatus = 'incomplete';
+        completionReason = 'final_response_unverified';
+      }
     } else {
       answer = [
         `Stopped after ${maxTurns} turns immediately after tool use.`,
@@ -318,6 +330,26 @@ export class Agent {
       ...(completionReason ? { completionReason } : {})
     };
   }
+}
+
+function buildFinalResponseEvidenceBlocker(prompt: string, answer: string, turns: AgentTurn[], tools: Tool[]): string | undefined {
+  const prematureWorkspaceFinalRetry = buildPrematureWorkspaceFinalRetryInstruction(prompt, answer, turns, tools);
+  if (prematureWorkspaceFinalRetry) {
+    return firstSentenceLikeLine(prematureWorkspaceFinalRetry);
+  }
+  const validationRetry = buildValidationRetryInstruction(prompt, answer, turns);
+  if (validationRetry) {
+    return firstSentenceLikeLine(validationRetry);
+  }
+  const insufficientEvidenceRetry = buildInsufficientWorkspaceEvidenceRetryInstruction(prompt, answer, turns, tools);
+  if (insufficientEvidenceRetry) {
+    return firstSentenceLikeLine(insufficientEvidenceRetry);
+  }
+  return undefined;
+}
+
+function firstSentenceLikeLine(text: string): string {
+  return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? text.trim();
 }
 
 function normalizeHistoryForPrompt(history: ChatMessage[]): ChatMessage[] {

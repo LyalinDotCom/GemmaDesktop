@@ -1,4 +1,4 @@
-# Gemma Desktop Agents Guide
+# Open Gemma Project Agents Guide
 
 This file is the soul of the monorepo and the single source of truth for agent guidance.
 
@@ -6,7 +6,7 @@ Compatibility entry files such as `CLAUDE.md` and `GEMINI.md` should only point 
 
 ## Identity
 
-This repository is the shared home for the `Gemma Desktop` product family.
+This repository is the shared home for the `Open Gemma Project` product family.
 
 We are here to make open models more usable, more understandable, and more shippable.
 
@@ -29,7 +29,7 @@ They need software that understands:
 - the failure modes
 - the tradeoffs hiding behind "compatible"
 
-`Gemma Desktop` should help people build with open models without pretending the edges do not exist.
+`Open Gemma Project` should help people build with open models without pretending the edges do not exist.
 
 ## What We Believe
 

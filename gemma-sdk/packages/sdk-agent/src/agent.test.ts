@@ -1638,6 +1638,45 @@ describe('Agent', () => {
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('latest file write has not been validated'))).toBe(true);
   });
 
+  it('marks max-turn final summaries incomplete after an unvalidated rewrite following a failed run', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"write_file","args":{"path":"scripts/run-dashboard.mjs","content":"broken\\n"}}',
+      '{"tool":"exec_command","args":{"command":"npm run build && npm run run:dashboard && npm run validate"}}',
+      '{"tool":"write_file","args":{"path":"scripts/run-dashboard.mjs","content":"fixed\\n"}}',
+      '{"answer":"All dashboard commands passed after the fix."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      maxTurns: 3,
+      tools: [
+        {
+          name: 'write_file',
+          description: 'write',
+          capability: 'write',
+          async run() {
+            return { ok: true, output: 'wrote scripts/run-dashboard.mjs' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: false, output: 'Command exited with 1.\nSyntaxError: Invalid or unexpected token' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Build the dashboard, then run npm run build, npm run run:dashboard, and npm run validate.');
+
+    expect(result.completionStatus).toBe('incomplete');
+    expect(result.completionReason).toBe('final_response_unverified');
+    expect(result.answer).toContain('final summary pass could not be accepted');
+    expect(result.answer).toContain('Validation is still required before the final answer');
+    expect(result.stats).toMatchObject({ turns: 4, toolCalls: 3 });
+  });
+
   it('retries final answers when validation metrics miss explicit benchmark thresholds', async () => {
     const prompt = [
       'Implement optimized batching plans in /app/task_file/output_data.',

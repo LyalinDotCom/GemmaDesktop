@@ -1,5 +1,5 @@
 {
-  "name": "gemma-monorepo",
+  "name": "opengemma",
   "private": true,
   "workspaces": [
     "gemma-desktop",
