@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { SessionMessage } from '@gemma-sdk/core'
 import {
   applyAssistantCompletionMessage,
@@ -9,7 +11,22 @@ import {
   stripHiddenAssistantHeartbeatMessages,
 } from '../../src/main/assistantHeartbeat'
 
+const ipcSourcePath = path.resolve(process.cwd(), 'src/main/ipc.ts')
+
 describe('assistant heartbeat helpers', () => {
+  it('logs and skips turn audit helper failures without failing the completed turn', () => {
+    const ipcSource = fs.readFileSync(ipcSourcePath, 'utf8')
+    const turnAuditBlock = ipcSource.match(
+      /let heartbeatAudit: Awaited<ReturnType<typeof auditAssistantTurnWithHelper>> \| null = null[\s\S]*?if \(heartbeatAudit\) \{/,
+    )?.[0]
+
+    expect(turnAuditBlock).toBeDefined()
+    expect(turnAuditBlock).toContain('catch (error)')
+    expect(turnAuditBlock).toContain("event: 'sessions.assistant-heartbeat.skipped'")
+    expect(turnAuditBlock).toContain('throw error')
+    expect(turnAuditBlock).toContain('abortController.signal.aborted')
+  })
+
   it('keeps only valid assistant heartbeat actions', () => {
     expect(
       normalizeAssistantHeartbeatDecision({

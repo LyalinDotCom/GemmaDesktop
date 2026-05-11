@@ -5,6 +5,19 @@ import { describe, expect, it } from 'vitest'
 const ipcSourcePath = path.resolve(process.cwd(), 'src/main/ipc.ts')
 
 describe('Ollama primary residency tracking', () => {
+  it('allows helper models to run beside an active primary on a different runtime family', () => {
+    const ipcSource = fs.readFileSync(ipcSourcePath, 'utf8')
+    const helperConcurrencyCheck = ipcSource.match(
+      /function canRunHelperAlongsideActivePrimary[\s\S]*?\n}\n\nfunction resolveProtectedTargetsForHelperModelLoad/,
+    )?.[0]
+
+    expect(helperConcurrencyCheck).toBeDefined()
+    expect(helperConcurrencyCheck).toContain('getModelRuntimeFamily(activePrimaryModelTarget.runtimeId)')
+    expect(helperConcurrencyCheck).toContain('!== getModelRuntimeFamily(helperTarget.runtimeId)')
+    expect(helperConcurrencyCheck).toContain('return true')
+    expect(helperConcurrencyCheck).toContain('currentSettings.runtimes.ollama.maxLoadedModels > 1')
+  })
+
   it('does not treat a managed profile mismatch as a missing resident model', () => {
     const ipcSource = fs.readFileSync(ipcSourcePath, 'utf8')
     const residencyCheck = ipcSource.match(

@@ -760,6 +760,19 @@ function isOmlxModelRuntime(runtimeId: string): boolean {
   return runtimeId === 'omlx-openai'
 }
 
+function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx' | 'other' {
+  if (isOllamaModelRuntime(runtimeId)) {
+    return 'ollama'
+  }
+  if (isLmStudioModelRuntime(runtimeId)) {
+    return 'lmstudio'
+  }
+  if (isOmlxModelRuntime(runtimeId)) {
+    return 'omlx'
+  }
+  return 'other'
+}
+
 function getEndpointForModelTarget(
   currentSettings: AppSettingsRecord,
   target: Pick<PrimaryModelTarget, 'runtimeId'>,
@@ -1700,6 +1713,13 @@ function canRunHelperAlongsideActivePrimary(
     currentPrimaryHoldCount() === 0
     || !activePrimaryModelTarget
     || primaryTargetsMatch(activePrimaryModelTarget, helperTarget)
+  ) {
+    return true
+  }
+
+  if (
+    getModelRuntimeFamily(activePrimaryModelTarget.runtimeId)
+    !== getModelRuntimeFamily(helperTarget.runtimeId)
   ) {
     return true
   }
@@ -11438,33 +11458,56 @@ async function sendSessionMessageInternal(
       && !abortController.signal.aborted
       && !options.skipTalkTurnAudit
     ) {
-      const heartbeatAudit = await auditAssistantTurnWithHelper({
-        sessionId,
-        workingDirectory: snapshot.workingDirectory,
-        snapshot,
-        userPrompt: message.text,
-        assistantText: effectiveResult.text,
-        reasoningText: effectiveResult.reasoning ?? '',
-        toolResults: effectiveResult.toolResults,
-        signal: abortController.signal,
-      })
-      const heartbeatDecision = heartbeatAudit.decision
-      helperActivity.consultedForTurnAudit = true
-      recordHelperConsultation({
-        helperModelId: heartbeatAudit.helperModelId,
-        helperRuntimeId: heartbeatAudit.helperRuntimeId,
-        progressId: 'turn-audit',
-        label: 'Checking the completed Assistant Chat turn',
-        summary: 'Checking whether the turn needs a cleaner finish',
-      })
+      let heartbeatAudit: Awaited<ReturnType<typeof auditAssistantTurnWithHelper>> | null = null
+      try {
+        heartbeatAudit = await auditAssistantTurnWithHelper({
+          sessionId,
+          workingDirectory: snapshot.workingDirectory,
+          snapshot,
+          userPrompt: message.text,
+          assistantText: effectiveResult.text,
+          reasoningText: effectiveResult.reasoning ?? '',
+          toolResults: effectiveResult.toolResults,
+          signal: abortController.signal,
+        })
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          throw error
+        }
+        const skippedTurnAuditReason = error instanceof Error ? error.message : String(error)
+        appendDebugLog(sessionId, {
+          layer: 'ipc',
+          direction: 'app->sdk',
+          event: 'sessions.assistant-heartbeat.skipped',
+          summary: 'Skipped helper turn audit because the helper model was unavailable',
+          turnId: effectiveResult.turnId,
+          data: {
+            sessionId,
+            turnId: effectiveResult.turnId,
+            reason: skippedTurnAuditReason,
+          },
+        })
+      }
+
+      if (heartbeatAudit) {
+        helperActivity.consultedForTurnAudit = true
+        recordHelperConsultation({
+          helperModelId: heartbeatAudit.helperModelId,
+          helperRuntimeId: heartbeatAudit.helperRuntimeId,
+          progressId: 'turn-audit',
+          label: 'Checking the completed Assistant Chat turn',
+          summary: 'Checking whether the turn needs a cleaner finish',
+        })
+      }
 
       if (
-        heartbeatDecision.action === 'complete'
-        && heartbeatDecision.completionMessage
+        heartbeatAudit
+        && heartbeatAudit.decision.action === 'complete'
+        && heartbeatAudit.decision.completionMessage
       ) {
-        helperCompletionMessage = heartbeatDecision.completionMessage
+        helperCompletionMessage = heartbeatAudit.decision.completionMessage
         helperActivity.completedTurnMessage = true
-        helperActivity.completionMessage = heartbeatDecision.completionMessage
+        helperActivity.completionMessage = heartbeatAudit.decision.completionMessage
         recordHelperConsultation({
           helperModelId: heartbeatAudit.helperModelId,
           helperRuntimeId: heartbeatAudit.helperRuntimeId,
@@ -11486,11 +11529,12 @@ async function sendSessionMessageInternal(
           },
         })
       } else if (
-        heartbeatDecision.action === 'restart'
-        && heartbeatDecision.restartInstruction
+        heartbeatAudit
+        && heartbeatAudit.decision.action === 'restart'
+        && heartbeatAudit.decision.restartInstruction
       ) {
         helperActivity.restartedTurn = true
-        helperActivity.restartInstruction = heartbeatDecision.restartInstruction
+        helperActivity.restartInstruction = heartbeatAudit.decision.restartInstruction
         recordHelperConsultation({
           helperModelId: heartbeatAudit.helperModelId,
           helperRuntimeId: heartbeatAudit.helperRuntimeId,
@@ -11508,7 +11552,7 @@ async function sendSessionMessageInternal(
           data: {
             sessionId,
             turnId: effectiveResult.turnId,
-            restartInstruction: heartbeatDecision.restartInstruction,
+            restartInstruction: heartbeatAudit.decision.restartInstruction,
           },
         })
 
@@ -11521,7 +11565,7 @@ async function sendSessionMessageInternal(
               || block.type === 'file_edit'
           )
           const continuationResult = await session.run(
-            [{ type: 'text', text: heartbeatDecision.restartInstruction }],
+            [{ type: 'text', text: heartbeatAudit.decision.restartInstruction }],
             {
               signal: abortController.signal,
               debug: (event) => {
