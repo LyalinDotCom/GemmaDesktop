@@ -187,12 +187,16 @@ describe("system prompt profiles", () => {
     expect(prompt).toContain("write_file creates missing parent directories automatically");
     expect(prompt).toContain("Use write_files when creating or replacing several complete files");
     expect(prompt).toContain("write the complete files in consecutive tool calls");
+    expect(prompt).toContain("Create package.json scripts only when the user asks for a package-managed app");
+    expect(prompt).not.toContain("create package.json scripts and use npm commands by default");
+    expect(prompt).toContain("Do not create a new validator or test script just to prove a simple static artifact exists");
     expect(prompt).toContain("make it assert every important requested behavior and constraint");
     expect(prompt).toContain("do not prefix the project folder again inside the validator");
     expect(prompt).toContain("allow inline SVG namespace URLs");
     expect(prompt).toContain("Prefer self-contained local assets");
     expect(prompt).toContain("Do not use alert(), confirm(), or prompt() as the main interaction feedback");
-    expect(prompt).toContain("make the validator check that evidence when responsiveness is requested");
+    expect(prompt).toContain("Prefer existing scripts, browser/dev-server checks, syntax checks, or focused one-off commands before adding new validator files");
+    expect(prompt).toContain("If you create a validator for a responsive project, make it check that evidence");
     expect(prompt).toContain("call the finalize_build tool");
     expect(prompt).toContain("Do not merely write that you will call it");
   });

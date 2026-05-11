@@ -67,6 +67,9 @@ describe('buildAgentSystemPrompt', () => {
     const prompt = buildAgentSystemPrompt({ tools: [sampleTool] });
     expect(prompt).toContain('run at least one direct CLI command');
     expect(prompt).toContain('Do not use a build script that only echoes or prints success');
+    expect(prompt).toContain('Create package.json scripts only when the user asks for a package-managed app');
+    expect(prompt).not.toContain('create package.json scripts and use npm commands by default');
+    expect(prompt).toContain('Do not create a new validator or test script just to prove a simple static artifact exists');
   });
 
   it('includes non-interactive container recovery guidance', () => {

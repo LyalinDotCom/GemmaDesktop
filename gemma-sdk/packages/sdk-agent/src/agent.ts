@@ -1764,22 +1764,23 @@ function renderActModeInstructions(workspace: string | undefined, tools: Tool[])
         ? 'When a command or validation approach fails, inspect the error and change strategy. Do not repeat the exact same failing command or approach more than twice.'
         : undefined,
       hasExecCommand
-        ? 'For Node or web app work, create package.json scripts and use npm commands by default unless the existing workspace clearly uses another package manager. Do not leave the npm init default test script in place.'
+        ? 'For Node or package-managed web app work, use the package manager and scripts already present. Create package.json scripts only when the user asks for a package-managed app, existing package metadata should be extended, or reusable commands materially improve development or verification. If you do create package metadata, do not leave the npm init default test script in place.'
         : undefined,
       hasExecCommand
-        ? 'For runnable web apps, package.json must include a working start script. Prefer a real test, check, or validate script too, and run at least one script before claiming completion.'
+        ? 'For package-managed runnable web apps, package metadata should include a working start or dev script. For static web apps without package metadata, a direct browser, file, syntax, or runtime smoke check can be enough.'
         : undefined,
       hasExecCommand
         ? 'If you create or change a CLI, run at least one direct CLI command with exec_command before calling it functional. Library tests alone do not prove the CLI entry point starts.'
         : undefined,
       hasExecCommand
-        ? 'Do not use a build script that only echoes or prints success as proof of a project build. For simple JavaScript projects, prefer a build/check script that syntax-checks or otherwise executes the actual entry files.'
+        ? 'Do not use a build script that only echoes or prints success as proof of a project build. If you add a build or check script, make it syntax-check or otherwise execute the actual entry files.'
         : undefined,
-      'Do not add project dependencies unless the implementation actually imports or runs them. For simple static apps, prefer dependency-free npm scripts.',
+      'Do not add project dependencies unless the implementation actually imports or runs them. For simple static apps, prefer dependency-free files and ordinary one-off checks when enough.',
       'For project initialization or scaffolding, prefer non-interactive commands and flags. If a setup command is cancelled, hangs, or waits for input, do not repeat it unchanged.',
       'Do not treat dependency installation, a partial scaffold, or one file write as a finished setup. Before you stop, make sure declared scripts, referenced entry files, and basic verification actually work.',
-      'For generated artifacts such as SVG, HTML, JSON, XML, or config files, validate the artifact with a real parser, renderer, or focused script instead of relying on visual inspection of the text.',
-      'When you create a validator or test script, make it assert every important requested behavior and constraint, not just file existence or a few generic forbidden strings.',
+      'For generated artifacts such as SVG, HTML, JSON, XML, or config files, validate the artifact with a real parser, renderer, existing project script, or focused one-off command instead of relying on visual inspection of the text.',
+      'Do not create a new validator or test script just to prove a simple static artifact exists. Create one only when the user asks for it, the project already has a test harness it should join, or the behavior is complex enough that reusable validation is worth maintaining.',
+      'When you do create a validator or test script, make it assert every important requested behavior and constraint, not just file existence or a few generic forbidden strings.',
       'When a package script runs from the project directory, make validator paths relative to that script working directory or import.meta.url; do not prefix the project folder again inside the validator.',
       'When checking for remote assets, inspect URL-bearing attributes, imports, and CSS url() references, and allow inline SVG namespace URLs such as http://www.w3.org/2000/svg.',
       'After you change files, do not stop until you have run a meaningful verification command or explained the concrete blocker.',
@@ -1789,10 +1790,10 @@ function renderActModeInstructions(workspace: string | undefined, tools: Tool[])
     renderPromptBullets('Generated Web App Quality', [
       'Prefer self-contained local assets, CSS, canvas, gradients, inline SVG, or placeholders for generated offline web projects. Do not hotlink remote images or scripts unless the user asks for external assets.',
       'Do not use alert(), confirm(), or prompt() as the main interaction feedback. Show state, errors, scores, confirmations, and progress in the DOM.',
-      'For interactive web projects, include accessible controls, visible state changes, responsive layout rules, and a deterministic validation script when the workspace has no existing tests.',
+      'For interactive web projects, include accessible controls, visible state changes, responsive layout rules, and some meaningful verification. Prefer existing scripts, browser/dev-server checks, syntax checks, or focused one-off commands before adding new validator files.',
       'For browser JavaScript, validation must execute or syntax-check the changed script. A validator that only checks file existence or that an HTML tag exists is not enough after JavaScript edits.',
       'Never write self-correction notes, scratch reasoning, or phrases like "Correction:", "Wait, let\'s fix", or "Error in my thought" into generated files. Fix the file content before calling a write tool.',
-      'For responsive web projects, include explicit responsive CSS evidence such as @media, minmax(), clamp(), container queries, or auto-fit grid tracks, and make the validator check that evidence when responsiveness is requested.'
+      'For responsive web projects, include explicit responsive CSS evidence such as @media, minmax(), clamp(), container queries, or auto-fit grid tracks. If you create a validator for a responsive project, make it check that evidence.'
     ]),
     renderPromptBullets('Communication Workflow', [
       canEditFiles || canRunCommands

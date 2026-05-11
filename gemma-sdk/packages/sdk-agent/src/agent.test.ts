@@ -1945,6 +1945,8 @@ describe('Agent', () => {
     expect(systemPrompt).toContain('Before creating, initializing, or scaffolding a project in a user-named directory');
     expect(systemPrompt).toContain('write_file creates missing parent directories automatically');
     expect(systemPrompt).toContain('**Validation & Dependencies:**');
+    expect(systemPrompt).not.toContain('create package.json scripts and use npm commands by default');
+    expect(systemPrompt).toContain('Do not create a new validator or test script just to prove a simple static artifact exists');
     expect(systemPrompt).toContain('make it assert every important requested behavior and constraint');
     expect(systemPrompt).toContain('partial output contains success-looking text');
     expect(systemPrompt).toContain('**Generated Web App Quality:**');

@@ -17,7 +17,7 @@ Use this skill when building or changing React web apps.
 ## React Implementation Workflow
 
 - For new React projects, prefer Vite with React unless the workspace already has a different React stack.
-- Create complete package.json scripts for start/dev, build, and a meaningful validation path. Do not leave placeholder npm scripts.
+- For new package-managed React projects, create complete package.json scripts for start/dev and build. Add validation/test scripts only when requested, already present, or useful for reusable behavior checks. Do not leave placeholder npm scripts.
 - If the user asks for a validation script or validation command, add a real validate script to package.json and run it before finalizing.
 - For anything beyond a tiny component, split the app into focused files such as App, state/data helpers, and domain components before writing large UI bodies. Keep each file and write_file payload small enough to complete reliably in one tool call.
 - Do not put a whole non-trivial app into one large App.jsx/App.tsx file. Keep App as orchestration and move panels, editors, lists, controls, canvases, and cards into separate component files before they grow past a small, reviewable size.
@@ -43,7 +43,7 @@ Use this skill when building or changing React web apps.
 
 - Run npm install when dependencies are added or package-lock/package.json needs to match.
 - Run npm run build before claiming a React app is done. If the scaffold includes lint, run npm run lint and fix unused imports, dead state, dead handlers, and unreachable controls before finalizing.
-- Add and run a focused validation/test script when behavior is complex, when the user requested validation, or when the repo has no tests.
+- Add and run a focused validation/test script when behavior is complex enough to warrant a reusable check, when the user requested validation, or when an existing test harness should be extended. Otherwise use build, lint, browser, syntax, or runtime smoke checks as appropriate.
 - With modern Vite React scaffolds, import only the hooks and APIs used by each file. Do not keep a default React import unless the file actually references React.
 - For non-trivial apps, validate after each focused slice or small group of files before continuing. A late build after many large writes is too hard to debug.
 - When possible, validate generated UI with code-level checks for requested features, real DOM state, responsive CSS evidence, and absence of placeholder/scratch text.
