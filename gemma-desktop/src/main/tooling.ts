@@ -1,4 +1,5 @@
 import type { ModeSelection } from '@gemma-sdk/core'
+import { statSync } from 'fs'
 import path from 'path'
 import { parseToolCallInput } from '@gemma-sdk/core'
 import {
@@ -370,9 +371,46 @@ function workspaceRelativePath(workingDirectory: string, absolutePath: string): 
     : null
 }
 
+function deepestExistingPathSync(targetPath: string): string {
+  let current = path.resolve(targetPath)
+  for (;;) {
+    try {
+      statSync(current)
+      return current
+    } catch {
+      const parent = path.dirname(current)
+      if (parent === current) {
+        return current
+      }
+      current = parent
+    }
+  }
+}
+
+function shouldTreatRootedPathAsWorkspaceRelative(target: string): boolean {
+  const trimmed = target.trim()
+  if (process.platform === 'win32' || !trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed === '/') {
+    return false
+  }
+
+  const resolved = path.resolve(trimmed)
+  const filesystemRoot = path.parse(resolved).root
+  return path.resolve(deepestExistingPathSync(resolved)) === path.resolve(filesystemRoot)
+}
+
+function isApprovedWorkspaceEscape(absolutePath: string, approvedWorkspaceEscapes: string[] = []): boolean {
+  const resolvedPath = path.resolve(absolutePath)
+  return approvedWorkspaceEscapes.some((approvedPath) => {
+    const resolvedApprovedPath = path.resolve(approvedPath)
+    const relative = path.relative(resolvedApprovedPath, resolvedPath)
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+  })
+}
+
 export function resolveBackgroundProcessWorkingDirectory(input: {
   workingDirectory: string
   cwd?: unknown
+  approvedWorkspaceEscapes?: string[]
 }): string {
   const workingDirectory = path.resolve(input.workingDirectory)
   const cwd = typeof input.cwd === 'string' ? input.cwd.trim() : ''
@@ -381,8 +419,13 @@ export function resolveBackgroundProcessWorkingDirectory(input: {
     return workingDirectory
   }
 
-  const resolved = path.resolve(workingDirectory, cwd)
-  if (workspaceRelativePath(workingDirectory, resolved) === null) {
+  const resolved = shouldTreatRootedPathAsWorkspaceRelative(cwd)
+    ? path.resolve(workingDirectory, cwd.slice(1))
+    : path.resolve(workingDirectory, cwd)
+  if (
+    workspaceRelativePath(workingDirectory, resolved) === null
+    && !isApprovedWorkspaceEscape(resolved, input.approvedWorkspaceEscapes)
+  ) {
     throw new Error(
       `Refusing to start background process outside the working directory: ${resolved}`,
     )

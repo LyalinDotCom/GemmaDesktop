@@ -276,6 +276,7 @@ function collectToolPathInputs(toolName: string, record: Record<string, unknown>
       }
       break;
     case "exec_command":
+    case "start_background_process":
       push(record.cwd);
       break;
   }
@@ -309,6 +310,8 @@ function resolveWorkspaceEscapePermission(input: {
   const action =
     input.toolName === "exec_command"
       ? "run a shell command"
+      : input.toolName === "start_background_process"
+        ? "start a background process"
       : input.toolName === "edit_file"
         ? "edit a file"
         : input.toolName === "write_files"

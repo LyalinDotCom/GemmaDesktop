@@ -756,6 +756,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
       const workingDirectory = resolveBackgroundProcessWorkingDirectory({
         workingDirectory: context.workingDirectory,
         cwd: input.cwd,
+        approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
       })
       const state = await startBackgroundProcessInternal(context.sessionId, {
         command,

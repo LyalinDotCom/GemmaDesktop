@@ -239,6 +239,15 @@ describe('app tool helpers', () => {
       workingDirectory: '/tmp/gemma-project',
       cwd: '/tmp/gemma-project/blackhole02',
     })).toBe('/tmp/gemma-project/blackhole02')
+    expect(resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+      cwd: '/definitely-missing-gemma-root-path/blackhole02',
+    })).toBe('/tmp/gemma-project/definitely-missing-gemma-root-path/blackhole02')
+    expect(resolveBackgroundProcessWorkingDirectory({
+      workingDirectory: '/tmp/gemma-project',
+      cwd: '/tmp/elsewhere',
+      approvedWorkspaceEscapes: ['/tmp/elsewhere'],
+    })).toBe('/tmp/elsewhere')
     expect(() => resolveBackgroundProcessWorkingDirectory({
       workingDirectory: '/tmp/gemma-project',
       cwd: '../elsewhere',

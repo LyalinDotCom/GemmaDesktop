@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import type { ToolExecutionContext } from "@gemma-sdk/core";
 import { runShellCommand } from "@gemma-sdk/core";
-import { createHostTools, ToolRegistry, ToolRuntime } from "@gemma-sdk/tools";
+import { createHostTools, type RegisteredTool, ToolRegistry, ToolRuntime } from "@gemma-sdk/tools";
 
 describe("host tools", () => {
   const tempDirectories: string[] = [];
@@ -42,9 +42,11 @@ describe("host tools", () => {
   function createToolRuntime(options?: {
     allowWorkspaceEscape?: boolean;
     onWorkspaceEscape?: (details: unknown) => void;
+    extraTools?: RegisteredTool[];
   }): ToolRuntime {
     const registry = new ToolRegistry();
     registry.registerMany(createHostTools());
+    registry.registerMany(options?.extraTools ?? []);
     return new ToolRuntime({
       registry,
       policy: {
@@ -988,6 +990,86 @@ describe("host tools", () => {
     expect(String(writeResult.output)).toContain(path.join(workingDirectory, segment, "created.txt"));
     await expect(readFile(path.join(workingDirectory, segment, "created.txt"), "utf8")).resolves.toBe("created\n");
     expect(permissionDetails).toHaveLength(0);
+  });
+
+  it("applies workspace escape policy to background process cwd", async () => {
+    const workingDirectory = await createWorkspace();
+    const outsideDirectory = await createWorkspace();
+    const segment = `gemma-bg-root-style-${path.basename(workingDirectory)}`;
+    const backgroundTool: RegisteredTool<{ command: string; cwd?: string }> = {
+      name: "start_background_process",
+      description: "Start a background process.",
+      inputSchema: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: { type: "string" },
+          cwd: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute(_input, context) {
+        return {
+          output: (context.approvedWorkspaceEscapes ?? []).join("\n"),
+        };
+      },
+    };
+    const context = createContext(workingDirectory);
+    const permissionDetails: unknown[] = [];
+    const deniedRuntime = createToolRuntime({
+      extraTools: [backgroundTool],
+      onWorkspaceEscape: (details) => permissionDetails.push(details),
+    });
+
+    await deniedRuntime.execute(
+      {
+        id: "call-bg-root-style",
+        name: "start_background_process",
+        input: {
+          command: "python3 -m http.server 8080",
+          cwd: `/${segment}`,
+        },
+      },
+      context,
+    );
+    expect(permissionDetails).toHaveLength(0);
+
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-bg-outside-denied",
+          name: "start_background_process",
+          input: {
+            command: "python3 -m http.server 8080",
+            cwd: outsideDirectory,
+          },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    expect(permissionDetails).toHaveLength(1);
+    expect(permissionDetails[0]).toMatchObject({
+      workingDirectory,
+      requestedPath: outsideDirectory,
+      resolvedPath: outsideDirectory,
+    });
+
+    const approvedRuntime = createToolRuntime({
+      allowWorkspaceEscape: true,
+      extraTools: [backgroundTool],
+    });
+    const approvedResult = await approvedRuntime.execute(
+      {
+        id: "call-bg-outside-approved",
+        name: "start_background_process",
+        input: {
+          command: "python3 -m http.server 8080",
+          cwd: outsideDirectory,
+        },
+      },
+      context,
+    );
+    expect(String(approvedResult.output)).toContain(outsideDirectory);
   });
 
   it("hard-kills shell commands that ignore SIGTERM after timing out", async () => {
