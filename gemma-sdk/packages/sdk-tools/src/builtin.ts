@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, statSync } from "node:fs";
 import path from "node:path";
 import type { ToolExecutionContext } from "@gemma-sdk/core";
 import { buildFileEditArtifact, buildLineDiff, FINALIZE_BUILD_TOOL_NAME, GemmaDesktopError, runShellCommand } from "@gemma-sdk/core";
@@ -84,8 +84,38 @@ function formatShellCommandOutput(input: {
   };
 }
 
+function deepestExistingPathSync(targetPath: string): string {
+  let current = path.resolve(targetPath);
+  for (;;) {
+    try {
+      statSync(current);
+      return current;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
+}
+
+function shouldTreatRootedPathAsWorkspaceRelative(target: string): boolean {
+  const trimmed = target.trim();
+  if (process.platform === "win32" || !trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed === "/") {
+    return false;
+  }
+
+  const resolved = path.resolve(trimmed);
+  const filesystemRoot = path.parse(resolved).root;
+  return path.resolve(deepestExistingPathSync(resolved)) === path.resolve(filesystemRoot);
+}
+
 function resolvePath(context: ToolExecutionContext, target = "."): string {
-  return path.resolve(context.workingDirectory, target);
+  const normalizedTarget = target.trim();
+  return shouldTreatRootedPathAsWorkspaceRelative(normalizedTarget)
+    ? path.resolve(context.workingDirectory, normalizedTarget.slice(1))
+    : path.resolve(context.workingDirectory, normalizedTarget);
 }
 
 async function readUtf8File(filePath: string): Promise<string> {
@@ -435,6 +465,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.listTree(input);
         const rendered = renderWorkspaceListTree(result);
@@ -481,6 +512,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.searchPaths(input);
         const rendered = renderWorkspaceSearchPaths(result);
@@ -551,6 +583,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.searchText(input);
         const rendered = renderWorkspaceSearchText(result);
@@ -584,6 +617,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.readFile(input);
         const rendered = renderWorkspaceReadFile(result);
@@ -632,6 +666,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.readFiles(input);
         const rendered = renderWorkspaceReadFiles(result);
@@ -739,6 +774,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.readFile(input);
         const rendered = renderWorkspaceReadFile(result);
@@ -788,6 +824,7 @@ export function createHostTools(): RegisteredTool[] {
         const backend = createWorkspaceSearchBackend({
           workingDirectory: context.workingDirectory,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         });
         const result = await backend.searchText({
           ...input,

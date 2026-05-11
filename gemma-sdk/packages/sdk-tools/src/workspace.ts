@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -205,9 +205,25 @@ function withTrailingSlash(value: string, type: WorkspaceEntryType): string {
   return type === "directory" && !value.endsWith("/") ? `${value}/` : value;
 }
 
-function workspaceRelativePath(workingDirectory: string, absolutePath: string): string {
+function isApprovedWorkspaceEscape(absolutePath: string, approvedWorkspaceEscapes: string[] = []): boolean {
+  const resolvedPath = path.resolve(absolutePath);
+  return approvedWorkspaceEscapes.some((approvedPath) => {
+    const resolvedApprovedPath = path.resolve(approvedPath);
+    const relative = path.relative(resolvedApprovedPath, resolvedPath);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  });
+}
+
+function workspaceRelativePath(
+  workingDirectory: string,
+  absolutePath: string,
+  approvedWorkspaceEscapes: string[] = [],
+): string {
   const relative = path.relative(workingDirectory, absolutePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (isApprovedWorkspaceEscape(absolutePath, approvedWorkspaceEscapes)) {
+      return path.resolve(absolutePath);
+    }
     throw new GemmaDesktopError(
       "permission_denied",
       `Refusing to access path outside the working directory: ${absolutePath}`,
@@ -216,9 +232,43 @@ function workspaceRelativePath(workingDirectory: string, absolutePath: string): 
   return relative === "" ? "." : toPosixPath(relative);
 }
 
-function resolveWorkspacePath(workingDirectory: string, target = "."): string {
-  const resolved = path.resolve(workingDirectory, target);
-  workspaceRelativePath(workingDirectory, resolved);
+function deepestExistingPathSync(targetPath: string): string {
+  let current = path.resolve(targetPath);
+  for (;;) {
+    try {
+      statSync(current);
+      return current;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
+}
+
+function shouldTreatRootedPathAsWorkspaceRelative(target: string): boolean {
+  const trimmed = target.trim();
+  if (process.platform === "win32" || !trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed === "/") {
+    return false;
+  }
+
+  const resolved = path.resolve(trimmed);
+  const filesystemRoot = path.parse(resolved).root;
+  return path.resolve(deepestExistingPathSync(resolved)) === path.resolve(filesystemRoot);
+}
+
+function resolveWorkspacePath(
+  workingDirectory: string,
+  target = ".",
+  approvedWorkspaceEscapes: string[] = [],
+): string {
+  const normalizedTarget = target.trim();
+  const resolved = shouldTreatRootedPathAsWorkspaceRelative(normalizedTarget)
+    ? path.resolve(workingDirectory, normalizedTarget.slice(1))
+    : path.resolve(workingDirectory, normalizedTarget);
+  workspaceRelativePath(workingDirectory, resolved, approvedWorkspaceEscapes);
   return resolved;
 }
 
@@ -903,15 +953,17 @@ function buildSearchScore(query: string, candidatePath: string): number {
 export class WorkspaceSearchBackend {
   private readonly workingDirectory: string;
   private readonly signal?: AbortSignal;
+  private readonly approvedWorkspaceEscapes: string[];
   private readonly directoryCache = new Map<string, Promise<DirectoryInspection>>();
 
-  public constructor(options: { workingDirectory: string; signal?: AbortSignal }) {
+  public constructor(options: { workingDirectory: string; signal?: AbortSignal; approvedWorkspaceEscapes?: string[] }) {
     this.workingDirectory = options.workingDirectory;
     this.signal = options.signal;
+    this.approvedWorkspaceEscapes = options.approvedWorkspaceEscapes ?? [];
   }
 
   public async listTree(input: WorkspaceListTreeInput): Promise<WorkspaceListTreeResult> {
-    const basePath = resolveWorkspacePath(this.workingDirectory, input.path);
+    const basePath = resolveWorkspacePath(this.workingDirectory, input.path, this.approvedWorkspaceEscapes);
     const baseStat = await fs.stat(basePath).catch(() => undefined);
     if (!baseStat?.isDirectory()) {
       throw new GemmaDesktopError("tool_execution_failed", `Directory not found: ${input.path ?? "."}`);
@@ -1091,7 +1143,7 @@ export class WorkspaceSearchBackend {
   }
 
   public async searchPaths(input: WorkspaceSearchPathsInput): Promise<WorkspaceSearchPathsResult> {
-    const basePath = resolveWorkspacePath(this.workingDirectory, input.path);
+    const basePath = resolveWorkspacePath(this.workingDirectory, input.path, this.approvedWorkspaceEscapes);
     const baseStat = await fs.stat(basePath).catch(() => undefined);
     if (!baseStat?.isDirectory()) {
       throw new GemmaDesktopError("tool_execution_failed", `Directory not found: ${input.path ?? "."}`);
@@ -1160,7 +1212,7 @@ export class WorkspaceSearchBackend {
       throw new GemmaDesktopError("tool_execution_failed", "search_text requires a non-empty query.");
     }
 
-    const basePath = resolveWorkspacePath(this.workingDirectory, input.path);
+    const basePath = resolveWorkspacePath(this.workingDirectory, input.path, this.approvedWorkspaceEscapes);
     const baseStat = await fs.stat(basePath).catch(() => undefined);
     if (!baseStat) {
       throw new GemmaDesktopError("tool_execution_failed", `Search path not found: ${input.path ?? "."}`);
@@ -1225,7 +1277,11 @@ export class WorkspaceSearchBackend {
         if (!pathText) {
           return true;
         }
-        const relativePath = workspaceRelativePath(this.workingDirectory, path.resolve(this.workingDirectory, pathText));
+        const relativePath = workspaceRelativePath(
+          this.workingDirectory,
+          path.resolve(this.workingDirectory, pathText),
+          this.approvedWorkspaceEscapes,
+        );
         if (relativePath === ".git" || relativePath.startsWith(".git/")) {
           return true;
         }
@@ -1292,7 +1348,7 @@ export class WorkspaceSearchBackend {
   }
 
   public async readFile(input: WorkspaceReadFileInput): Promise<WorkspaceReadFileResult> {
-    const absolutePath = resolveWorkspacePath(this.workingDirectory, input.path);
+    const absolutePath = resolveWorkspacePath(this.workingDirectory, input.path, this.approvedWorkspaceEscapes);
     const stat = await fs.stat(absolutePath).catch((error: unknown) => {
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code === "ENOENT") {
@@ -1377,7 +1433,7 @@ export class WorkspaceSearchBackend {
     const lastLine = lines.at(-1)?.line ?? Math.max(0, offset - 1);
 
     return {
-      path: workspaceRelativePath(this.workingDirectory, absolutePath),
+      path: workspaceRelativePath(this.workingDirectory, absolutePath, this.approvedWorkspaceEscapes),
       absolutePath,
       offset,
       limit,
@@ -1742,7 +1798,7 @@ export class WorkspaceSearchBackend {
             return undefined;
           }
           return {
-            path: workspaceRelativePath(this.workingDirectory, absoluteCandidate),
+            path: workspaceRelativePath(this.workingDirectory, absoluteCandidate, this.approvedWorkspaceEscapes),
             type: stat.isDirectory() ? "directory" as const : "file" as const,
           };
         }));
@@ -1798,7 +1854,7 @@ export class WorkspaceSearchBackend {
         const absoluteCandidate = path.isAbsolute(normalized)
           ? normalized
           : path.resolve(this.workingDirectory, normalized);
-        files.push(workspaceRelativePath(this.workingDirectory, absoluteCandidate));
+        files.push(workspaceRelativePath(this.workingDirectory, absoluteCandidate, this.approvedWorkspaceEscapes));
         return true;
       },
     });
@@ -1845,6 +1901,7 @@ export class WorkspaceSearchBackend {
 export function createWorkspaceSearchBackend(options: {
   workingDirectory: string;
   signal?: AbortSignal;
+  approvedWorkspaceEscapes?: string[];
 }): WorkspaceSearchBackend {
   return new WorkspaceSearchBackend(options);
 }

@@ -5895,8 +5895,8 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
           toolName: tool.name,
           argumentsSummary: [
             `Workspace: ${permission.details.workingDirectory}`,
-            `Requested path: ${permission.details.requestedPath}`,
-            `Resolved path: ${permission.details.resolvedPath}`,
+            `Requested path: ${(permission.details.requestedPaths ?? [permission.details.requestedPath]).join('\nRequested path: ')}`,
+            `Resolved path: ${(permission.details.resolvedPaths ?? [permission.details.resolvedPath]).join('\nResolved path: ')}`,
           ].join('\n'),
           reason: permission.reason,
         })

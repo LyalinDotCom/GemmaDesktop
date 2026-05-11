@@ -149,6 +149,7 @@ export interface ToolExecutionContext {
   mode: ModeSelection;
   sessionMetadata?: Record<string, unknown>;
   workingDirectory: string;
+  approvedWorkspaceEscapes?: string[];
   signal?: AbortSignal;
   emit?: (event: GemmaDesktopEvent) => void;
   emitProgress?: (progress: ToolProgressUpdate) => void;

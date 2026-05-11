@@ -842,6 +842,7 @@ describe("host tools", () => {
     const workingDirectory = await createWorkspace();
     const outsideDirectory = await createWorkspace();
     const outsideFile = path.join(outsideDirectory, "outside.txt");
+    await writeFile(outsideFile, "outside\n", "utf8");
     const context = createContext(workingDirectory);
     const permissionDetails: unknown[] = [];
     const deniedRuntime = createToolRuntime({
@@ -861,7 +862,7 @@ describe("host tools", () => {
         context,
       ),
     ).rejects.toThrow(/workspace escape requires explicit approval/i);
-    await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
+    await expect(readFile(outsideFile, "utf8")).resolves.toBe("outside\n");
     expect(permissionDetails).toHaveLength(1);
     expect(permissionDetails[0]).toMatchObject({
       workingDirectory,
@@ -892,7 +893,49 @@ describe("host tools", () => {
       resolvedPath: outsideBatchFile,
     });
 
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-list-outside",
+          name: "list_tree",
+          input: {
+            path: outsideDirectory,
+          },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    expect(permissionDetails[2]).toMatchObject({
+      workingDirectory,
+      requestedPath: outsideDirectory,
+      resolvedPath: outsideDirectory,
+    });
+
     const approvedRuntime = createToolRuntime({ allowWorkspaceEscape: true });
+    const readResult = await approvedRuntime.execute(
+      {
+        id: "call-read-outside",
+        name: "read_file",
+        input: {
+          path: outsideFile,
+        },
+      },
+      context,
+    );
+    expect(String(readResult.output)).toContain("outside");
+
+    const listResult = await approvedRuntime.execute(
+      {
+        id: "call-list-outside-approved",
+        name: "list_tree",
+        input: {
+          path: outsideDirectory,
+        },
+      },
+      context,
+    );
+    expect(String(listResult.output)).toContain("outside.txt");
+
     await approvedRuntime.execute(
       {
         id: "call-exec-outside",
@@ -904,6 +947,47 @@ describe("host tools", () => {
       },
       context,
     );
+  });
+
+  it("treats root-prefixed project paths as workspace-relative when no real absolute parent exists", async () => {
+    const workingDirectory = await createWorkspace();
+    const segment = `gemma-root-style-${path.basename(workingDirectory)}`;
+    await mkdir(path.join(workingDirectory, segment, "existing"), { recursive: true });
+    await writeFile(path.join(workingDirectory, segment, "existing", "notes.txt"), "inside\n", "utf8");
+
+    const context = createContext(workingDirectory);
+    const permissionDetails: unknown[] = [];
+    const runtime = createToolRuntime({
+      onWorkspaceEscape: (details) => permissionDetails.push(details),
+    });
+
+    const listResult = await runtime.execute(
+      {
+        id: "call-list-root-style",
+        name: "list_tree",
+        input: {
+          path: `/${segment}`,
+          depth: 1,
+        },
+      },
+      context,
+    );
+    expect(String(listResult.output)).toContain("existing/");
+
+    const writeResult = await runtime.execute(
+      {
+        id: "call-write-root-style",
+        name: "write_file",
+        input: {
+          path: `/${segment}/created.txt`,
+          content: "created\n",
+        },
+      },
+      context,
+    );
+    expect(String(writeResult.output)).toContain(path.join(workingDirectory, segment, "created.txt"));
+    await expect(readFile(path.join(workingDirectory, segment, "created.txt"), "utf8")).resolves.toBe("created\n");
+    expect(permissionDetails).toHaveLength(0);
   });
 
   it("hard-kills shell commands that ignore SIGTERM after timing out", async () => {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { createReadStream, readFileSync, rmSync } from 'node:fs';
+import { createReadStream, readFileSync, rmSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, relative } from 'node:path';
@@ -88,8 +88,37 @@ function normalizeModelPath(inputPath: string): string {
   return unquoted;
 }
 
+function deepestExistingPathSync(targetPath: string): string {
+  let current = resolve(targetPath);
+  for (;;) {
+    try {
+      statSync(current);
+      return current;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
+}
+
+function shouldTreatRootedPathAsWorkspaceRelative(inputPath: string): boolean {
+  if (process.platform === 'win32' || !inputPath.startsWith('/') || inputPath.startsWith('//') || inputPath === '/') {
+    return false;
+  }
+
+  const absoluteTarget = resolve(inputPath);
+  const filesystemRoot = dirname(absoluteTarget) === absoluteTarget ? absoluteTarget : resolve('/');
+  return resolve(deepestExistingPathSync(absoluteTarget)) === filesystemRoot;
+}
+
 function resolveWorkspacePath(root: string, inputPath: string): string {
   const normalized = normalizeModelPath(inputPath);
+  if (shouldTreatRootedPathAsWorkspaceRelative(normalized)) {
+    return resolve(root, normalized.slice(1));
+  }
   const expanded = expandHomePath(normalized);
   if (!isAbsolute(expanded)) {
     const rootPath = resolve(root);

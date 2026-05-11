@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceTools, type WorkspacePermissionRequest, type WorkspaceToolsOptions } from './workspace.js';
 
@@ -65,6 +65,61 @@ describe('workspace tools', () => {
     const read = tool('read_file', cwd);
 
     await expect(read.run({ path: '../outside.txt' })).resolves.toMatchObject({ ok: false });
+  });
+
+  it('asks the host before reading or listing outside-workspace paths', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const outside = await mkdtemp(join(tmpdir(), 'gemma-cli-outside-'));
+    const target = join(outside, 'notes.txt');
+    await writeFile(target, 'outside\n', 'utf8');
+    const outsideReal = await realpath(outside);
+    const targetReal = await realpath(target);
+    let captured: WorkspacePermissionRequest | undefined;
+
+    const read = tool('read_file', cwd, {
+      outsideWorkspacePermission: async (request) => {
+        captured = request;
+        return true;
+      }
+    });
+    await expect(read.run({ path: target })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('outside')
+    });
+    expect(captured?.tool).toBe('read_file');
+    expect(captured?.reason).toContain('read file path is outside the workspace');
+    expect(captured?.paths).toContain(targetReal);
+
+    const list = tool('list_tree', cwd, {
+      outsideWorkspacePermission: async (request) => {
+        captured = request;
+        return true;
+      }
+    });
+    await expect(list.run({ path: outside })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('notes.txt')
+    });
+    expect(captured?.tool).toBe('list_tree');
+    expect(captured?.reason).toContain('read directory path is outside the workspace');
+    expect(captured?.paths).toContain(outsideReal);
+  });
+
+  it('treats root-prefixed project paths as workspace-relative when no real absolute parent exists', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const segment = `gemma-root-style-${basename(cwd)}`;
+    await mkdir(join(cwd, segment, 'existing'), { recursive: true });
+    await writeFile(join(cwd, segment, 'existing', 'notes.txt'), 'inside\n', 'utf8');
+
+    const list = tool('list_tree', cwd);
+    await expect(list.run({ path: `/${segment}`, depth: 1 })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('existing/')
+    });
+
+    const write = tool('write_file', cwd);
+    await expect(write.run({ path: `/${segment}/created.txt`, content: 'created\n' })).resolves.toMatchObject({ ok: true });
+    await expect(readFile(join(cwd, segment, 'created.txt'), 'utf8')).resolves.toBe('created\n');
   });
 
   it('normalizes markdown-quoted generated write paths before creating files', async () => {

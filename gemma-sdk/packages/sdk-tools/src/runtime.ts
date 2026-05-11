@@ -1,4 +1,5 @@
 import path from "node:path";
+import { statSync } from "node:fs";
 import { Ajv } from "ajv";
 import type {
   ModelToolCall,
@@ -21,6 +22,8 @@ export interface ToolPermissionRequest {
     workingDirectory: string;
     requestedPath: string;
     resolvedPath: string;
+    requestedPaths?: string[];
+    resolvedPaths?: string[];
   };
 }
 
@@ -198,6 +201,88 @@ function workspaceRelativePath(workingDirectory: string, absolutePath: string): 
     : null;
 }
 
+function deepestExistingPathSync(targetPath: string): string {
+  let current = path.resolve(targetPath);
+  for (;;) {
+    try {
+      statSync(current);
+      return current;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
+}
+
+function shouldTreatRootedPathAsWorkspaceRelative(inputPath: string): boolean {
+  const trimmed = inputPath.trim();
+  if (process.platform === "win32" || !trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed === "/") {
+    return false;
+  }
+
+  const resolved = path.resolve(trimmed);
+  const filesystemRoot = path.parse(resolved).root;
+  return path.resolve(deepestExistingPathSync(resolved)) === path.resolve(filesystemRoot);
+}
+
+function resolveToolInputPath(workingDirectory: string, inputPath: string): string {
+  const trimmed = inputPath.trim();
+  if (shouldTreatRootedPathAsWorkspaceRelative(trimmed)) {
+    return path.resolve(workingDirectory, trimmed.slice(1));
+  }
+  return path.resolve(workingDirectory, trimmed);
+}
+
+function collectToolPathInputs(toolName: string, record: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      paths.push(value);
+    }
+  };
+
+  switch (toolName) {
+    case "list_tree":
+    case "search_paths":
+    case "search_text":
+      push(record.path);
+      break;
+    case "read_file":
+    case "read_content":
+    case "search_content":
+    case "write_file":
+    case "edit_file":
+      push(record.path);
+      break;
+    case "materialize_content":
+      push(record.path);
+      push(record.outputPath);
+      break;
+    case "read_files":
+      for (const request of Array.isArray(record.requests) ? record.requests : []) {
+        if (request && typeof request === "object" && !Array.isArray(request)) {
+          push((request as Record<string, unknown>).path);
+        }
+      }
+      break;
+    case "write_files":
+      for (const file of Array.isArray(record.files) ? record.files : []) {
+        if (file && typeof file === "object" && !Array.isArray(file)) {
+          push((file as Record<string, unknown>).path);
+        }
+      }
+      break;
+    case "exec_command":
+      push(record.cwd);
+      break;
+  }
+
+  return [...new Set(paths)];
+}
+
 function resolveWorkspaceEscapePermission(input: {
   toolName: string;
   toolInput: unknown;
@@ -208,35 +293,19 @@ function resolveWorkspaceEscapePermission(input: {
   }
 
   const record = input.toolInput as Record<string, unknown>;
-  let requestedPath =
-    input.toolName === "write_file" || input.toolName === "edit_file"
-      ? record.path
-      : input.toolName === "exec_command"
-        ? record.cwd
-        : undefined;
-  if (requestedPath == null && input.toolName === "write_files") {
-    const files = Array.isArray(record.files) ? record.files : [];
-    requestedPath = files
-      .filter((file): file is Record<string, unknown> => Boolean(file) && typeof file === "object" && !Array.isArray(file))
-      .map((file) => file.path)
-      .find((candidate) => {
-        if (typeof candidate !== "string" || candidate.trim().length === 0) {
-          return false;
-        }
-        const resolvedCandidate = path.resolve(input.workingDirectory, candidate);
-        return workspaceRelativePath(path.resolve(input.workingDirectory), resolvedCandidate) === null;
-      });
-  }
-  if (typeof requestedPath !== "string" || requestedPath.trim().length === 0) {
-    return undefined;
-  }
-
   const workingDirectory = path.resolve(input.workingDirectory);
-  const resolvedPath = path.resolve(workingDirectory, requestedPath);
-  if (workspaceRelativePath(workingDirectory, resolvedPath) !== null) {
+  const escapedPaths = collectToolPathInputs(input.toolName, record)
+    .map((requestedPath) => ({
+      requestedPath,
+      resolvedPath: resolveToolInputPath(workingDirectory, requestedPath),
+    }))
+    .filter(({ resolvedPath }) => workspaceRelativePath(workingDirectory, resolvedPath) === null);
+
+  if (escapedPaths.length === 0) {
     return undefined;
   }
 
+  const firstEscape = escapedPaths[0]!;
   const action =
     input.toolName === "exec_command"
       ? "run a shell command"
@@ -244,7 +313,13 @@ function resolveWorkspaceEscapePermission(input: {
         ? "edit a file"
         : input.toolName === "write_files"
           ? "write files"
-          : "write a file";
+          : input.toolName === "write_file"
+            ? "write a file"
+            : input.toolName === "list_tree"
+              ? "read a directory"
+              : input.toolName.startsWith("search_")
+                ? "search a path"
+                : "read a file";
 
   return {
     kind: "workspace_escape",
@@ -253,8 +328,10 @@ function resolveWorkspaceEscapePermission(input: {
       + "This can be valid when the user explicitly asked for that path, but it needs separate approval.",
     details: {
       workingDirectory,
-      requestedPath,
-      resolvedPath,
+      requestedPath: firstEscape.requestedPath,
+      resolvedPath: firstEscape.resolvedPath,
+      requestedPaths: escapedPaths.map((entry) => entry.requestedPath),
+      resolvedPaths: escapedPaths.map((entry) => entry.resolvedPath),
     },
   };
 }
@@ -437,7 +514,16 @@ export class ToolRuntime implements ToolExecutor {
     }
 
     try {
-      const result = await activeTool.execute(normalizedToolCall.input, context);
+      const executionContext = workspaceEscapePermission
+        ? {
+            ...context,
+            approvedWorkspaceEscapes: [
+              ...(context.approvedWorkspaceEscapes ?? []),
+              ...(workspaceEscapePermission.details.resolvedPaths ?? [workspaceEscapePermission.details.resolvedPath]),
+            ],
+          }
+        : context;
+      const result = await activeTool.execute(normalizedToolCall.input, executionContext);
       return {
         callId: toolCall.id,
         toolName: activeTool.name,
