@@ -262,6 +262,99 @@ describe('ChatCanvas layout', () => {
     expect(markup).not.toContain('Opened Hacker News.')
   })
 
+  it('collapses assistant tool and thinking lead-in messages into the first visible assistant response', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Build a black hole simulation' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-thinking-1',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'I need to inspect the target folder.' }],
+            timestamp: 2000,
+          },
+          {
+            id: 'assistant-tool-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'list_tree',
+                input: { path: '/test-projects/sim05-blackhole' },
+                status: 'error',
+                output: 'Directory not found.',
+                startedAt: 2100,
+                completedAt: 2600,
+              },
+            ],
+            timestamp: 2100,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'I will create the simulation files now.' }],
+            timestamp: 2700,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup).toContain('I will create the simulation files now.')
+    expect(markup).toContain('list_tree')
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
+    expect(markup).not.toContain('I need to inspect the target folder.')
+    expect(markup).not.toContain('Directory not found.')
+  })
+
+  it('collapses event-only assistant messages into one timeline while waiting for visible output', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Build a black hole simulation' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-thinking-1',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'I need to inspect the target folder.' }],
+            timestamp: 2000,
+          },
+          {
+            id: 'assistant-thinking-2',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'The directory is missing so I should write files.' }],
+            timestamp: 2100,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: true,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+        streamingStatusPlacement: 'bottom',
+      }),
+    )
+
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
+    expect(markup).not.toContain('I need to inspect the target folder.')
+    expect(markup).not.toContain('The directory is missing so I should write files.')
+  })
+
   it('collapses inline assistant tool and thinking blocks into one event timeline', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatCanvas, {

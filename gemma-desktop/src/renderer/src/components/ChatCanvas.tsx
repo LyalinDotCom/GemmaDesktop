@@ -93,6 +93,7 @@ interface SelectedTextBubble {
 
 interface AssistantResponseRenderItem {
   message: ChatMessage
+  collapsedEventMessagesBefore: ChatMessage[]
   collapsedEventMessages: ChatMessage[]
 }
 
@@ -108,17 +109,35 @@ function groupAssistantResponseMessages(
   messages: ChatMessage[],
 ): AssistantResponseRenderItem[] {
   const items: AssistantResponseRenderItem[] = []
+  let pendingEventMessages: ChatMessage[] = []
 
   for (const message of messages) {
-    if (isAssistantEventOnlyMessage(message) && items.length > 0) {
-      items[items.length - 1]?.collapsedEventMessages.push(message)
+    if (isAssistantEventOnlyMessage(message)) {
+      pendingEventMessages.push(message)
       continue
     }
 
     items.push({
       message,
+      collapsedEventMessagesBefore: pendingEventMessages,
       collapsedEventMessages: [],
     })
+    pendingEventMessages = []
+  }
+
+  if (pendingEventMessages.length > 0) {
+    if (items.length > 0) {
+      items[items.length - 1]?.collapsedEventMessages.push(...pendingEventMessages)
+    } else {
+      const [message, ...collapsedEventMessages] = pendingEventMessages
+      if (message) {
+        items.push({
+          message,
+          collapsedEventMessagesBefore: [],
+          collapsedEventMessages,
+        })
+      }
+    }
   }
 
   return items
@@ -658,7 +677,10 @@ export function ChatCanvas({
 
   const renderMessage = (
     message: ChatMessage,
-    options?: { collapsedEventMessages?: ChatMessage[] },
+    options?: {
+      collapsedEventMessagesBefore?: ChatMessage[]
+      collapsedEventMessages?: ChatMessage[]
+    },
   ) => {
     const researchReportId = isCompletedResearchReportMessage(message)
       ? message.id
@@ -671,6 +693,7 @@ export function ChatCanvas({
         <Message
           sessionId={sessionId}
           message={message}
+          collapsedEventMessagesBefore={options?.collapsedEventMessagesBefore}
           collapsedEventMessages={options?.collapsedEventMessages}
           autoExpandActiveBlocks={autoExpandActiveBlocks}
           showThinkingBlocks={showThinkingBlocks}
@@ -768,8 +791,11 @@ export function ChatCanvas({
                 {debugEnabled &&
                   turnLogs?.beforeResult.map((card) => renderDebugCard(card))}
 
-                {responseItems.map(({ message, collapsedEventMessages }) =>
-                  renderMessage(message, { collapsedEventMessages })
+                {responseItems.map((item) =>
+                  renderMessage(item.message, {
+                    collapsedEventMessagesBefore: item.collapsedEventMessagesBefore,
+                    collapsedEventMessages: item.collapsedEventMessages,
+                  })
                 )}
 
                 {isPendingTurn && (

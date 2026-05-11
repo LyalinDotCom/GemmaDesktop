@@ -36,6 +36,7 @@ interface MessageProps {
   autoExpandActiveBlocks?: boolean
   showThinkingBlocks?: boolean
   collapseInlineEvents?: boolean
+  collapsedEventMessagesBefore?: ChatMessage[]
   collapsedEventMessages?: ChatMessage[]
   showCopyAction?: boolean
   onCopyTurn?: () => Promise<void> | void
@@ -851,6 +852,7 @@ export function Message({
   autoExpandActiveBlocks = true,
   showThinkingBlocks = true,
   collapseInlineEvents: collapseInlineEventsProp = false,
+  collapsedEventMessagesBefore,
   collapsedEventMessages,
   showCopyAction = false,
   onCopyTurn,
@@ -965,7 +967,7 @@ export function Message({
     [message.content, showThinkingBlocks],
   )
   const hasCollapsedTimelineEvents = Boolean(
-    collapsedEventMessages?.some((eventMessage) =>
+    [...(collapsedEventMessagesBefore ?? []), ...(collapsedEventMessages ?? [])].some((eventMessage) =>
       eventMessage.content.some((content) =>
         content.type === 'thinking'
           ? showThinkingBlocks
@@ -1001,6 +1003,12 @@ export function Message({
         />,
       )
       timelineRunIndex += 1
+    }
+
+    if (collapseInlineEvents) {
+      pendingTimelineEvents.push(
+        ...buildAssistantTimelineEvents(collapsedEventMessagesBefore, showThinkingBlocks),
+      )
     }
 
     visibleContent.forEach((content, i) => {
