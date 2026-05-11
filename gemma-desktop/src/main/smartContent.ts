@@ -41,7 +41,7 @@ export interface SmartContentServiceDependencies {
   getGemmaDesktop: () => GemmaDesktop
   getOrResumeLiveSession: (sessionId: string) => Promise<{ session: GemmaDesktopSession }>
   mapModels: (inspectionResults: Awaited<ReturnType<GemmaDesktop['inspectEnvironment']>>['runtimes']) => SmartContentModelRecord[]
-  acquirePrimaryModelLease: (leaseId: string, target: SmartContentModelTarget) => Promise<() => void>
+  acquireFileWorkerModelLease: (leaseId: string, target: SmartContentModelTarget) => Promise<() => void>
   buildWorkerSessionMetadata: (workerTarget: SmartContentModelTarget) => Promise<Record<string, unknown>>
   isHelperModelEnabled?: () => boolean | Promise<boolean>
   removePathBestEffort: (targetPath: string, options?: Parameters<typeof fs.rm>[1]) => Promise<void>
@@ -163,7 +163,7 @@ export type SmartFileReadProgress = {
 export function createSmartContentService(dependencies: SmartContentServiceDependencies) {
   const getOrResumeLiveSession = dependencies.getOrResumeLiveSession
   const mapModels = dependencies.mapModels
-  const acquirePrimaryModelLease = dependencies.acquirePrimaryModelLease
+  const acquireFileWorkerModelLease = dependencies.acquireFileWorkerModelLease
   const buildPdfWorkerSessionMetadata = dependencies.buildWorkerSessionMetadata
   const removePathBestEffort = dependencies.removePathBestEffort
   const isHelperModelEnabled = async () =>
@@ -536,8 +536,6 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     sessionId: string
     kind: 'pdf' | 'audio' | 'image'
   }): Promise<FileWorkerCapabilitySnapshot> {
-    await assertHelperModelEnabledForSmartContent()
-
     const { session } = await getOrResumeLiveSession(input.sessionId)
     const snapshot = session.snapshot()
     const env = await dependencies.getGemmaDesktop().inspectEnvironment()
@@ -547,6 +545,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
         model.id === snapshot.modelId
         && model.runtimeId === snapshot.runtimeId,
     )
+    const currentModelLabel = `${snapshot.runtimeId} / ${snapshot.modelId}`
 
     const pickByTags = (
       tags: string[],
@@ -618,33 +617,35 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
       return undefined
     }
 
-    const defaultHelperTags = ['gemma4:26b', 'gemma4:31b', 'gemma4:e4b', 'gemma4:e2b']
+    const imageModelTags = ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b']
+    const audioHelperTags = ['gemma4:e4b', 'gemma4:e2b', 'gemma4:31b', 'gemma4:26b']
 
     if (input.kind === 'pdf') {
       const model =
-        preferResidentModel(
+        (currentModel?.attachmentSupport.image ? currentModel : undefined)
+        ?? preferResidentModel(
           (candidate) => candidate.attachmentSupport.image,
-          ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
+          imageModelTags,
         )
         ?? pickByTags(
-          ['gemma4:26b', 'gemma4:31b', 'gemma4:e4b', 'gemma4:e2b'],
+          imageModelTags,
           (candidate) => candidate.attachmentSupport.image,
         )
-        ?? (currentModel?.attachmentSupport.image ? currentModel : undefined)
       if (!model) {
-        throw new Error('Gemma Desktop could not find a vision-capable Gemma helper for PDF reading. Install Gemma 4 26B, 31B, or another image-capable Gemma runtime.')
+        throw new Error(`Gemma Desktop could not find a vision-capable model for PDF reading. The current model ${currentModelLabel} is not marked as supporting image input. Select a vision-capable primary model or install/load a vision-capable helper model.`)
       }
       return toWorkerSnapshot(model)
     }
 
     if (input.kind === 'audio') {
+      await assertHelperModelEnabledForSmartContent()
       const model =
         preferResidentModel(
           (candidate) => candidate.attachmentSupport.audio,
-          ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
+          audioHelperTags,
         )
         ?? pickByTags(
-          defaultHelperTags,
+          audioHelperTags,
           (candidate) => candidate.attachmentSupport.audio,
         )
         ?? (currentModel?.attachmentSupport.audio ? currentModel : undefined)
@@ -655,17 +656,17 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     }
 
     const model =
-      preferResidentModel(
+      (currentModel?.attachmentSupport.image ? currentModel : undefined)
+      ?? preferResidentModel(
         (candidate) => candidate.attachmentSupport.image,
-        ['gemma4:31b', 'gemma4:26b', 'gemma4:e4b', 'gemma4:e2b'],
+        imageModelTags,
       )
       ?? pickByTags(
-        defaultHelperTags,
+        imageModelTags,
         (candidate) => candidate.attachmentSupport.image,
       )
-      ?? (currentModel?.attachmentSupport.image ? currentModel : undefined)
     if (!model) {
-      throw new Error('Gemma Desktop could not find a vision-capable helper model for image reading.')
+      throw new Error(`Gemma Desktop could not find a vision-capable model for image reading. The current model ${currentModelLabel} is not marked as supporting image input. Select a vision-capable primary model or install/load a vision-capable helper model.`)
     }
     return toWorkerSnapshot(model)
   }
@@ -1767,7 +1768,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     sessionMetadata?: Record<string, unknown>
   }): Promise<MultimodalFileWorkerResult> {
     const leaseId = `file-worker-${Date.now()}-${randomUUID()}`
-    const releaseLease = await acquirePrimaryModelLease(leaseId, {
+    const releaseLease = await acquireFileWorkerModelLease(leaseId, {
       modelId: input.worker.modelId,
       runtimeId: input.worker.runtimeId,
     })

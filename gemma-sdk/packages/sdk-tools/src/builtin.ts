@@ -278,6 +278,27 @@ function restorePreferredNewlines(text: string, newline: string): string {
   return newline === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
 
+function looksLikeCompleteReplacement(current: string, replacement: string): boolean {
+  const trimmed = replacement.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const currentLines = current.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  const replacementLines = replacement.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+  const currentLength = Math.max(current.trim().length, 1);
+
+  if (replacementLines < 3 || replacement.trim().length < currentLength * 0.5) {
+    return false;
+  }
+
+  if (currentLines >= 10 && replacementLines < Math.max(5, currentLines * 0.4)) {
+    return false;
+  }
+
+  return /^(?:import\s|export\s|class\s|function\s|const\s|let\s|var\s|<!doctype\b|<html\b|\{[\s\r\n]*")/i.test(trimmed);
+}
+
 function buildNumberedFileSnapshot(content: string): { output: string; truncated: boolean } {
   const numbered = content
     .split(/\r?\n/)
@@ -968,7 +989,7 @@ export function createHostTools(): RegisteredTool[] {
       description: "Direct tool. Edit a file by replacing exact text when you already know the path and the exact text to change, then verify the update by reading the file back.",
       inputSchema: {
         type: "object",
-        required: ["path", "oldText", "newText"],
+        required: ["path", "newText"],
         properties: {
           path: { type: "string" },
           oldText: { type: "string" },
@@ -977,13 +998,72 @@ export function createHostTools(): RegisteredTool[] {
         },
         additionalProperties: false,
       },
-      async execute(input: { path: string; oldText: string; newText: string; replaceAll?: boolean }, context) {
+      async execute(input: { path: string; oldText?: string; newText: string; replaceAll?: boolean }, context) {
         const resolved = resolvePath(context, input.path);
         const content = await readUtf8File(resolved);
         const preferredNewline = content.includes("\r\n") ? "\r\n" : "\n";
         const normalizedContent = normalizeNewlines(content);
-        const normalizedOldText = normalizeNewlines(input.oldText);
+        const normalizedOldText = typeof input.oldText === "string" ? normalizeNewlines(input.oldText) : undefined;
         const normalizedNewText = normalizeNewlines(input.newText);
+        if (normalizedOldText == null || normalizedOldText.length === 0) {
+          if (looksLikeCompleteReplacement(normalizedContent, normalizedNewText)) {
+            if (normalizedContent === normalizedNewText) {
+              const preview = buildNumberedFileSnapshot(content);
+              return {
+                output:
+                  `No changes needed; ${resolved} already matches the requested content.\n\n`
+                  + "Current file snapshot:\n"
+                  + preview.output,
+                structuredOutput: {
+                  path: resolved,
+                  replacements: 0,
+                },
+                metadata: { truncated: preview.truncated },
+              };
+            }
+
+            const next = restorePreferredNewlines(normalizedNewText, preferredNewline);
+            await writeUtf8FileAndVerify(resolved, next);
+            const preview = buildNumberedFileSnapshot(next);
+            const edit = buildFileEditArtifact({
+              path: resolved,
+              beforeText: content,
+              afterText: next,
+              changeType: "edited",
+            });
+            return {
+              output:
+                `Verified full-file update to ${resolved} after edit_file omitted oldText.\n\n`
+                + "Current file snapshot:\n"
+                + preview.output,
+              structuredOutput: {
+                path: resolved,
+                replacements: 1,
+                bytes: next.length,
+                fullFileReplacement: true,
+                recoveredMissingOldText: true,
+                verified: true,
+                ...(edit ? { edit } : {}),
+              },
+              metadata: { truncated: preview.truncated },
+            };
+          }
+
+          const preview = buildNumberedFileSnapshot(content);
+          return {
+            output:
+              `No changes applied; edit_file for ${resolved} omitted oldText and newText did not look like complete file content. `
+              + "Retry with exact oldText from the refreshed snapshot below, or use write_file only after confirming full replacement is intended.\n\n"
+              + "Current file snapshot:\n"
+              + preview.output,
+            structuredOutput: {
+              path: resolved,
+              replacements: 0,
+              missingOldText: true,
+            },
+            metadata: { truncated: preview.truncated },
+          };
+        }
         const occurrences = normalizedContent.split(normalizedOldText).length - 1;
         if (occurrences === 0) {
           if (normalizedContent === normalizedNewText) {

@@ -1729,6 +1729,13 @@ function canRunHelperAlongsideActivePrimary(
     && currentSettings.runtimes.ollama.maxLoadedModels > 1
 }
 
+function canRunSecondaryModelAlongsideActivePrimary(
+  target: PrimaryModelTarget,
+  currentSettings: AppSettingsRecord,
+): boolean {
+  return canRunHelperAlongsideActivePrimary(target, currentSettings)
+}
+
 function resolveProtectedTargetsForHelperModelLoad(
   helperTarget: PrimaryModelTarget,
   currentSettings: AppSettingsRecord,
@@ -3993,6 +4000,74 @@ async function acquireHelperModelLease(
         broadcastEnvironmentModelsChanged()
       }
       await loadModelForRuntime(helperTarget)
+    })
+  } catch (error) {
+    releaseLease()
+    throw error
+  }
+
+  return releaseLease
+}
+
+async function acquireFileWorkerModelLease(
+  ownerId: string,
+  inputTarget: PrimaryModelTarget,
+): Promise<() => void> {
+  const target = normalizePrimaryModelTarget(inputTarget)
+
+  if (
+    currentPrimaryHoldCount() === 0
+    || !activePrimaryModelTarget
+    || primaryTargetsMatch(activePrimaryModelTarget, target)
+  ) {
+    return await acquirePrimaryModelLease(ownerId, target)
+  }
+
+  const currentSettings = await getSettingsState()
+  if (!canRunSecondaryModelAlongsideActivePrimary(target, currentSettings)) {
+    throw new Error(
+      `Gemma Desktop is already running ${activePrimaryModelTarget.runtimeId} / ${activePrimaryModelTarget.modelId}. The file reader needs ${target.runtimeId} / ${target.modelId}, but this runtime is not configured to run both models at once. Select a model that supports this file type, or increase the runtime's loaded-model limit if your machine can handle it.`,
+    )
+  }
+
+  if (isOllamaModelRuntime(target.runtimeId)) {
+    const bootstrap = await ensureBootstrapReady()
+    if (!bootstrap.ready) {
+      throw new Error(bootstrap.error ?? bootstrap.message)
+    }
+  }
+
+  helperModelHoldCounts.set(ownerId, (helperModelHoldCounts.get(ownerId) ?? 0) + 1)
+
+  const releaseLease = () => {
+    const current = helperModelHoldCounts.get(ownerId) ?? 0
+    if (current <= 1) {
+      helperModelHoldCounts.delete(ownerId)
+      void unloadIdleOllamaModelsWhenKeepAliveDisabled()
+      return
+    }
+
+    helperModelHoldCounts.set(ownerId, current - 1)
+  }
+
+  try {
+    await runModelLifecycleExclusive(async () => {
+      const protectedTargets = resolveProtectedTargetsForModelLoad(
+        target,
+        currentSettings,
+      )
+      protectedTargets.push(activePrimaryModelTarget!)
+      const unloadResult = await unloadResidentModelTargetsBeforeLoad({
+        protectedTargets: uniquePrimaryModelTargets(protectedTargets),
+        reason: `loading file reader model ${formatPrimaryModelTarget(target)}`,
+      })
+      if (unloadResult.errors.length > 0) {
+        throw new Error(summarizeLifecycleErrors(unloadResult.errors))
+      }
+      if (unloadResult.unloaded.length > 0 || unloadResult.skipped.length > 0) {
+        broadcastEnvironmentModelsChanged()
+      }
+      await loadModelForRuntime(target)
     })
   } catch (error) {
     releaseLease()
@@ -7250,7 +7325,7 @@ const smartContent = createSmartContentService({
   getGemmaDesktop: () => gemmaDesktop,
   getOrResumeLiveSession,
   mapModels,
-  acquirePrimaryModelLease,
+  acquireFileWorkerModelLease,
   buildWorkerSessionMetadata: buildPdfWorkerSessionMetadata,
   isHelperModelEnabled: async () => isHelperModelEnabled(await getSettingsState()),
   removePathBestEffort,

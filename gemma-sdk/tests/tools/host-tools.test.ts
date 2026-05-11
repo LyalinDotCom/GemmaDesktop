@@ -765,6 +765,103 @@ describe("host tools", () => {
     expect(await readFile(filePath, "utf8")).toBe(desired);
   });
 
+  it("recovers edit_file calls that omit oldText when newText is complete file content", async () => {
+    const workingDirectory = await createWorkspace();
+    const context = createContext(workingDirectory);
+    const filePath = path.join(workingDirectory, "Bridge.js");
+    const original = [
+      "import * as THREE from 'three';",
+      "",
+      "export class Bridge {",
+      "  constructor(scene) {",
+      "    this.group = new THREE.Group();",
+      "    scene.add(this.group);",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    const desired = [
+      "import * as THREE from 'three';",
+      "",
+      "export class Bridge {",
+      "  constructor(scene) {",
+      "    this.group = new THREE.Group();",
+      "    this.color = 0xC0362C;",
+      "    scene.add(this.group);",
+      "  }",
+      "",
+      "  createTower(xPos) {",
+      "    const tower = new THREE.Group();",
+      "    tower.position.x = xPos;",
+      "    this.group.add(tower);",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+
+    await writeFile(filePath, original, "utf8");
+
+    const result = await getTool("edit_file").execute(
+      {
+        path: "Bridge.js",
+        newText: desired,
+      },
+      context,
+    );
+    const structured = result.structuredOutput as {
+      path: string;
+      replacements: number;
+      fullFileReplacement?: boolean;
+      recoveredMissingOldText?: boolean;
+      verified?: boolean;
+      edit?: {
+        changeType: "created" | "edited";
+        addedLines: number;
+        removedLines: number;
+      };
+    };
+
+    expect(structured).toMatchObject({
+      path: filePath,
+      replacements: 1,
+      fullFileReplacement: true,
+      recoveredMissingOldText: true,
+      verified: true,
+      edit: {
+        changeType: "edited",
+        addedLines: 7,
+        removedLines: 0,
+      },
+    });
+    expect(result.output).toContain("after edit_file omitted oldText");
+    expect(await readFile(filePath, "utf8")).toBe(desired);
+  });
+
+  it("returns a refreshed snapshot when edit_file omits oldText for a partial edit", async () => {
+    const workingDirectory = await createWorkspace();
+    const context = createContext(workingDirectory);
+    const filePath = path.join(workingDirectory, "Bridge.js");
+
+    await writeFile(filePath, "const color = 0x333333;\nconst width = 200;\n", "utf8");
+
+    const result = await getTool("edit_file").execute(
+      {
+        path: "Bridge.js",
+        newText: "const color = 0xC0362C;\n",
+      },
+      context,
+    );
+
+    expect(result.structuredOutput).toEqual({
+      path: filePath,
+      replacements: 0,
+      missingOldText: true,
+    });
+    expect(result.output).toContain("omitted oldText");
+    expect(result.output).toContain("Current file snapshot:");
+    expect(await readFile(filePath, "utf8")).toBe("const color = 0x333333;\nconst width = 200;\n");
+  });
+
   it("returns a refreshed snapshot when the target text is stale", async () => {
     const workingDirectory = await createWorkspace();
     const context = createContext(workingDirectory);
