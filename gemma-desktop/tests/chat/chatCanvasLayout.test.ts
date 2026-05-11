@@ -320,6 +320,88 @@ describe('ChatCanvas layout', () => {
     expect(markup).not.toContain('Opened.')
   })
 
+  it('keeps separate assistant event timelines in chronological order around visible output', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Build the black hole simulation' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [
+              { type: 'thinking', text: 'I need to inspect the target folder.' },
+              {
+                type: 'tool_call',
+                toolName: 'list_tree',
+                input: { path: '/test-projects/sim02-blackhole' },
+                status: 'success',
+                output: 'Directory not found.',
+                startedAt: 2100,
+                completedAt: 2600,
+              },
+              {
+                type: 'text',
+                text: 'I will build the simulation with vanilla WebGL.',
+              },
+              {
+                type: 'file_edit',
+                path: 'test-projects/sim02-blackhole/index.html',
+                changeType: 'created',
+                addedLines: 17,
+                removedLines: 0,
+                diff: '--- /dev/null\n+++ b/index.html\n@@\n+<!doctype html>\n',
+              },
+              { type: 'thinking', text: 'Now I need to validate the generated files.' },
+              {
+                type: 'tool_call',
+                toolName: 'exec_command',
+                input: { command: 'npm run validate' },
+                status: 'success',
+                output: 'Validation passed.',
+                startedAt: 3000,
+                completedAt: 5000,
+              },
+              { type: 'text', text: 'Validation passed and the app is ready.' },
+              { type: 'thinking', text: 'I should summarize the result.' },
+              { type: 'text', text: 'Created the black hole simulation.' },
+            ],
+            timestamp: 2000,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(3)
+    const firstEventIndex = markup.indexOf('list_tree')
+    const firstTextIndex = markup.indexOf('I will build the simulation with vanilla WebGL.')
+    const fileEditIndex = markup.indexOf('test-projects/sim02-blackhole/index.html')
+    const secondEventIndex = markup.indexOf('exec_command npm run validate')
+    const secondTextIndex = markup.indexOf('Validation passed and the app is ready.')
+    const thirdEventIndex = markup.lastIndexOf('Thinking')
+    const finalTextIndex = markup.indexOf('Created the black hole simulation.')
+
+    expect(firstEventIndex).toBeGreaterThanOrEqual(0)
+    expect(firstTextIndex).toBeGreaterThan(firstEventIndex)
+    expect(fileEditIndex).toBeGreaterThan(firstTextIndex)
+    expect(secondEventIndex).toBeGreaterThan(fileEditIndex)
+    expect(secondTextIndex).toBeGreaterThan(secondEventIndex)
+    expect(thirdEventIndex).toBeGreaterThan(secondTextIndex)
+    expect(finalTextIndex).toBeGreaterThan(thirdEventIndex)
+    expect(markup).not.toContain('Now I need to validate the generated files.')
+    expect(markup).not.toContain('I should summarize the result.')
+  })
+
   it('collapses event-only streaming content before visible text arrives', () => {
     const markup = renderToStaticMarkup(
       createElement(ChatCanvas, {

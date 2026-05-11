@@ -964,47 +964,44 @@ export function Message({
     ),
     [message.content, showThinkingBlocks],
   )
+  const hasCollapsedTimelineEvents = Boolean(
+    collapsedEventMessages?.some((eventMessage) =>
+      eventMessage.content.some((content) =>
+        content.type === 'thinking'
+          ? showThinkingBlocks
+          : isAssistantTimelineEventContent(content)
+      )
+    ),
+  )
   const collapseInlineEvents =
     collapseInlineEventsProp
     && !isUser
-    && visibleContent.some(isAssistantTimelineEventContent)
-  const primaryVisibleContent = useMemo(
-    () =>
-      collapseInlineEvents
-        ? visibleContent.filter((content) => !isAssistantTimelineEventContent(content))
-        : visibleContent,
-    [collapseInlineEvents, visibleContent],
-  )
-  const inlineTimelineEvents = useMemo(
-    () =>
-      collapseInlineEvents
-        ? buildAssistantTimelineEventsFromContent({
-            messageId: message.id,
-            content: visibleContent,
-            showThinkingBlocks,
-          })
-        : [],
-    [collapseInlineEvents, message.id, showThinkingBlocks, visibleContent],
-  )
-  const assistantTimelineEvents = useMemo(
-    () => [
-      ...inlineTimelineEvents,
-      ...buildAssistantTimelineEvents(collapsedEventMessages, showThinkingBlocks),
-    ],
-    [collapsedEventMessages, inlineTimelineEvents, showThinkingBlocks],
-  )
-
+    && (visibleContent.some(isAssistantTimelineEventContent) || hasCollapsedTimelineEvents)
   const activeIndex = findActiveBlockIndex(
-    primaryVisibleContent,
+    visibleContent,
     Boolean(isStreaming),
   )
-  const inlineTimelineInsertIndex =
-    collapseInlineEvents
-      ? visibleContent.findIndex(isAssistantTimelineEventContent)
-      : -1
   const renderAssistantContentBlocks = () => {
     const nodes: React.ReactNode[] = []
-    let insertedTimeline = false
+    let pendingTimelineEvents: AssistantTimelineEvent[] = []
+    let timelineRunIndex = 0
+
+    const flushTimeline = () => {
+      if (pendingTimelineEvents.length === 0) {
+        return
+      }
+
+      const events = pendingTimelineEvents
+      pendingTimelineEvents = []
+      nodes.push(
+        <AssistantEventTimeline
+          key={`assistant-events-${timelineRunIndex}`}
+          sessionId={sessionId}
+          events={events}
+        />,
+      )
+      timelineRunIndex += 1
+    }
 
     visibleContent.forEach((content, i) => {
       if (collapseInlineEvents && isInternalCollapsedAssistantEventContent(content)) {
@@ -1013,19 +1010,16 @@ export function Message({
 
       const isTimelineEvent = isAssistantTimelineEventContent(content)
       if (collapseInlineEvents && isTimelineEvent) {
-        if (!insertedTimeline && i === inlineTimelineInsertIndex) {
-          insertedTimeline = true
-          nodes.push(
-            <AssistantEventTimeline
-              key="assistant-events"
-              sessionId={sessionId}
-              events={assistantTimelineEvents}
-            />,
-          )
-        }
+        pendingTimelineEvents.push({
+          id: `${message.id}:${i}`,
+          messageId: message.id,
+          content,
+          contentBlockIndex: i,
+        })
         return
       }
 
+      flushTimeline()
       nodes.push(
         <ContentBlock
           key={i}
@@ -1039,15 +1033,12 @@ export function Message({
       )
     })
 
-    if (!insertedTimeline && assistantTimelineEvents.length > 0) {
-      nodes.push(
-        <AssistantEventTimeline
-          key="assistant-events"
-          sessionId={sessionId}
-          events={assistantTimelineEvents}
-        />,
+    if (collapseInlineEvents) {
+      pendingTimelineEvents.push(
+        ...buildAssistantTimelineEvents(collapsedEventMessages, showThinkingBlocks),
       )
     }
+    flushTimeline()
 
     return nodes
   }
@@ -1101,7 +1092,7 @@ export function Message({
               )}
             </div>
           )}
-          {primaryVisibleContent.map((content, i) => (
+          {visibleContent.map((content, i) => (
               <ContentBlock
                 key={i}
                 sessionId={sessionId}
