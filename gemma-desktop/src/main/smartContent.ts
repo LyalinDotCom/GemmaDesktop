@@ -671,7 +671,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     return toWorkerSnapshot(model)
   }
 
-  const SMART_FILE_READ_CACHE_VERSION = 'v2'
+  const SMART_FILE_READ_CACHE_VERSION = 'v3'
 
   async function ensureSmartFileReadCacheRoot(workingDirectory: string): Promise<string> {
     const root = path.join(workingDirectory, '.gemma', 'file-read-cache')
@@ -901,7 +901,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
           suggestedTool: 'read_file',
           suggestedStrategy: 'image_to_text',
           reasoning:
-            'Use read_file. Gemma Desktop will run image reading once, cache the extracted text or description, and return text.',
+            'Use read_file. Gemma Desktop will run image reading once, cache a detailed visual extraction, and return text.',
           warnings,
         }
       case 'audio':
@@ -1712,7 +1712,10 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
           : [
               'You are Gemma Desktop\'s internal image-to-text reader.',
               'Read visible text faithfully.',
-              'If the image has little text, return a concise plain-text description of the important visible content.',
+              'Return a dense, task-neutral visual extraction, not a short caption.',
+              'Capture as much useful visible detail as possible so another model can decide how to use it.',
+              'Include: visible text, scene type, primary subjects, object inventory, spatial layout, colors, materials, visual style, camera/viewpoint, UI/chrome if present, notable small details, and uncertainty where details are ambiguous.',
+              'Do not invent hidden context or summarize away implementation-relevant visual details.',
             ].join('\n'),
       sessionInput: input.kind === 'audio'
         ? [
@@ -1720,7 +1723,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
             { type: 'audio_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
           ]
         : [
-            { type: 'text', text: `Image file: ${input.file.name}\nRead this image into plain text.` },
+            { type: 'text', text: `Image file: ${input.file.name}\nExtract this image into a detailed plain-text visual record.` },
             { type: 'image_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
           ],
     })

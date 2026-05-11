@@ -11,6 +11,11 @@ function createService(input: {
 }) {
   const acquired: SmartContentModelTarget[] = []
   const createdSessions: SmartContentModelTarget[] = []
+  const sessionCreateOptions: Array<{
+    model: string
+    runtime: string
+    systemInstructions?: string
+  }> = []
   const snapshot = {
     modelId: input.current.modelId,
     runtimeId: input.current.runtimeId,
@@ -20,7 +25,8 @@ function createService(input: {
     getGemmaDesktop: () => ({
       inspectEnvironment: vi.fn(async () => ({ runtimes: [] })),
       sessions: {
-        create: vi.fn(async (options: { model: string; runtime: string }) => {
+        create: vi.fn(async (options: { model: string; runtime: string; systemInstructions?: string }) => {
+          sessionCreateOptions.push(options)
           createdSessions.push({
             modelId: options.model,
             runtimeId: options.runtime,
@@ -49,7 +55,7 @@ function createService(input: {
     removePathBestEffort: vi.fn(async () => {}),
   })
 
-  return { service, acquired, createdSessions }
+  return { service, acquired, createdSessions, sessionCreateOptions }
 }
 
 describe('smart content model selection', () => {
@@ -122,5 +128,38 @@ describe('smart content model selection', () => {
     expect(result).toMatchObject({ helperModelId: helper.modelId })
     expect(acquired).toEqual([helper])
     expect(createdSessions).toEqual([helper])
+  })
+
+  it('asks image workers for a dense visual extraction instead of a short caption', async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-smart-content-'))
+    const imagePath = path.join(workingDirectory, 'bridge.jpeg')
+    await writeFile(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    const current = { modelId: 'gemma4:e4b', runtimeId: 'ollama-native' }
+    const { service, sessionCreateOptions } = createService({
+      current,
+      models: [
+        {
+          id: current.modelId,
+          runtimeId: current.runtimeId,
+          status: 'loaded',
+          attachmentSupport: { image: true, audio: true },
+        },
+      ],
+    })
+
+    await service.readInspectableFileForTool({
+      path: imagePath,
+      workingDirectory,
+      sessionId: 'session-image',
+    })
+
+    expect(sessionCreateOptions).toHaveLength(1)
+    const [workerSession] = sessionCreateOptions
+    expect(workerSession).toBeDefined()
+    const instructions = workerSession?.systemInstructions ?? ''
+    expect(instructions).toContain('dense, task-neutral visual extraction')
+    expect(instructions).toContain('visible text, scene type, primary subjects')
+    expect(instructions).toContain('UI/chrome if present')
+    expect(instructions).not.toContain('concise plain-text description')
   })
 })
