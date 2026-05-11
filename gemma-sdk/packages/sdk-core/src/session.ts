@@ -2101,6 +2101,25 @@ export class SessionEngine {
         if (
           buildTurnState?.enabled
           && buildTurnState.mutations.length > 0
+          && !buildTurnState.canRunCommands
+          && turnBuildPolicy?.requireVerificationAfterMutation !== false
+        ) {
+          latestBuildSummary = summarizeBuildTurn({
+            state: buildTurnState,
+            policy: turnBuildPolicy ?? resolveBuildTurnPolicy(undefined),
+            verifier: latestBuildVerifierResult,
+          });
+          this.emit(queue, turnId, "build.validation.skipped", {
+            step,
+            reason: "command_tool_unavailable",
+            changedPaths: latestBuildSummary?.changedPaths ?? [],
+            rationale: "Build verification was required after file changes, but no command execution tool was available in this turn.",
+          });
+        }
+
+        if (
+          buildTurnState?.enabled
+          && buildTurnState.mutations.length > 0
           && buildTurnState.canRunCommands
           && turnBuildPolicy?.requireVerificationAfterMutation !== false
         ) {
@@ -2115,6 +2134,11 @@ export class SessionEngine {
             validationStatus: buildValidationStatus,
             verifier: latestBuildVerifierResult,
           });
+          this.emit(queue, turnId, "build.validation.evaluated", {
+            step,
+            status: buildValidationStatus,
+            ...(buildValidationStatus?.attempted ? {} : { reason: "not_attempted" }),
+          });
 
           if (
             buildValidationStatus
@@ -2126,10 +2150,6 @@ export class SessionEngine {
           ) {
             buildValidationContinuationAttempts += 1;
             continuationInstruction = buildFailedBuildVerificationInstruction(buildValidationStatus);
-            this.emit(queue, turnId, "build.validation.evaluated", {
-              step,
-              status: buildValidationStatus,
-            });
             this.emit(queue, turnId, "warning.raised", {
               step,
               warning: "Assistant verification failed in build mode without a concrete blocker. Continuing the turn automatically.",

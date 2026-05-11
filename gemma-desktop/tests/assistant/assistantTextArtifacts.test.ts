@@ -86,15 +86,31 @@ describe('assistant text artifact sanitization', () => {
         text: 'files.\n\nwrite_file',
       },
       {
-        type: 'thinking',
-        text: '',
-      },
-      {
         type: 'tool_call',
         toolName: 'write_file',
         input: {},
         output: 'literal <channel|> should stay in tool output',
         status: 'success',
+      },
+    ])
+  })
+
+  it('drops whitespace-only thinking blocks', () => {
+    const blocks = [
+      {
+        type: 'thinking',
+        text: '\n  \t',
+      },
+      {
+        type: 'text',
+        text: 'Visible answer.',
+      },
+    ] satisfies Array<Record<string, unknown>>
+
+    expect(sanitizeRenderableContentBlocks(blocks)).toEqual([
+      {
+        type: 'text',
+        text: 'Visible answer.',
       },
     ])
   })

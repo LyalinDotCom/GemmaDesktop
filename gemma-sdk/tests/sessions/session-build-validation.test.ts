@@ -447,6 +447,54 @@ describe("build mode verification enforcement", () => {
     expect(adapter.requests).toHaveLength(2);
     expect(result.build?.verification?.attempted).toBe(false);
     expect(result.build?.verification?.recommendedCommands).toContain("npm run build");
+    const evaluationPayload = result.events.find((event) => event.type === "build.validation.evaluated")?.payload;
+    const evaluationStatus = evaluationPayload?.status as { attempted?: unknown; recommendedCommands?: unknown } | undefined;
+    expect(evaluationPayload?.reason).toBe("not_attempted");
+    expect(evaluationStatus?.attempted).toBe(false);
+    expect(evaluationStatus?.recommendedCommands).toContain("npm run build");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("records why build verification was skipped when command tools are unavailable", async () => {
+    const workingDirectory = await createWorkspaceWithPackageJson({
+      build: "vite build",
+    });
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will create the file.",
+        toolName: "write_file",
+        toolInput: {
+          path: "src/main.ts",
+          content: "console.log('hi');",
+        },
+      }),
+      createTextResponse("I created the file."),
+      createTextResponse("This response should not be requested."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 4,
+    });
+
+    const result = await engine.run("Create the file.");
+
+    expect(result.text).toBe("I created the file.");
+    expect(adapter.requests).toHaveLength(2);
+    expect(result.build?.changedPaths).toContain("src/main.ts");
+    expect(result.build?.verification).toBeUndefined();
+    const skippedPayload = result.events.find((event) => event.type === "build.validation.skipped")?.payload;
+    expect(skippedPayload?.reason).toBe("command_tool_unavailable");
+    expect(skippedPayload?.changedPaths).toContain("src/main.ts");
     expect(result.warnings).toEqual([]);
   });
 

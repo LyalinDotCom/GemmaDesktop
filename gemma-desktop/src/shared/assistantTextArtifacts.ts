@@ -94,6 +94,11 @@ export function sanitizeRenderableContentBlocks<T extends Array<Record<string, u
     }
 
     const sanitizedText = stripAssistantTransportArtifacts(text)
+    if (type === 'thinking' && sanitizedText.trim().length === 0) {
+      changed = true
+      return sanitizedBlocks
+    }
+
     const nextBlock =
       sanitizedText === text
         ? block
