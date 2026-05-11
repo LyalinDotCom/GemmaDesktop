@@ -990,14 +990,30 @@ describe("host tools", () => {
         id: "call-write-root-style",
         name: "write_file",
         input: {
-          path: `/${segment}/created.txt`,
-          content: "created\n",
+          path: `/${segment}/created.js`,
+          content: "const created = true;\n",
         },
       },
       context,
     );
-    expect(String(writeResult.output)).toContain(path.join(workingDirectory, segment, "created.txt"));
-    await expect(readFile(path.join(workingDirectory, segment, "created.txt"), "utf8")).resolves.toBe("created\n");
+    expect(String(writeResult.output)).toContain(path.join(workingDirectory, segment, "created.js"));
+    await expect(readFile(path.join(workingDirectory, segment, "created.js"), "utf8")).resolves.toBe("const created = true;\n");
+
+    const commandResult = await runtime.execute(
+      {
+        id: "call-exec-root-style",
+        name: "exec_command",
+        input: {
+          command: `node -c /${segment}/created.js`,
+        },
+      },
+      context,
+    );
+    expect(commandResult.structuredOutput).toMatchObject({
+      ok: true,
+      command: `node -c ${path.join(workingDirectory, segment, "created.js")}`,
+      exitCode: 0,
+    });
     expect(permissionDetails).toHaveLength(0);
   });
 

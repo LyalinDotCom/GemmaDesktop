@@ -122,6 +122,39 @@ function resolvePath(context: ToolExecutionContext, target = "."): string {
     : path.resolve(context.workingDirectory, normalizedTarget);
 }
 
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function normalizeCommandWorkspaceRootedPaths(
+  context: ToolExecutionContext,
+  command: string,
+): string {
+  const resolveRootedCandidate = (candidate: string): string =>
+    shouldTreatRootedPathAsWorkspaceRelative(candidate)
+      ? path.resolve(context.workingDirectory, candidate.slice(1))
+      : candidate;
+
+  const quotedNormalized = command.replace(
+    /(["'])(\/(?!\/)[^"'`]+)\1/g,
+    (_match, quote: string, candidate: string) => {
+      const resolved = resolveRootedCandidate(candidate);
+      return `${quote}${resolved.replaceAll(quote, `\\${quote}`)}${quote}`;
+    },
+  );
+
+  return quotedNormalized.replace(
+    /(^|[\s=])((?:\/(?!\/)[^\s"'`;&|<>$()]+))/g,
+    (_match, prefix: string, candidate: string) => {
+      const resolved = resolveRootedCandidate(candidate);
+      return `${prefix}${resolved === candidate ? candidate : shellQuote(resolved)}`;
+    },
+  );
+}
+
 async function readUtf8File(filePath: string): Promise<string> {
   const content = await fs.readFile(filePath, "utf8");
   if (content.includes("\u0000")) {
@@ -1064,13 +1097,15 @@ export function createHostTools(): RegisteredTool[] {
       },
       async execute(input: { command: string; cwd?: string; timeoutMs?: number }, context) {
         const timeoutMs = input.timeoutMs ?? 30_000;
-        const result = await runShellCommand(input.command, {
+        const command = normalizeCommandWorkspaceRootedPaths(context, input.command);
+        const result = await runShellCommand(command, {
           cwd: resolvePath(context, input.cwd),
           signal: context.signal,
           timeoutMs,
         });
         const formatted = formatShellCommandOutput({
           ...result,
+          command,
           timeoutMs,
         });
         return {
