@@ -140,6 +140,7 @@ interface SidebarProps {
   activeRuntimeId?: string | null
   helperModelId?: string | null
   helperRuntimeId?: string | null
+  modelSelectionDisabledReason?: string | null
   reloadModelsDisabledReason?: string | null
   onUpdateModelSelection?: (
     modelSelection: AppSettings['modelSelection'],
@@ -287,6 +288,7 @@ export function Sidebar({
   activeRuntimeId = null,
   helperModelId = null,
   helperRuntimeId = null,
+  modelSelectionDisabledReason = null,
   reloadModelsDisabledReason = null,
   onUpdateModelSelection,
   onLoadModelSelection,
@@ -359,6 +361,11 @@ export function Sidebar({
   const sessionRequestRunning = sessions.some(
     (session) => session.isGenerating || session.isCompacting,
   )
+  const effectiveModelSelectionDisabledReason =
+    modelSelectionDisabledReason
+    ?? (sessionRequestRunning
+      ? 'Finish or stop the running request before changing models.'
+      : null)
   const effectiveReloadModelsDisabledReason =
     reloadModelsDisabledReason
     ?? (sessionRequestRunning
@@ -456,6 +463,15 @@ export function Sidebar({
   const commitModelSelection = (
     nextModelSelection: AppSettings['modelSelection'],
   ) => {
+    if (effectiveModelSelectionDisabledReason) {
+      setModelSelectionLoadFeedback({
+        tone: 'error',
+        message: effectiveModelSelectionDisabledReason,
+        details: [],
+      })
+      return
+    }
+
     setModelSelectionLoadFeedback(null)
     void Promise.resolve(onUpdateModelSelection?.(nextModelSelection)).catch((error) => {
       console.error('Failed to update global model selection:', error)
@@ -488,6 +504,14 @@ export function Sidebar({
 
   const handleLoadModelSelection = async () => {
     if (!onLoadModelSelection) {
+      return
+    }
+    if (effectiveReloadModelsDisabledReason) {
+      setModelSelectionLoadFeedback({
+        tone: 'error',
+        message: effectiveReloadModelsDisabledReason,
+        details: [],
+      })
       return
     }
 
@@ -1740,12 +1764,21 @@ export function Sidebar({
           aria-label="Global model selection"
           aria-haspopup="dialog"
           aria-expanded={modelSelectionPanelOpen}
+          disabled={Boolean(effectiveModelSelectionDisabledReason)}
+          title={effectiveModelSelectionDisabledReason ?? undefined}
           onClick={(event) => {
             event.stopPropagation()
+            if (effectiveModelSelectionDisabledReason) {
+              return
+            }
             setModelSelectionPanelOpen((open) => !open)
             setQuickCreateMenuPinned(false)
           }}
-          className="flex w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white/95 px-2.5 py-2 text-left text-zinc-700 shadow-[0_14px_30px_-24px_rgba(24,24,27,0.42)] backdrop-blur transition-colors hover:border-zinc-300 hover:bg-white hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white"
+          className={`flex w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white/95 px-2.5 py-2 text-left text-zinc-700 shadow-[0_14px_30px_-24px_rgba(24,24,27,0.42)] backdrop-blur transition-colors dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 ${
+            effectiveModelSelectionDisabledReason
+              ? 'cursor-not-allowed opacity-60'
+              : 'hover:border-zinc-300 hover:bg-white hover:text-zinc-950 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white'
+          }`}
         >
           <span className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300">
             <Sparkles size={14} />
@@ -1817,8 +1850,14 @@ export function Sidebar({
                   ariaLabel="Primary model"
                   value={modelSelection.mainModel}
                   groups={modelTargetGroups}
+                  disabled={Boolean(effectiveModelSelectionDisabledReason)}
                   onSelect={(target) => updateModelSelectionTarget('mainModel', target)}
                 />
+                {effectiveModelSelectionDisabledReason && (
+                  <div className="mt-1.5 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400">
+                    {effectiveModelSelectionDisabledReason}
+                  </div>
+                )}
                 {primaryModelIssue && (
                   <div className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
                     <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
@@ -1836,6 +1875,7 @@ export function Sidebar({
                     size="sm"
                     ariaLabel="Toggle secondary model"
                     checked={modelSelection.helperModelEnabled}
+                    disabled={Boolean(effectiveModelSelectionDisabledReason)}
                     onChange={toggleSecondaryModel}
                   />
                 </div>
@@ -1843,7 +1883,10 @@ export function Sidebar({
                   ariaLabel="Secondary model"
                   value={modelSelection.helperModel}
                   groups={modelTargetGroups}
-                  disabled={!modelSelection.helperModelEnabled}
+                  disabled={
+                    !modelSelection.helperModelEnabled
+                    || Boolean(effectiveModelSelectionDisabledReason)
+                  }
                   onSelect={(target) => updateModelSelectionTarget('helperModel', target)}
                 />
                 {modelSelection.helperModelEnabled && secondaryModelIssue && (
@@ -1856,10 +1899,17 @@ export function Sidebar({
 
               <button
                 type="button"
-                disabled={modelSelectionLoadPending || !onLoadModelSelection}
+                disabled={
+                  modelSelectionLoadPending
+                  || !onLoadModelSelection
+                  || Boolean(effectiveReloadModelsDisabledReason)
+                }
                 onClick={() => { void handleLoadModelSelection() }}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-                title="Unload other supported runtime models and load the global selection"
+                title={
+                  effectiveReloadModelsDisabledReason
+                    ?? 'Unload other supported runtime models and load the global selection'
+                }
               >
                 {modelSelectionLoadPending
                   ? <Loader2 size={13} className="animate-spin" />

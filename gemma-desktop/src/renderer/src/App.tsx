@@ -306,6 +306,9 @@ export function App() {
   const modelReloadDisabledReason = modelReloadRequestRunning
     ? 'Finish or stop the running request before reloading models.'
     : null
+  const modelSelectionDisabledReason = modelReloadRequestRunning
+    ? 'Finish or stop the running request before changing models.'
+    : null
   const [globalChatHomeStatusNow, setGlobalChatHomeStatusNow] = useState(() =>
     Date.now(),
   )
@@ -2524,8 +2527,12 @@ export function App() {
           activeRuntimeId={state.activeSession?.runtimeId ?? null}
           helperModelId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperModelId : null}
           helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
+          modelSelectionDisabledReason={modelSelectionDisabledReason}
           reloadModelsDisabledReason={modelReloadDisabledReason}
           onUpdateModelSelection={async (modelSelection) => {
+            if (modelSelectionDisabledReason) {
+              throw new Error(modelSelectionDisabledReason)
+            }
             const updated = await window.gemmaDesktopBridge.settings.update({
               modelSelection,
             })

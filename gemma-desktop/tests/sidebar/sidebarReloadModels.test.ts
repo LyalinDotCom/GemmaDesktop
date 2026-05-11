@@ -80,6 +80,8 @@ function sidebarProps(input?: {
   onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
   modelSelection?: AppSettings['modelSelection']
   modelAvailabilityIssues?: PrimaryModelAvailabilityIssue[]
+  modelSelectionDisabledReason?: string | null
+  reloadModelsDisabledReason?: string | null
   onUpdateModelSelection?: (modelSelection: AppSettings['modelSelection']) => void | Promise<void>
   onLoadModelSelection?: (modelSelection: AppSettings['modelSelection']) => Promise<LoadDefaultModelsResult> | void
 }) {
@@ -120,6 +122,8 @@ function sidebarProps(input?: {
     models: [MODEL, SECONDARY_MODEL],
     modelSelection: input?.modelSelection,
     modelAvailabilityIssues: input?.modelAvailabilityIssues,
+    modelSelectionDisabledReason: input?.modelSelectionDisabledReason,
+    reloadModelsDisabledReason: input?.reloadModelsDisabledReason,
     onUpdateModelSelection: input?.onUpdateModelSelection,
     onLoadModelSelection: input?.onLoadModelSelection,
     onReloadModels: input?.onReloadModels ?? (() => {}),
@@ -257,6 +261,50 @@ describe('Sidebar reload models control', () => {
         runtimeId: 'lmstudio-openai',
       },
     })
+  })
+
+  it('disables global model selection when the app-wide model activity watch is busy', async () => {
+    const onUpdateModelSelection = vi.fn()
+    renderSidebar(sidebarProps({
+      sessions: [makeSession({ isGenerating: false, isCompacting: false })],
+      modelSelectionDisabledReason: 'Finish or stop the running request before changing models.',
+      onUpdateModelSelection,
+    }))
+
+    const selectorButton = getButtonByLabel(container, 'Global model selection')
+    expect(selectorButton.disabled).toBe(true)
+    expect(selectorButton.title).toBe('Finish or stop the running request before changing models.')
+
+    await click(selectorButton)
+
+    expect(container.textContent).not.toContain('Global Models')
+    expect(onUpdateModelSelection).not.toHaveBeenCalled()
+  })
+
+  it('keeps model picker controls locked if global model activity starts while the popover is open', async () => {
+    const onUpdateModelSelection = vi.fn()
+    const nextRoot = createRoot(container)
+    root = nextRoot
+
+    act(() => {
+      nextRoot.render(createElement(Sidebar, sidebarProps({ onUpdateModelSelection })))
+    })
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+
+    act(() => {
+      nextRoot.render(createElement(Sidebar, sidebarProps({
+        modelSelectionDisabledReason: 'Finish or stop the running request before changing models.',
+        reloadModelsDisabledReason: 'Finish or stop the running request before reloading models.',
+        onUpdateModelSelection,
+      })))
+    })
+
+    expect(getButtonByLabel(container, 'Primary model').disabled).toBe(true)
+    expect(getButtonByLabel(container, 'Secondary model').disabled).toBe(true)
+    expect(getButtonByLabel(container, 'Toggle secondary model').disabled).toBe(true)
+    expect(getButtonByText(container, 'Load Selected Models').disabled).toBe(true)
+    expect(container.textContent).toContain('Finish or stop the running request before changing models.')
   })
 
   it('toggles secondary model use from the global model popover', async () => {
