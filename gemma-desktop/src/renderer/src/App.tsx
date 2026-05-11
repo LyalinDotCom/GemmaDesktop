@@ -1109,8 +1109,7 @@ export function App() {
   const handleSelectGlobalChatApprovalMode = useCallback((approvalMode: ConversationApprovalMode) => {
     const sessionId = globalChatSession.sessionId
     if (
-      globalChatBusy
-      || globalConversationRunDisabledReason
+      globalConversationRunDisabledReason
       || !sessionId
       || !globalChatDetail
       || globalChatDetail.conversationKind !== 'normal'
@@ -1131,7 +1130,6 @@ export function App() {
         console.error('Failed to update Assistant Chat approval mode:', error)
       })
   }, [
-    globalChatBusy,
     globalConversationRunDisabledReason,
     globalChatDetail,
     globalChatSession,
@@ -1197,8 +1195,7 @@ export function App() {
     const activeSession = state.activeSession
 
     if (
-      isBusy
-      || primaryConversationRunDisabledReason
+      primaryConversationRunDisabledReason
       || !sessionId
       || !activeSession
       || activeConversationKind !== 'normal'

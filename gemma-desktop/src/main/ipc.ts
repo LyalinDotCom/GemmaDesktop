@@ -576,6 +576,7 @@ const BUILT_IN_REQUIRED_PRIMARY_MODEL_IDS = [
   createDefaultModelSelectionSettings(os.totalmem()).mainModel.modelId,
 ]
 type SessionConversationExecutionTask = Exclude<ConversationExecutionTask, 'automation'>
+const activeSessionApprovalModeOverrides = new Map<string, ConversationApprovalMode>()
 
 function getSessionExecutionTask(sessionId: string): SessionConversationExecutionTask | undefined {
   return activeSessionTasks.get(sessionId) ?? pendingSessionTasks.get(sessionId)
@@ -587,6 +588,24 @@ function isSessionExecutionBusy(sessionId: string): boolean {
     || activeSessionTasks.has(sessionId)
     || pendingSessionTasks.has(sessionId)
   )
+}
+
+function sessionUpdateIncludesNonApprovalChange(opts: {
+  mode?: AppSessionMode
+  conversationKind?: ConversationKind
+  workMode?: AppSessionMode
+  planMode?: boolean
+  selectedSkillIds?: string[]
+  selectedToolIds?: string[]
+  workingDirectory?: string
+}): boolean {
+  return opts.mode !== undefined
+    || opts.conversationKind !== undefined
+    || opts.workMode !== undefined
+    || opts.planMode !== undefined
+    || opts.selectedSkillIds !== undefined
+    || opts.selectedToolIds !== undefined
+    || opts.workingDirectory !== undefined
 }
 
 function getAutomationExecutionSessionId(automationId: string): string {
@@ -4630,6 +4649,52 @@ async function reconfigureDefaultPrimarySession(
   return true
 }
 
+async function buildSessionSnapshotWithApprovalMode(
+  snapshot: SessionSnapshot,
+  approvalMode: ConversationApprovalMode,
+): Promise<SessionSnapshot> {
+  const currentConfig = getSessionConfig(snapshot)
+  const nextConfig = normalizeSessionConfig({
+    ...currentConfig,
+    approvalMode,
+  })
+  const composition = await resolveSessionComposition({
+    snapshot,
+    conversationKind: nextConfig.conversationKind,
+    sessionMode: nextConfig.baseMode,
+    planMode: nextConfig.planMode,
+    modelId: snapshot.modelId,
+    runtimeId: snapshot.runtimeId,
+    preferredRuntimeId: nextConfig.preferredRuntimeId,
+    selectedSkillIds: nextConfig.selectedSkillIds,
+    selectedToolIds: nextConfig.selectedToolIds,
+    approvalMode: nextConfig.approvalMode,
+    surface: nextConfig.surface,
+    visibility: nextConfig.visibility,
+    storageScope: nextConfig.storageScope,
+  })
+
+  return {
+    ...snapshot,
+    mode: composition.mode,
+    systemInstructions: composition.systemInstructions,
+    metadata: composition.metadata,
+    savedAt: new Date().toISOString(),
+  }
+}
+
+async function applyActiveApprovalModeOverride(
+  sessionId: string,
+  snapshot: SessionSnapshot,
+): Promise<SessionSnapshot> {
+  const approvalMode = activeSessionApprovalModeOverrides.get(sessionId)
+  if (!approvalMode || getSessionConfig(snapshot).approvalMode === approvalMode) {
+    return snapshot
+  }
+
+  return buildSessionSnapshotWithApprovalMode(snapshot, approvalMode)
+}
+
 async function reconcileDefaultPrimarySessionForSend(
   sessionId: string,
   session: GemmaDesktopSession,
@@ -5880,7 +5945,10 @@ function createAppToolPermissionPolicy(): ToolPermissionPolicy {
         context.sessionMetadata,
         resolveBaseMode(context.mode),
       )
-      const approvalsRequired = shouldRequireToolApproval(sessionConfig.approvalMode)
+      const approvalMode =
+        activeSessionApprovalModeOverrides.get(context.sessionId)
+        ?? sessionConfig.approvalMode
+      const approvalsRequired = shouldRequireToolApproval(approvalMode)
       const currentSettings = await getSettingsState()
 
       if (permission?.kind === 'workspace_escape') {
@@ -11351,6 +11419,15 @@ async function sendSessionMessageInternal(
       sessionSnapshot = restored.snapshot
       restoreCoBrowseSessionComposition = null
     }
+    const approvalModeOverrideSnapshot = await applyActiveApprovalModeOverride(sessionId, snapshot)
+    if (approvalModeOverrideSnapshot !== snapshot) {
+      session = await gemmaDesktop.sessions.resume({
+        snapshot: approvalModeOverrideSnapshot,
+      })
+      liveSessions.set(sessionId, session)
+      snapshot = approvalModeOverrideSnapshot
+      sessionSnapshot = approvalModeOverrideSnapshot
+    }
     let assistantHistoryMessage = [...snapshot.history]
       .reverse()
       .find((entry) => entry.role === 'assistant')
@@ -13012,12 +13089,6 @@ export function registerIpcHandlers(): void {
         },
       })
 
-      if (isSessionExecutionBusy(sessionId)) {
-        throw new Error(
-          'Cannot change the active model or session configuration while this session is busy.',
-        )
-      }
-
       const persisted = await getPersistedSession(sessionId)
       const liveSession = liveSessions.get(sessionId)
       const currentSnapshot = liveSession?.snapshot() ?? persisted?.snapshot
@@ -13054,6 +13125,13 @@ export function registerIpcHandlers(): void {
         if (attemptedFixedChange) {
           throw new Error('Assistant Chat configuration is fixed.')
         }
+      }
+
+      const sessionBusy = isSessionExecutionBusy(sessionId)
+      if (sessionBusy && sessionUpdateIncludesNonApprovalChange(opts)) {
+        throw new Error(
+          'Cannot change the active model or session configuration while this session is busy.',
+        )
       }
 
       const currentMode = resolveAppSessionMode(currentConfig)
@@ -13096,6 +13174,45 @@ export function registerIpcHandlers(): void {
       if (opts.planMode === true && !nextSessionConfig.planMode) {
         throw new Error('Plan mode is only available in Build conversations.')
       }
+
+      if (sessionBusy) {
+        activeSessionApprovalModeOverrides.set(sessionId, nextSessionConfig.approvalMode)
+        const nextSnapshot = await buildSessionSnapshotWithApprovalMode(
+          currentSnapshot,
+          nextSessionConfig.approvalMode,
+        )
+        await store.save(sessionId, nextSnapshot)
+        await broadcastSessionsChanged()
+        const currentMeta = store.getMeta(sessionId) ?? persisted.meta
+        const detail = snapshotToDetail(
+          nextSnapshot,
+          currentMeta,
+          store.getDraftText(sessionId),
+          store.getAppMessages(sessionId),
+          store.getPendingTurn(sessionId),
+          store.getPendingCompaction(sessionId),
+          store.getPendingPlanQuestion(sessionId),
+          store.getPendingPlanExit(sessionId),
+          store.getPendingToolApproval(sessionId),
+          getSessionExecutionTask(sessionId) === 'generation',
+          getSessionExecutionTask(sessionId) === 'compaction',
+        )
+
+        appendDebugLog(sessionId, {
+          layer: 'ipc',
+          direction: 'main->renderer',
+          event: 'sessions.approval-mode.updated-during-run',
+          summary: `Approval mode updated during active run: ${nextSessionConfig.approvalMode}`,
+          data: {
+            sessionId,
+            approvalMode: nextSessionConfig.approvalMode,
+          },
+        })
+
+        return detail
+      }
+
+      activeSessionApprovalModeOverrides.delete(sessionId)
       const currentSettings = await getSettingsState()
       const nextTarget = buildDefaultSessionPrimaryTarget(
         nextSessionConfig,

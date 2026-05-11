@@ -747,6 +747,39 @@ export function ChatCanvas({
     )
   }
 
+  const renderStreamingMessage = (
+    message: ChatMessage,
+    options?: {
+      collapsedEventMessagesBefore?: ChatMessage[]
+      collapsedEventMessages?: ChatMessage[]
+    },
+  ) => (
+    <Message
+      key={message.id}
+      sessionId={sessionId}
+      message={message}
+      collapsedEventMessagesBefore={options?.collapsedEventMessagesBefore}
+      collapsedEventMessages={options?.collapsedEventMessages}
+      isStreaming
+      liveActivity={liveActivity}
+      showStreamingStatus={streamingStatusPlacement === 'inline'}
+      showStreamingDots={streamingStatusPlacement === 'inline'}
+      autoExpandActiveBlocks={autoExpandActiveBlocks}
+      showThinkingBlocks={showThinkingBlocks}
+      collapseInlineEvents
+      streamingStartedAt={message.timestamp}
+      showCopyAction
+      showSelectionAction={Boolean(onToggleSelectionMode)}
+      readAloudAction={
+        disableReadAloudActionWhileBusy(
+          getReadAloudButtonState?.(message, { isStreaming: true }),
+          assistantActionLock,
+        )
+      }
+      assistantActionLock={assistantActionLock}
+    />
+  )
+
   const renderDebugCard = (card: InlineDebugCard) => (
     <InlineDebugPanel
       key={card.id}
@@ -778,11 +811,22 @@ export function ChatCanvas({
           {conversation.turns.map((turn, turnIndex) => {
             const turnLogs = debugTimeline.turnLogs[turnIndex]
             const betweenTurnLogs = debugTimeline.interstitialLogs[turnIndex + 1] ?? []
-            const responseItems = groupAssistantResponseMessages(turn.responses)
-            const isPendingTurn =
+            const isActivePendingTurn =
               (isGenerating || isCompacting)
-              && turn.responses.length === 0
               && turnIndex === conversation.turns.length - 1
+            const streamingMessage: ChatMessage | null = isActivePendingTurn
+              ? {
+                  id: 'streaming',
+                  role: 'assistant',
+                  content: streamingContent ?? [],
+                  timestamp: turn.user.timestamp,
+                }
+              : null
+            const responseItems = groupAssistantResponseMessages(
+              streamingMessage
+                ? [...turn.responses, streamingMessage]
+                : turn.responses,
+            )
 
             return (
               <Fragment key={turn.user.id}>
@@ -792,47 +836,15 @@ export function ChatCanvas({
                   turnLogs?.beforeResult.map((card) => renderDebugCard(card))}
 
                 {responseItems.map((item) =>
-                  renderMessage(item.message, {
-                    collapsedEventMessagesBefore: item.collapsedEventMessagesBefore,
-                    collapsedEventMessages: item.collapsedEventMessages,
-                  })
-                )}
-
-                {isPendingTurn && (
-                  <Message
-                    sessionId={sessionId}
-                    message={{
-                      id: 'streaming',
-                      role: 'assistant',
-                      content: streamingContent ?? [],
-                      timestamp: turn.user.timestamp,
-                    }}
-                    isStreaming
-                    liveActivity={liveActivity}
-                    showStreamingStatus={streamingStatusPlacement === 'inline'}
-                    showStreamingDots={streamingStatusPlacement === 'inline'}
-                    autoExpandActiveBlocks={autoExpandActiveBlocks}
-                    showThinkingBlocks={showThinkingBlocks}
-                    collapseInlineEvents
-                    streamingStartedAt={turn.user.timestamp}
-                    showCopyAction
-                    showSelectionAction={Boolean(onToggleSelectionMode)}
-                    readAloudAction={
-                      disableReadAloudActionWhileBusy(
-                        getReadAloudButtonState?.(
-                          {
-                            id: 'streaming',
-                            role: 'assistant',
-                            content: streamingContent ?? [],
-                            timestamp: turn.user.timestamp,
-                          },
-                          { isStreaming: true },
-                        ),
-                        assistantActionLock,
-                      )
-                    }
-                    assistantActionLock={assistantActionLock}
-                  />
+                  item.message.id === 'streaming'
+                    ? renderStreamingMessage(item.message, {
+                        collapsedEventMessagesBefore: item.collapsedEventMessagesBefore,
+                        collapsedEventMessages: item.collapsedEventMessages,
+                      })
+                    : renderMessage(item.message, {
+                        collapsedEventMessagesBefore: item.collapsedEventMessagesBefore,
+                        collapsedEventMessages: item.collapsedEventMessages,
+                      })
                 )}
 
                 {debugEnabled &&
@@ -845,39 +857,12 @@ export function ChatCanvas({
           })}
 
           {(streamingContent || isGenerating || isCompacting) && conversation.turns.length === 0 && (
-            <Message
-              sessionId={sessionId}
-              message={{
+            renderStreamingMessage({
                 id: 'streaming',
                 role: 'assistant',
                 content: streamingContent ?? [],
                 timestamp: Date.now(),
-              }}
-              isStreaming
-              liveActivity={liveActivity}
-              showStreamingStatus={streamingStatusPlacement === 'inline'}
-              showStreamingDots={streamingStatusPlacement === 'inline'}
-              autoExpandActiveBlocks={autoExpandActiveBlocks}
-              showThinkingBlocks={showThinkingBlocks}
-              collapseInlineEvents
-              showCopyAction
-              showSelectionAction={Boolean(onToggleSelectionMode)}
-              readAloudAction={
-                disableReadAloudActionWhileBusy(
-                  getReadAloudButtonState?.(
-                    {
-                      id: 'streaming',
-                      role: 'assistant',
-                      content: streamingContent ?? [],
-                      timestamp: Date.now(),
-                    },
-                    { isStreaming: true },
-                  ),
-                  assistantActionLock,
-                )
-              }
-              assistantActionLock={assistantActionLock}
-            />
+              })
           )}
 
           {queuedMessages.map((queuedMessage) => (

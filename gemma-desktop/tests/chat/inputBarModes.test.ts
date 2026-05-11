@@ -146,6 +146,21 @@ describe('InputBar mode rendering', () => {
     expect(markup).toContain('>YOLO<')
   })
 
+  it('keeps the approval mode toggle available while a session is running', () => {
+    const markup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        selectedMode: 'build',
+        isGenerating: true,
+        onSelectApprovalMode: () => {},
+      })),
+    )
+
+    expect(markup).toContain('aria-label="Switch to YOLO approval mode"')
+    expect(markup).not.toContain('aria-label="Switch to YOLO approval mode" disabled=""')
+    expect(markup).toContain('aria-label="Switch between Explore, Act, and Plan"')
+    expect(markup).toMatch(/<button type="button" disabled="" aria-pressed="true" title="Switch to act mode"/)
+  })
+
   it('shows a Research badge without per-conversation model selection', () => {
     const researchMarkup = renderToStaticMarkup(
       createElement(InputBar, buildProps({

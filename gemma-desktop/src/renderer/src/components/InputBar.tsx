@@ -471,6 +471,8 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
+  const approvalModeControlDisabled =
+    modeChangeDisabled || isCompacting || speechLocked || conversationRunBlocked
 
   const attachmentAccept = useMemo(() => {
     const accepted = [
@@ -2121,7 +2123,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         {!isResearchConversation && (
           <ApprovalModeToggle
             mode={approvalMode}
-            disabled={conversationModeControlDisabled}
+            disabled={approvalModeControlDisabled}
             onChange={onSelectApprovalMode}
           />
         )}
