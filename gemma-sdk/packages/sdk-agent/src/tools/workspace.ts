@@ -3,6 +3,7 @@ import { createReadStream, readFileSync, rmSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FileChange, FileChangeMeta, Tool, ToolResult } from '../types.js';
 import { applyPatch, normalizePatchText } from './applyPatch.js';
 import { buildRunnerCommand, detectRunner, parseRunnerOutput } from './runTests.js';
@@ -115,8 +116,18 @@ function shouldTreatRootedPathAsWorkspaceRelative(inputPath: string): boolean {
 }
 
 function resolveWorkspacePath(root: string, inputPath: string): string {
-  const normalized = normalizeModelPath(inputPath);
-  if (shouldTreatRootedPathAsWorkspaceRelative(normalized)) {
+  const rawNormalized = normalizeModelPath(inputPath);
+  let normalized = rawNormalized;
+  let fromFileUrl = false;
+  if (rawNormalized.startsWith('file://')) {
+    try {
+      normalized = fileURLToPath(rawNormalized);
+      fromFileUrl = true;
+    } catch {
+      normalized = rawNormalized;
+    }
+  }
+  if (!fromFileUrl && shouldTreatRootedPathAsWorkspaceRelative(normalized)) {
     return resolve(root, normalized.slice(1));
   }
   const expanded = expandHomePath(normalized);

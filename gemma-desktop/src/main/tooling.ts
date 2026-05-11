@@ -1,6 +1,7 @@
 import type { ModeSelection } from '@gemma-sdk/core'
 import { statSync } from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import { parseToolCallInput } from '@gemma-sdk/core'
 import {
   GET_PROJECT_BROWSER_ERRORS_TOOL,
@@ -407,6 +408,46 @@ function isApprovedWorkspaceEscape(absolutePath: string, approvedWorkspaceEscape
   })
 }
 
+function normalizeToolPathInput(target: string): { pathText: string; allowRootedWorkspaceRelative: boolean } {
+  const trimmed = target.trim()
+  if (trimmed.startsWith('file://')) {
+    return {
+      pathText: fileURLToPath(trimmed),
+      allowRootedWorkspaceRelative: false,
+    }
+  }
+
+  return {
+    pathText: trimmed,
+    allowRootedWorkspaceRelative: true,
+  }
+}
+
+export function resolveWorkspacePathForTool(input: {
+  workingDirectory: string
+  target: string
+  approvedWorkspaceEscapes?: string[]
+  action?: string
+}): string {
+  const workingDirectory = path.resolve(input.workingDirectory)
+  const normalized = normalizeToolPathInput(input.target)
+  const resolved = normalized.allowRootedWorkspaceRelative
+    && shouldTreatRootedPathAsWorkspaceRelative(normalized.pathText)
+    ? path.resolve(workingDirectory, normalized.pathText.slice(1))
+    : path.resolve(workingDirectory, normalized.pathText)
+
+  if (
+    workspaceRelativePath(workingDirectory, resolved) === null
+    && !isApprovedWorkspaceEscape(resolved, input.approvedWorkspaceEscapes)
+  ) {
+    throw new Error(
+      `Refusing to ${input.action ?? 'access path'} outside the working directory: ${resolved}`,
+    )
+  }
+
+  return resolved
+}
+
 export function resolveBackgroundProcessWorkingDirectory(input: {
   workingDirectory: string
   cwd?: unknown
@@ -419,19 +460,12 @@ export function resolveBackgroundProcessWorkingDirectory(input: {
     return workingDirectory
   }
 
-  const resolved = shouldTreatRootedPathAsWorkspaceRelative(cwd)
-    ? path.resolve(workingDirectory, cwd.slice(1))
-    : path.resolve(workingDirectory, cwd)
-  if (
-    workspaceRelativePath(workingDirectory, resolved) === null
-    && !isApprovedWorkspaceEscape(resolved, input.approvedWorkspaceEscapes)
-  ) {
-    throw new Error(
-      `Refusing to start background process outside the working directory: ${resolved}`,
-    )
-  }
-
-  return resolved
+  return resolveWorkspacePathForTool({
+    workingDirectory,
+    target: cwd,
+    approvedWorkspaceEscapes: input.approvedWorkspaceEscapes,
+    action: 'start background process',
+  })
 }
 
 export function buildBackgroundProcessInstructions(): string {

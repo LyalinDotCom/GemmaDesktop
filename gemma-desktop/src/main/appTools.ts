@@ -400,7 +400,11 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
       additionalProperties: false,
     },
     async execute(input, context) {
-      const file = await resolveInspectableFile(input, context.workingDirectory)
+      const file = await resolveInspectableFile(
+        input,
+        context.workingDirectory,
+        context.approvedWorkspaceEscapes,
+      )
       const result = await inspectFileForReadStrategy({
         file,
         workingDirectory: context.workingDirectory,
@@ -457,6 +461,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         sessionId: context.sessionId,
         signal: context.signal,
         onProgress: context.emitProgress,
+        approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
       })
       return {
         output: formatMaterializedContentOutput(materialized),
@@ -495,6 +500,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         sessionId: context.sessionId,
         signal: context.signal,
         onProgress: context.emitProgress,
+        approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
       })
       const result = buildMaterializedReadResult({
         materialized,
@@ -551,6 +557,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         sessionId: context.sessionId,
         signal: context.signal,
         onProgress: context.emitProgress,
+        approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
       })
       const result = searchMaterializedText({
         text: materialized.text,
@@ -612,6 +619,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
         workingDirectory: context.workingDirectory,
         sessionId: context.sessionId,
         signal: context.signal,
+        approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
         onProgress: context.emitProgress,
       })
       return {
@@ -689,6 +697,7 @@ export function createAppTools(dependencies: AppToolsDependencies): RegisteredTo
           workingDirectory: context.workingDirectory,
           sessionId: context.sessionId,
           signal: context.signal,
+          approvedWorkspaceEscapes: context.approvedWorkspaceEscapes,
           onProgress: context.emitProgress
             ? (progress) => {
                 context.emitProgress?.({

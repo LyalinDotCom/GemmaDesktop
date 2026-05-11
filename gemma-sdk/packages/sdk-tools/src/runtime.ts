@@ -1,5 +1,6 @@
 import path from "node:path";
 import { statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Ajv } from "ajv";
 import type {
   ModelToolCall,
@@ -228,58 +229,78 @@ function shouldTreatRootedPathAsWorkspaceRelative(inputPath: string): boolean {
   return path.resolve(deepestExistingPathSync(resolved)) === path.resolve(filesystemRoot);
 }
 
-function resolveToolInputPath(workingDirectory: string, inputPath: string): string {
+function normalizeToolPathInput(inputPath: string): { pathText: string; allowRootedWorkspaceRelative: boolean } {
   const trimmed = inputPath.trim();
-  if (shouldTreatRootedPathAsWorkspaceRelative(trimmed)) {
-    return path.resolve(workingDirectory, trimmed.slice(1));
+  if (trimmed.startsWith("file://")) {
+    try {
+      return {
+        pathText: fileURLToPath(trimmed),
+        allowRootedWorkspaceRelative: false,
+      };
+    } catch {
+      return {
+        pathText: trimmed,
+        allowRootedWorkspaceRelative: false,
+      };
+    }
   }
-  return path.resolve(workingDirectory, trimmed);
+
+  return {
+    pathText: trimmed,
+    allowRootedWorkspaceRelative: true,
+  };
 }
 
-function collectToolPathInputs(toolName: string, record: Record<string, unknown>): string[] {
+function resolveToolInputPath(workingDirectory: string, inputPath: string): string {
+  const normalized = normalizeToolPathInput(inputPath);
+  if (
+    normalized.allowRootedWorkspaceRelative
+    && shouldTreatRootedPathAsWorkspaceRelative(normalized.pathText)
+  ) {
+    return path.resolve(workingDirectory, normalized.pathText.slice(1));
+  }
+  return path.resolve(workingDirectory, normalized.pathText);
+}
+
+const PATH_INPUT_FIELD_NAMES = new Set([
+  "path",
+  "paths",
+  "cwd",
+  "filePath",
+  "filepath",
+  "inputPath",
+  "outputPath",
+  "sourcePath",
+  "targetPath",
+]);
+
+function collectToolPathInputs(_toolName: string, record: Record<string, unknown>): string[] {
   const paths: string[] = [];
-  const push = (value: unknown): void => {
-    if (typeof value === "string" && value.trim().length > 0) {
-      paths.push(value);
+  const visit = (value: unknown, key?: string, depth = 0): void => {
+    if (depth > 6) {
+      return;
+    }
+    if (typeof value === "string") {
+      if (key && PATH_INPUT_FIELD_NAMES.has(key) && value.trim().length > 0) {
+        paths.push(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, key, depth + 1);
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      visit(childValue, childKey, depth + 1);
     }
   };
 
-  switch (toolName) {
-    case "list_tree":
-    case "search_paths":
-    case "search_text":
-      push(record.path);
-      break;
-    case "read_file":
-    case "read_content":
-    case "search_content":
-    case "write_file":
-    case "edit_file":
-      push(record.path);
-      break;
-    case "materialize_content":
-      push(record.path);
-      push(record.outputPath);
-      break;
-    case "read_files":
-      for (const request of Array.isArray(record.requests) ? record.requests : []) {
-        if (request && typeof request === "object" && !Array.isArray(request)) {
-          push((request as Record<string, unknown>).path);
-        }
-      }
-      break;
-    case "write_files":
-      for (const file of Array.isArray(record.files) ? record.files : []) {
-        if (file && typeof file === "object" && !Array.isArray(file)) {
-          push((file as Record<string, unknown>).path);
-        }
-      }
-      break;
-    case "exec_command":
-    case "start_background_process":
-      push(record.cwd);
-      break;
-  }
+  visit(record);
 
   return [...new Set(paths)];
 }

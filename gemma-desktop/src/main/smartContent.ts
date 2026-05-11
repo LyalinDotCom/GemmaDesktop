@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import os from 'os'
 import fs from 'fs/promises'
 import path from 'path'
-import { fileURLToPath, pathToFileURL } from 'url'
+import { pathToFileURL } from 'url'
 import {
   extractPdfText,
   inspectPdfDocument,
@@ -19,6 +19,7 @@ import {
   PDF_RENDER_SCALE,
   type PersistedPdfAttachment,
 } from './sessionAttachments'
+import { resolveWorkspacePathForTool } from './tooling'
 
 export interface SmartContentModelTarget {
   modelId: string
@@ -411,14 +412,13 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
   function normalizeInspectableInputPath(
     rawPath: string,
     workingDirectory: string,
+    approvedWorkspaceEscapes?: string[],
   ): string {
-    const trimmed = rawPath.trim()
-    if (trimmed.startsWith('file://')) {
-      return fileURLToPath(trimmed)
-    }
-    return path.isAbsolute(trimmed)
-      ? path.resolve(trimmed)
-      : path.resolve(workingDirectory, trimmed)
+    return resolveWorkspacePathForTool({
+      workingDirectory,
+      target: rawPath,
+      approvedWorkspaceEscapes,
+    })
   }
 
   async function readFileProbe(filePath: string): Promise<Buffer> {
@@ -454,8 +454,13 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
       mediaType?: string
     },
     workingDirectory: string,
+    approvedWorkspaceEscapes?: string[],
   ): Promise<ResolvedInspectableFile> {
-    const resolvedPath = normalizeInspectableInputPath(input.path, workingDirectory)
+    const resolvedPath = normalizeInspectableInputPath(
+      input.path,
+      workingDirectory,
+      approvedWorkspaceEscapes,
+    )
     const stats = await fs.stat(resolvedPath)
     if (!stats.isFile()) {
       throw new Error(`Expected a file path, received: ${input.path}`)
@@ -1066,6 +1071,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     sessionId: string
     signal?: AbortSignal
     onProgress?: (progress: SmartFileReadProgress) => void
+    approvedWorkspaceEscapes?: string[]
   }): Promise<MaterializedContentInternal> {
     emitSmartFileReadProgress(input.onProgress, {
       id: 'resolve-file',
@@ -1074,6 +1080,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     const file = await resolveInspectableFile(
       { path: input.path, mediaType: input.mediaType },
       input.workingDirectory,
+      input.approvedWorkspaceEscapes,
     )
     const displaySourcePath = displayPathForToolOutput(file.path, input.workingDirectory)
     const target = input.target ?? 'auto'
@@ -1149,6 +1156,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
       outputPath = normalizeInspectableInputPath(
         input.outputPath,
         input.workingDirectory,
+        input.approvedWorkspaceEscapes,
       )
       emitSmartFileReadProgress(input.onProgress, {
         id: 'write-artifact',
@@ -1345,6 +1353,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     sessionId: string
     signal?: AbortSignal
     onProgress?: (progress: SmartFileReadProgress) => void
+    approvedWorkspaceEscapes?: string[]
   }) {
     emitSmartFileReadProgress(input.onProgress, {
       id: 'resolve-file',
@@ -1353,6 +1362,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     const file = await resolveInspectableFile(
       { path: input.path, mediaType: input.mediaType },
       input.workingDirectory,
+      input.approvedWorkspaceEscapes,
     )
     const displayPath = displayPathForToolOutput(file.path, input.workingDirectory)
 
@@ -1364,6 +1374,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
       const backend = createWorkspaceSearchBackend({
         workingDirectory: input.workingDirectory,
         signal: input.signal,
+        approvedWorkspaceEscapes: input.approvedWorkspaceEscapes,
       })
       const result = await backend.readFile({
         path: displayPath,

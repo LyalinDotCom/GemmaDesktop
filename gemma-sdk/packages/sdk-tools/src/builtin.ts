@@ -1,5 +1,6 @@
 import { promises as fs, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ToolExecutionContext } from "@gemma-sdk/core";
 import { buildFileEditArtifact, buildLineDiff, FINALIZE_BUILD_TOOL_NAME, GemmaDesktopError, runShellCommand } from "@gemma-sdk/core";
 import type { RegisteredTool } from "./runtime.js";
@@ -113,6 +114,9 @@ function shouldTreatRootedPathAsWorkspaceRelative(target: string): boolean {
 
 function resolvePath(context: ToolExecutionContext, target = "."): string {
   const normalizedTarget = target.trim();
+  if (normalizedTarget.startsWith("file://")) {
+    return path.resolve(fileURLToPath(normalizedTarget));
+  }
   return shouldTreatRootedPathAsWorkspaceRelative(normalizedTarget)
     ? path.resolve(context.workingDirectory, normalizedTarget.slice(1))
     : path.resolve(context.workingDirectory, normalizedTarget);

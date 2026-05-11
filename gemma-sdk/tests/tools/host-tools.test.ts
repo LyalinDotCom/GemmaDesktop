@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   mkdir,
@@ -362,6 +363,14 @@ describe("host tools", () => {
     expect(result.output).toContain("2: line two");
     expect(result.output).toContain("3: line three");
     expect(result.output).toContain("call read_file with offset=4 to continue");
+
+    const fileUrlRead = await getTool("read_file").execute(
+      {
+        path: pathToFileURL(path.join(workingDirectory, "extra.txt")).toString(),
+      },
+      context,
+    );
+    expect(String(fileUrlRead.output)).toContain("alpha");
 
     const multiRead = await getTool("read_files").execute(
       {
@@ -1070,6 +1079,80 @@ describe("host tools", () => {
       context,
     );
     expect(String(approvedResult.output)).toContain(outsideDirectory);
+  });
+
+  it("applies workspace escape policy to generic path-like tool inputs", async () => {
+    const workingDirectory = await createWorkspace();
+    const outsideDirectory = await createWorkspace();
+    const outsideFile = path.join(outsideDirectory, "outside.txt");
+    await writeFile(outsideFile, "outside\n", "utf8");
+    const inspectTool: RegisteredTool<{ path: string }> = {
+      name: "inspect_file",
+      description: "Inspect a local file.",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute(input) {
+        return { output: input.path };
+      },
+    };
+    const context = createContext(workingDirectory);
+    const permissionDetails: unknown[] = [];
+    const deniedRuntime = createToolRuntime({
+      extraTools: [inspectTool],
+      onWorkspaceEscape: (details) => permissionDetails.push(details),
+    });
+
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-inspect-outside",
+          name: "inspect_file",
+          input: { path: outsideFile },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    expect(permissionDetails[0]).toMatchObject({
+      workingDirectory,
+      requestedPath: outsideFile,
+      resolvedPath: outsideFile,
+    });
+
+    await expect(
+      deniedRuntime.execute(
+        {
+          id: "call-inspect-file-url-outside",
+          name: "inspect_file",
+          input: { path: pathToFileURL(outsideFile).toString() },
+        },
+        context,
+      ),
+    ).rejects.toThrow(/workspace escape requires explicit approval/i);
+    expect(permissionDetails[1]).toMatchObject({
+      workingDirectory,
+      requestedPath: pathToFileURL(outsideFile).toString(),
+      resolvedPath: outsideFile,
+    });
+
+    const approvedRuntime = createToolRuntime({
+      allowWorkspaceEscape: true,
+      extraTools: [inspectTool],
+    });
+    const approvedResult = await approvedRuntime.execute(
+      {
+        id: "call-inspect-file-url-approved",
+        name: "inspect_file",
+        input: { path: pathToFileURL(outsideFile).toString() },
+      },
+      context,
+    );
+    expect(String(approvedResult.output)).toContain(pathToFileURL(outsideFile).toString());
   });
 
   it("hard-kills shell commands that ignore SIGTERM after timing out", async () => {

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceTools, type WorkspacePermissionRequest, type WorkspaceToolsOptions } from './workspace.js';
 
@@ -21,6 +22,10 @@ describe('workspace tools', () => {
     await expect(write.run({ path: 'notes/a.txt', content: 'hello' })).resolves.toMatchObject({ ok: true });
     await expect(readFile(join(cwd, 'notes/a.txt'), 'utf8')).resolves.toBe('hello');
     await expect(read.run({ path: 'notes/a.txt' })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('hello')
+    });
+    await expect(read.run({ path: pathToFileURL(join(cwd, 'notes/a.txt')).toString() })).resolves.toMatchObject({
       ok: true,
       output: expect.stringContaining('hello')
     });
@@ -88,6 +93,12 @@ describe('workspace tools', () => {
     });
     expect(captured?.tool).toBe('read_file');
     expect(captured?.reason).toContain('read file path is outside the workspace');
+    expect(captured?.paths).toContain(targetReal);
+
+    await expect(read.run({ path: pathToFileURL(target).toString() })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('outside')
+    });
     expect(captured?.paths).toContain(targetReal);
 
     const list = tool('list_tree', cwd, {

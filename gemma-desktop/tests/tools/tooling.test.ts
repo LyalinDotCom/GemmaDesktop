@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { pathToFileURL } from 'url'
 import {
   ACTIVATE_SKILL_TOOL,
   ASK_USER_TOOL,
@@ -22,6 +23,7 @@ import {
   normalizeSkillActivationInput,
   normalizeToolPolicySettings,
   resolveBackgroundProcessWorkingDirectory,
+  resolveWorkspacePathForTool,
   resolveAppSessionMode,
   sessionModeToConfig,
   withCoBrowseSessionMetadata,
@@ -252,6 +254,26 @@ describe('app tool helpers', () => {
       workingDirectory: '/tmp/gemma-project',
       cwd: '../elsewhere',
     })).toThrow('outside the working directory')
+  })
+
+  it('normalizes tool paths consistently for root-prefixed and file URL inputs', () => {
+    expect(resolveWorkspacePathForTool({
+      workingDirectory: '/tmp/gemma-project',
+      target: '/definitely-missing-gemma-root-path/blackhole02',
+    })).toBe('/tmp/gemma-project/definitely-missing-gemma-root-path/blackhole02')
+    expect(resolveWorkspacePathForTool({
+      workingDirectory: '/tmp/gemma-project',
+      target: pathToFileURL('/tmp/gemma-project/inside.txt').toString(),
+    })).toBe('/tmp/gemma-project/inside.txt')
+    expect(() => resolveWorkspacePathForTool({
+      workingDirectory: '/tmp/gemma-project',
+      target: pathToFileURL('/tmp/elsewhere/outside.txt').toString(),
+    })).toThrow('outside the working directory')
+    expect(resolveWorkspacePathForTool({
+      workingDirectory: '/tmp/gemma-project',
+      target: pathToFileURL('/tmp/elsewhere/outside.txt').toString(),
+      approvedWorkspaceEscapes: ['/tmp/elsewhere'],
+    })).toBe('/tmp/elsewhere/outside.txt')
   })
 
   it('builds plan overlay mode as read-only plus plan interaction tools', () => {

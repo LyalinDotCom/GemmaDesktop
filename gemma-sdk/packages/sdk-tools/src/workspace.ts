@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { GemmaDesktopError } from "@gemma-sdk/core";
 
 const DEFAULT_READ_LINE_LIMIT = 200;
@@ -265,9 +266,13 @@ function resolveWorkspacePath(
   approvedWorkspaceEscapes: string[] = [],
 ): string {
   const normalizedTarget = target.trim();
-  const resolved = shouldTreatRootedPathAsWorkspaceRelative(normalizedTarget)
+  const pathText = normalizedTarget.startsWith("file://")
+    ? fileURLToPath(normalizedTarget)
+    : normalizedTarget;
+  const resolved = !normalizedTarget.startsWith("file://")
+    && shouldTreatRootedPathAsWorkspaceRelative(pathText)
     ? path.resolve(workingDirectory, normalizedTarget.slice(1))
-    : path.resolve(workingDirectory, normalizedTarget);
+    : path.resolve(workingDirectory, pathText);
   workspaceRelativePath(workingDirectory, resolved, approvedWorkspaceEscapes);
   return resolved;
 }
