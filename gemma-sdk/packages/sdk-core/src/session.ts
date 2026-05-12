@@ -18,6 +18,7 @@ import {
   summarizeBuildValidation,
   type BuildCompletionVerifier,
   type BuildCompletionVerifierResult,
+  type BuildTurnState,
   type BuildTurnPolicy,
   type BuildTurnPolicyInput,
   type BuildTurnSummary,
@@ -755,6 +756,13 @@ const COMPLETE_WITH_GROUNDED_RESULT_OR_BLOCKER_INSTRUCTION = [
   "Do not emit another tool call unless it is materially different from the failed attempt and still required to finish.",
 ].join("\n");
 
+const COMPLETE_BUILD_ACTION_OR_BLOCKER_INSTRUCTION = [
+  "You are in Build mode and your previous reply said you would create or modify project files, but no build tool was called.",
+  "Call the next concrete build tool now, such as write_file, write_files, edit_file, exec_command, or a workspace agent if one is available.",
+  "If you cannot proceed, send a short user-facing answer with the exact blocker.",
+  "Do not repeat a promise to start. Do not end with reasoning only or an empty reply.",
+].join("\n");
+
 const FINALIZE_AFTER_MAX_STEPS_WITHOUT_TOOLS_INSTRUCTION = [
   "The previous step used tools and this is a final no-tools response pass.",
   "You no longer have tool access. Do not call any more tools.",
@@ -973,11 +981,31 @@ function looksLikeDraftedFileCreationText(text: string): boolean {
   );
 }
 
-function hasVisibleAssistantOutcome(response: ChatResponse): boolean {
+function looksLikeBuildMutationPromiseText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  return (
+    /\b(?:add|build|create|edit|enhance|fix|generate|implement|make|modify|scaffold|set up|setup|update|write)\b/i.test(trimmed)
+    || looksLikeDraftedFileCreationText(trimmed)
+  );
+}
+
+function hasUserFacingAssistantOutcome(response: ChatResponse): boolean {
   return (
     response.toolCalls.length > 0
     || response.text.trim().length > 0
-    || (response.reasoning?.trim().length ?? 0) > 0
+  );
+}
+
+function hasRecordedBuildAction(state: BuildTurnState | undefined): boolean {
+  return Boolean(
+    state?.mutations.length
+    || state?.commandExecutions.length
+    || state?.finalizations.length
+    || state?.browserEvidence.length,
   );
 }
 
@@ -1999,6 +2027,7 @@ export class SessionEngine {
     let executedSteps = 0;
     let continuationInstruction: string | undefined;
     let continuationAttempts = 0;
+    let buildNoopContinuationAttempts = 0;
     let buildValidationContinuationAttempts = 0;
     let buildFinalizationContinuationAttempts = 0;
     let buildVerifierAttempts = 0;
@@ -2096,7 +2125,7 @@ export class SessionEngine {
 
       if (response.toolCalls.length === 0) {
         const modeBase = resolveModeBase(this.mode);
-        const isEmptyVisibleReply = !hasVisibleAssistantOutcome(response);
+        const isEmptyVisibleReply = !hasUserFacingAssistantOutcome(response);
 
         if (
           buildTurnState?.enabled
@@ -2318,52 +2347,6 @@ export class SessionEngine {
           continue;
         }
 
-        const shouldRetryAfterEmptyReply =
-          modeBase !== "minimal"
-          && continuationAttempts < 1
-          && step < maxSteps
-          && isEmptyVisibleReply;
-
-        if (shouldRetryAfterEmptyReply) {
-          continuationAttempts += 1;
-          continuationInstruction = RETRY_EMPTY_RESPONSE_INSTRUCTION;
-          this.emit(queue, turnId, "warning.raised", {
-            step,
-            warning: "Assistant returned an empty reply. Retrying the turn automatically.",
-          });
-          this.discardAssistantResponse(assistantMessage);
-          continue;
-        }
-
-        const planningOnlyAfterToolFailure =
-          modeBase !== "minimal"
-          && hasFailedToolResult(toolResults)
-          && response.text.trim().length > 0
-          && looksLikeIncompleteActionText(response.text);
-
-        if (
-          planningOnlyAfterToolFailure
-          && continuationAttempts < 2
-          && step < maxSteps
-        ) {
-          continuationAttempts += 1;
-          continuationInstruction = COMPLETE_WITH_GROUNDED_RESULT_OR_BLOCKER_INSTRUCTION;
-          this.emit(queue, turnId, "warning.raised", {
-            step,
-            warning:
-              "Assistant ended on plan-only text after a tool failure. Continuing the turn automatically so it gives a grounded answer or states the blocker plainly.",
-          });
-          this.discardAssistantResponse(assistantMessage);
-          continue;
-        }
-
-        if (planningOnlyAfterToolFailure) {
-          throw new GemmaDesktopError(
-            "transport_error",
-            "Turn ended on plan-only text after tool failures instead of a grounded answer or blocker.",
-          );
-        }
-
         const missingUserFacingSummaryAfterToolUse =
           modeBase !== "minimal"
           && toolResults.length > 0
@@ -2400,10 +2383,90 @@ export class SessionEngine {
           );
         }
 
+        const shouldRetryAfterEmptyReply =
+          modeBase !== "minimal"
+          && continuationAttempts < 1
+          && step < maxSteps
+          && isEmptyVisibleReply;
+
+        if (shouldRetryAfterEmptyReply) {
+          continuationAttempts += 1;
+          continuationInstruction = RETRY_EMPTY_RESPONSE_INSTRUCTION;
+          this.emit(queue, turnId, "warning.raised", {
+            step,
+            warning: "Assistant returned no user-facing text or tool call. Retrying the turn automatically.",
+          });
+          this.discardAssistantResponse(assistantMessage);
+          continue;
+        }
+
+        const buildPromiseWithoutAction =
+          buildTurnState?.enabled === true
+          && !hasRecordedBuildAction(buildTurnState)
+          && response.text.trim().length > 0
+          && looksLikeIncompleteActionText(response.text)
+          && looksLikeBuildMutationPromiseText(response.text);
+
+        if (
+          buildPromiseWithoutAction
+          && buildNoopContinuationAttempts < 1
+          && step < maxSteps
+        ) {
+          buildNoopContinuationAttempts += 1;
+          continuationInstruction = COMPLETE_BUILD_ACTION_OR_BLOCKER_INSTRUCTION;
+          this.emit(queue, turnId, "warning.raised", {
+            step,
+            warning: "Assistant ended a build turn with promise-only text before calling a build tool. Continuing the turn automatically.",
+          });
+          this.discardAssistantResponse(assistantMessage);
+          continue;
+        }
+
+        if (buildPromiseWithoutAction) {
+          throw new GemmaDesktopError(
+            "build_completion_failed",
+            "Build turn ended after promising file changes but no build tool was called.",
+            {
+              details: {
+                build: latestBuildSummary,
+              },
+            },
+          );
+        }
+
+        const planningOnlyAfterToolFailure =
+          modeBase !== "minimal"
+          && hasFailedToolResult(toolResults)
+          && response.text.trim().length > 0
+          && looksLikeIncompleteActionText(response.text);
+
+        if (
+          planningOnlyAfterToolFailure
+          && continuationAttempts < 2
+          && step < maxSteps
+        ) {
+          continuationAttempts += 1;
+          continuationInstruction = COMPLETE_WITH_GROUNDED_RESULT_OR_BLOCKER_INSTRUCTION;
+          this.emit(queue, turnId, "warning.raised", {
+            step,
+            warning:
+              "Assistant ended on plan-only text after a tool failure. Continuing the turn automatically so it gives a grounded answer or states the blocker plainly.",
+          });
+          this.discardAssistantResponse(assistantMessage);
+          continue;
+        }
+
+        if (planningOnlyAfterToolFailure) {
+          throw new GemmaDesktopError(
+            "transport_error",
+            "Turn ended on plan-only text after tool failures instead of a grounded answer or blocker.",
+          );
+        }
+
         if (modeBase !== "minimal" && isEmptyVisibleReply) {
           throw new GemmaDesktopError(
             "capability_unsupported",
-            "Model returned an empty reply without text, reasoning, or tool calls.",
+            "Model returned an empty user-facing reply without text or tool calls.",
           );
         }
 
@@ -2907,7 +2970,7 @@ export class SessionEngine {
         toolCalls: response.toolCalls,
       }, response.raw);
 
-      if (response.toolCalls.length === 0 && hasVisibleAssistantOutcome(response)) {
+      if (response.toolCalls.length === 0 && hasUserFacingAssistantOutcome(response)) {
         this.appendAssistantResponse(response);
         finalResponse = response;
         totalUsage = this.mergeUsage(totalUsage, response.usage);

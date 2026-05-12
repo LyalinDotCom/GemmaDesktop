@@ -104,10 +104,11 @@ This includes runtime adapter wiring, session creation, mode and tool surfaces, 
 
 Future agents must treat CLI coverage as part of the acceptance criteria for SDK-backed desktop changes:
 
+- classify every behavior fix before landing it as SDK/shared, CLI-specific, or Desktop-specific; when the same failure can happen in both runnable products, prefer an SDK fix with shared coverage over an app-only patch
 - add or adjust CLI commands, flags, metadata wiring, or output when the desktop app gains new SDK-backed behavior
 - add focused CLI tests that prove the headless path exercises the same SDK contract
 - keep root validation wired so `npm run check` covers SDK, CLI, and app deterministic lanes
-- if a desktop SDK change genuinely does not affect the CLI, say why in the work notes or final summary instead of leaving the parity decision implicit
+- if a desktop SDK change or app-local fix genuinely does not affect the CLI, say why in the work notes or final summary instead of leaving the parity decision implicit
 
 ### App Main-Process Architecture
 

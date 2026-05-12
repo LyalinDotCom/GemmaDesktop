@@ -403,6 +403,116 @@ describe("build mode verification enforcement", () => {
     );
   });
 
+  it("continues build turns that stop after promise-only text before any build tool runs", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-noop-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createTextResponse("I will create the project files now."),
+      createToolCallResponse({
+        text: "",
+        toolName: "write_files",
+        toolInput: {
+          files: [{ path: "index.html", content: "<main>ok</main>" }],
+        },
+      }),
+      createTextResponse("Created index.html."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFilesTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 3,
+    });
+
+    const result = await engine.run("Build a tiny static app.");
+
+    expect(result.text).toBe("Created index.html.");
+    expect(adapter.requests).toHaveLength(3);
+    expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual(["write_files"]);
+    expect(collectSystemText(adapter.requests[1]?.messages ?? [])).toContain(
+      "your previous reply said you would create or modify project files, but no build tool was called",
+    );
+    expect(result.events.find((event) =>
+      event.type === "warning.raised"
+      && event.payload.warning === "Assistant ended a build turn with promise-only text before calling a build tool. Continuing the turn automatically.",
+    )).toBeTruthy();
+  });
+
+  it("continues build turns that stop after read-only tools and promise-only text", async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-build-readonly-noop-"));
+    cleanup.push(workingDirectory);
+
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will inspect the image summary first.",
+        toolName: "read_content",
+        toolInput: {
+          path: ".gemma/file-read-cache/image/content.txt",
+        },
+      }),
+      createTextResponse("I will now create the project files."),
+      createToolCallResponse({
+        text: "",
+        toolName: "write_files",
+        toolInput: {
+          files: [{ path: "index.html", content: "<main>ok</main>" }],
+        },
+      }),
+      createTextResponse("Created index.html."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "read_content",
+      description: "Read materialized content.",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute() {
+        return {
+          output: "A blocky Golden Gate Bridge diorama.",
+          structuredOutput: {
+            path: ".gemma/file-read-cache/image/content.txt",
+          },
+        };
+      },
+    });
+    registry.register(createWriteFilesTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory,
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 4,
+    });
+
+    const result = await engine.run("Make a web simulation using HTML/JS to replicate this image.");
+
+    expect(result.text).toBe("Created index.html.");
+    expect(adapter.requests).toHaveLength(4);
+    expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
+      "read_content",
+      "write_files",
+    ]);
+    expect(collectSystemText(adapter.requests[2]?.messages ?? [])).toContain(
+      "your previous reply said you would create or modify project files, but no build tool was called",
+    );
+  });
+
   it("records missing verification without auto-coaching the assistant", async () => {
     const workingDirectory = await createWorkspaceWithPackageJson({
       build: "vite build",

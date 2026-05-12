@@ -831,7 +831,7 @@ describe("delegated tool sessions", () => {
     expect(continuedSystemText).toContain("Before you end the turn, call at least one of these tools: prepare_plan_execution.");
   });
 
-  it("does not auto-coach next-step text after successful tool use", async () => {
+  it("continues next-step text after read-only tool use in build mode", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-sdk-"));
     await writeFile(path.join(tempDirectory, "penguin-unicycle.html"), "<html></html>\n", "utf8");
     const requests: Array<Record<string, unknown>> = [];
@@ -1137,15 +1137,15 @@ describe("delegated tool sessions", () => {
 
     const result = await session.run("Generate an SVG of a pelican riding a unicycle.");
 
-    expect(result.text).toContain("Now I'll create a new SVG pelican riding a unicycle");
-    expect(result.toolResults).toHaveLength(1);
+    expect(result.text).toContain("Created pelican-unicycle.svg.");
     expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
       "read_file",
+      "write_file",
     ]);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(4);
   });
 
-  it("does not auto-coach next-step text hidden behind factual setup", async () => {
+  it("continues next-step text hidden behind factual setup in build mode", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "gemma-desktop-sdk-"));
     const requests: Array<Record<string, unknown>> = [];
 
@@ -1319,11 +1319,12 @@ describe("delegated tool sessions", () => {
 
     const result = await session.run("Build a simple solar system page in .tmp/solar3.");
 
-    expect(result.text).toContain("The folder doesn't exist yet.");
+    expect(result.text).toContain("Created .tmp/solar3/index.html.");
     expect(result.toolResults.map((toolResult) => toolResult.toolName)).toEqual([
       "list_tree",
+      "write_file",
     ]);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(4);
   }, 10_000);
 
   it("does not auto-coach a first reply that only announces a read step", async () => {

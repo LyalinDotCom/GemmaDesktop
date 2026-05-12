@@ -91,8 +91,32 @@ describe("empty response handling", () => {
     expect(retriedSystemText).toContain("Your previous reply was empty.");
   });
 
-  it("accepts reasoning-only replies without retrying the turn", async () => {
+  it("retries reasoning-only replies because they have no user-facing outcome", async () => {
     const requests: Array<Record<string, unknown>> = [];
+    const queuedResponses = [
+      [
+        `data: ${JSON.stringify({
+          id: "reasoning_1",
+          choices: [{ index: 0, delta: { reasoning_content: "Need to inspect the request carefully." } }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          id: "reasoning_1",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ],
+      [
+        `data: ${JSON.stringify({
+          id: "reasoning_2",
+          choices: [{ index: 0, delta: { content: "Recovered answer." } }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          id: "reasoning_2",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ],
+    ];
 
     const server = await createMockServer((request) => {
       if (request.path === "/health") {
@@ -103,19 +127,11 @@ describe("empty response handling", () => {
       }
       if (request.path === "/v1/chat/completions") {
         requests.push(request.bodyJson as Record<string, unknown>);
-        return {
-          sse: [
-            `data: ${JSON.stringify({
-              id: "reasoning_1",
-              choices: [{ index: 0, delta: { reasoning_content: "Need to inspect the request carefully." } }],
-            })}\n\n`,
-            `data: ${JSON.stringify({
-              id: "reasoning_1",
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            })}\n\n`,
-            "data: [DONE]\n\n",
-          ],
-        };
+        const next = queuedResponses.shift();
+        if (!next) {
+          throw new Error("Unexpected extra chat request");
+        }
+        return { sse: next };
       }
       throw new Error(`Unhandled route: ${request.path}`);
     });
@@ -133,8 +149,12 @@ describe("empty response handling", () => {
 
     const result = await session.run("Think out loud.");
 
-    expect(result.text).toBe("");
-    expect(result.reasoning).toBe("Need to inspect the request carefully.");
-    expect(requests).toHaveLength(1);
+    expect(result.text).toBe("Recovered answer.");
+    expect(requests).toHaveLength(2);
+
+    const retriedSystemText = collectSystemText(
+      (requests[1]?.messages as Array<Record<string, unknown>>) ?? [],
+    );
+    expect(retriedSystemText).toContain("Your previous reply was empty.");
   });
 });
