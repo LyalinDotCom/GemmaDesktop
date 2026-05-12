@@ -406,6 +406,82 @@ describe("tool failure recovery", () => {
     )).toBe(true);
   });
 
+  it("uses a user-readable error when the model ignores no-tool loop recovery", async () => {
+    const adapter = new MockAdapter([
+      createToolCallResponse({
+        text: "I will read the file.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will read it again.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will read it once more.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+      createToolCallResponse({
+        text: "I will try one more tool call.",
+        toolName: "read_file",
+        toolInput: {
+          path: "package.json",
+        },
+      }),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async execute() {
+        return {
+          output: "{\"name\":\"example\"}",
+        };
+      },
+    });
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({
+        registry,
+      }),
+      maxSteps: 6,
+    });
+
+    let thrown: unknown;
+    try {
+      await engine.run("Inspect package.json.");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain(
+      "I stopped the turn because the assistant got stuck repeating tool work",
+    );
+    expect(adapter.requests[3]?.tools).toEqual([]);
+  });
+
   it("allows repeated browser snapshots after intervening page actions", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({

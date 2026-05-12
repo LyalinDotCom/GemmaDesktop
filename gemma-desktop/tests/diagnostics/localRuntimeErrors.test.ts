@@ -54,4 +54,19 @@ describe('local runtime errors', () => {
 
     expect(isModelNotLoadedError(error)).toBe(true)
   })
+
+  it('recognizes LM Studio instance unload misses as benign', () => {
+    expect(
+      isModelNotLoadedError(
+        new Error("Model with instance identifier 'deepseek-v4-flash-dq' is not loaded."),
+      ),
+    ).toBe(true)
+    expect(
+      isModelNotLoadedError(new Error(JSON.stringify({
+        error: {
+          message: "Model with instance identifier 'deepseek-v4-flash-dq' is not loaded.",
+        },
+      }))),
+    ).toBe(true)
+  })
 })

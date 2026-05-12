@@ -1064,6 +1064,22 @@ export function createHostTools(): RegisteredTool[] {
             metadata: { truncated: preview.truncated },
           };
         }
+        if (normalizedOldText === normalizedNewText) {
+          const preview = buildNumberedFileSnapshot(content);
+          return {
+            output:
+              `No changes applied; oldText and newText were identical for ${resolved}, so edit_file would not change the file.\n\n`
+              + "Current file snapshot:\n"
+              + preview.output,
+            structuredOutput: {
+              path: resolved,
+              replacements: 0,
+              noOp: true,
+              identicalReplacement: true,
+            },
+            metadata: { truncated: preview.truncated },
+          };
+        }
         const occurrences = normalizedContent.split(normalizedOldText).length - 1;
         if (occurrences === 0) {
           if (normalizedContent === normalizedNewText) {

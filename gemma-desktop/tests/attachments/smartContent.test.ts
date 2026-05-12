@@ -8,6 +8,7 @@ function createService(input: {
   current: SmartContentModelTarget
   models: SmartContentModelRecord[]
   runText?: string
+  runTexts?: string[]
 }) {
   const acquired: SmartContentModelTarget[] = []
   const createdSessions: SmartContentModelTarget[] = []
@@ -32,10 +33,16 @@ function createService(input: {
             runtimeId: options.runtime,
           })
           return {
-            run: vi.fn(async () => ({
-              structuredOutput: { text: input.runText ?? 'A stylized bridge diorama.' },
-              text: input.runText ?? 'A stylized bridge diorama.',
-            })),
+            run: vi.fn(async () => {
+              const text =
+                input.runTexts?.shift()
+                ?? input.runText
+                ?? 'The image shows a stylized bridge diorama scene with red-orange bridge towers, a road deck, blue water, green land blocks, a clear foreground and background layout, visible block-like materials, and an angled camera view that makes the miniature scene look like a handmade model.'
+              return {
+                structuredOutput: { text },
+                text,
+              }
+            }),
           }
         }),
       },
@@ -161,5 +168,63 @@ describe('smart content model selection', () => {
     expect(instructions).toContain('visible text, scene type, primary subjects')
     expect(instructions).toContain('UI/chrome if present')
     expect(instructions).not.toContain('concise plain-text description')
+  })
+
+  it('retries image extraction once when the first result is only a sparse caption', async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-smart-content-'))
+    const imagePath = path.join(workingDirectory, 'bridge.jpeg')
+    await writeFile(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    const current = { modelId: 'gemma4:e4b', runtimeId: 'ollama-native' }
+    const detailedText =
+      'The image shows a detailed stylized bridge diorama scene with red-orange bridge towers, a long roadway deck, blue water blocks below, green land blocks at both ends, a compact foreground and background layout, block-like materials, visible miniature model styling, and an angled camera view looking down at the scene.'
+    const { service, createdSessions, sessionCreateOptions } = createService({
+      current,
+      models: [
+        {
+          id: current.modelId,
+          runtimeId: current.runtimeId,
+          status: 'loaded',
+          attachmentSupport: { image: true, audio: true },
+        },
+      ],
+      runTexts: ['Remix 2: Golden Gate Diorama', detailedText],
+    })
+
+    const result = await service.readInspectableFileForTool({
+      path: imagePath,
+      workingDirectory,
+      sessionId: 'session-image',
+    })
+
+    expect(result.content).toContain('red-orange bridge towers')
+    expect(createdSessions).toHaveLength(2)
+    expect(sessionCreateOptions[1]?.systemInstructions).toContain('previous attempt was too short')
+  })
+
+  it('fails image extraction clearly when the retry is still too sparse', async () => {
+    const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-smart-content-'))
+    const imagePath = path.join(workingDirectory, 'bridge.jpeg')
+    await writeFile(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    const current = { modelId: 'gemma4:e4b', runtimeId: 'ollama-native' }
+    const { service } = createService({
+      current,
+      models: [
+        {
+          id: current.modelId,
+          runtimeId: current.runtimeId,
+          status: 'loaded',
+          attachmentSupport: { image: true, audio: true },
+        },
+      ],
+      runTexts: ['Remix 2: Golden Gate Diorama', 'A Golden Gate diorama.'],
+    })
+
+    await expect(
+      service.readInspectableFileForTool({
+        path: imagePath,
+        workingDirectory,
+        sessionId: 'session-image',
+      }),
+    ).rejects.toThrow(/too little visual detail/i)
   })
 })

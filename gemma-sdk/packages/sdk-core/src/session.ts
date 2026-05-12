@@ -2477,7 +2477,7 @@ export class SessionEngine {
         this.discardAssistantResponse(assistantMessage);
         throw new GemmaDesktopError(
           "tool_execution_failed",
-          "Model attempted another tool call after repeated tool activity disabled tool access for the recovery step.",
+          "I stopped the turn because the assistant got stuck repeating tool work and then tried to use tools again after tool access was paused. Any completed tool results above may still have taken effect.",
           {
             details: {
               toolCalls: response.toolCalls,

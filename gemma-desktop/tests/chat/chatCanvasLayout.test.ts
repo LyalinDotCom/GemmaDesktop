@@ -311,7 +311,7 @@ describe('ChatCanvas layout', () => {
     )
 
     expect(markup).toContain('I will create the simulation files now.')
-    expect(markup).toContain('list_tree')
+    expect(markup).toContain('list tree')
     expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
     expect(markup).not.toContain('I need to inspect the target folder.')
     expect(markup).not.toContain('Directory not found.')
@@ -463,6 +463,7 @@ describe('ChatCanvas layout', () => {
     expect(markup).toContain('I will open the page.')
     expect(markup).toContain('The page is open.')
     expect(markup).toContain('browser open')
+    expect(markup).toContain('Thinking (1) / browser open (1)')
     expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
     expect(markup).not.toContain('Events')
     expect(markup).not.toContain('Thinking / browser open')
@@ -535,10 +536,10 @@ describe('ChatCanvas layout', () => {
     )
 
     expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(3)
-    const firstEventIndex = markup.indexOf('list_tree')
+    const firstEventIndex = markup.indexOf('list tree')
     const firstTextIndex = markup.indexOf('I will build the simulation with vanilla WebGL.')
     const fileEditIndex = markup.indexOf('test-projects/sim02-blackhole/index.html')
-    const secondEventIndex = markup.indexOf('exec_command npm run validate')
+    const secondEventIndex = markup.indexOf('exec command npm run validate')
     const secondTextIndex = markup.indexOf('Validation passed and the app is ready.')
     const thirdEventIndex = markup.lastIndexOf('Thinking')
     const finalTextIndex = markup.indexOf('Created the black hole simulation.')
@@ -552,6 +553,109 @@ describe('ChatCanvas layout', () => {
     expect(finalTextIndex).toBeGreaterThan(thirdEventIndex)
     expect(markup).not.toContain('Now I need to validate the generated files.')
     expect(markup).not.toContain('I should summarize the result.')
+  })
+
+  it('summarizes every collapsed event run in timeline order', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatCanvas, {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: [{ type: 'text', text: 'Build the app' }],
+            timestamp: 1000,
+          },
+          {
+            id: 'assistant-thinking-1',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'I need a plan.' }],
+            timestamp: 2000,
+          },
+          {
+            id: 'assistant-thinking-2',
+            role: 'assistant',
+            content: [{ type: 'thinking', text: 'I should inspect the files.' }],
+            timestamp: 2100,
+          },
+          {
+            id: 'assistant-write-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'write_file',
+                input: { path: 'index.html' },
+                status: 'success',
+              },
+            ],
+            timestamp: 2200,
+          },
+          {
+            id: 'assistant-write-2',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'write_file',
+                input: { path: 'style.css' },
+                status: 'success',
+              },
+            ],
+            timestamp: 2300,
+          },
+          {
+            id: 'assistant-write-3',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'write_file',
+                input: { path: 'script.js' },
+                status: 'success',
+              },
+            ],
+            timestamp: 2400,
+          },
+          {
+            id: 'assistant-read-1',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_call',
+                toolName: 'read_file',
+                input: { path: 'script.js' },
+                status: 'success',
+              },
+            ],
+            timestamp: 2500,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'I created the app.' }],
+            timestamp: 2600,
+          },
+        ],
+        streamingContent: null,
+        isGenerating: false,
+        isCompacting: false,
+        debugEnabled: false,
+        debugLogs: [],
+        debugSession: null,
+      }),
+    )
+
+    const thinkingIndex = markup.indexOf('Thinking (2)')
+    const writeIndex = markup.indexOf('write file (3)')
+    const readIndex = markup.indexOf('read file (1)')
+    const textIndex = markup.indexOf('I created the app.')
+
+    expect(markup.match(/data-assistant-event-timeline="true"/g)?.length ?? 0).toBe(1)
+    expect(thinkingIndex).toBeGreaterThanOrEqual(0)
+    expect(writeIndex).toBeGreaterThan(thinkingIndex)
+    expect(readIndex).toBeGreaterThan(writeIndex)
+    expect(textIndex).toBeGreaterThan(readIndex)
+    expect(markup).not.toContain('I should inspect the files.')
   })
 
   it('collapses event-only streaming content before visible text arrives', () => {

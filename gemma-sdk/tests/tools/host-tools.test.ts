@@ -704,6 +704,32 @@ describe("host tools", () => {
     expect(noopResult.output).toContain("already matches the requested content");
   });
 
+  it("reports identical edit_file oldText and newText as an explicit no-op", async () => {
+    const workingDirectory = await createWorkspace();
+    const context = createContext(workingDirectory);
+    const filePath = path.join(workingDirectory, "notes.txt");
+
+    await writeFile(filePath, "alpha\nbeta\n", "utf8");
+
+    const result = await getTool("edit_file").execute(
+      {
+        path: "notes.txt",
+        oldText: "beta",
+        newText: "beta",
+      },
+      context,
+    );
+
+    expect(result.structuredOutput).toEqual({
+      path: filePath,
+      replacements: 0,
+      noOp: true,
+      identicalReplacement: true,
+    });
+    expect(result.output).toContain("oldText and newText were identical");
+    expect(await readFile(filePath, "utf8")).toBe("alpha\nbeta\n");
+  });
+
   it("reconciles a stale whole-file edit against the current file state", async () => {
     const workingDirectory = await createWorkspace();
     const context = createContext(workingDirectory);

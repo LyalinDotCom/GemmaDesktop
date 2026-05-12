@@ -251,6 +251,8 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
   const SMART_MULTI_READ_DEFAULT_MAX_BYTES = 120 * 1024
   const PDF_EMBEDDED_TEXT_MIN_TOTAL_CHARS = 80
   const PDF_EMBEDDED_TEXT_MIN_CHARS_PER_PAGE = 20
+  const IMAGE_EXTRACTION_MIN_CHARS = 180
+  const IMAGE_EXTRACTION_MIN_WORDS = 30
 
   const IMAGE_FILE_EXTENSIONS = new Set([
     '.jpg',
@@ -671,7 +673,7 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
     return toWorkerSnapshot(model)
   }
 
-  const SMART_FILE_READ_CACHE_VERSION = 'v3'
+  const SMART_FILE_READ_CACHE_VERSION = 'v4'
 
   async function ensureSmartFileReadCacheRoot(workingDirectory: string): Promise<string> {
     const root = path.join(workingDirectory, '.gemma', 'file-read-cache')
@@ -1697,40 +1699,44 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
           ? 'Listening with helper model'
           : 'Reading image with helper model',
     })
-    const workerResult = await runMultimodalFileWorkerSession({
+    let extractedText = await runMultimodalTextExtractionAttempt({
+      file: input.file,
       worker: input.worker,
-      workingDirectory: path.dirname(input.file.path),
+      kind: input.kind,
+      retryForSparseImageExtraction: false,
       signal: input.signal,
-      responseFormat: FILE_TEXT_EXTRACTION_RESPONSE_FORMAT,
-      systemInstructions:
-        input.kind === 'audio'
-          ? [
-              'You are Gemma Desktop\'s internal audio-to-text reader.',
-              'Listen faithfully and return the spoken content as plain text.',
-              'If there is no speech, describe the important audible content briefly as plain text.',
-            ].join('\n')
-          : [
-              'You are Gemma Desktop\'s internal image-to-text reader.',
-              'Read visible text faithfully.',
-              'Return a dense, task-neutral visual extraction, not a short caption.',
-              'Capture as much useful visible detail as possible so another model can decide how to use it.',
-              'Include: visible text, scene type, primary subjects, object inventory, spatial layout, colors, materials, visual style, camera/viewpoint, UI/chrome if present, notable small details, and uncertainty where details are ambiguous.',
-              'Do not invent hidden context or summarize away implementation-relevant visual details.',
-            ].join('\n'),
-      sessionInput: input.kind === 'audio'
-        ? [
-            { type: 'text', text: `Audio file: ${input.file.name}\nRead this file into plain text.` },
-            { type: 'audio_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
-          ]
-        : [
-            { type: 'text', text: `Image file: ${input.file.name}\nExtract this image into a detailed plain-text visual record.` },
-            { type: 'image_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
-          ],
     })
-    const extractedText =
-      toTrimmedString(workerResult.structuredOutput.text)
-      ?? toTrimmedString(workerResult.outputText)
-      ?? ''
+
+    if (input.kind === 'image') {
+      const assessment = assessImageExtractionQuality(extractedText)
+      if (!assessment.ok) {
+        emitSmartFileReadProgress(input.onProgress, {
+          id: 'image-helper-retry',
+          label: 'Retrying image read for fuller visual detail',
+          tone: 'warning',
+        })
+        extractedText = await runMultimodalTextExtractionAttempt({
+          file: input.file,
+          worker: input.worker,
+          kind: input.kind,
+          retryForSparseImageExtraction: true,
+          signal: input.signal,
+        })
+
+        const retryAssessment = assessImageExtractionQuality(extractedText)
+        if (!retryAssessment.ok) {
+          throw new Error(
+            [
+              `Image reading produced too little visual detail for ${input.file.name}.`,
+              `Reason: ${retryAssessment.reason}.`,
+              `Model used: ${input.worker.runtimeId} / ${input.worker.modelId}.`,
+              'Select a stronger vision-capable model or try again after loading one.',
+            ].join(' '),
+          )
+        }
+      }
+    }
+
     if (!extractedText) {
       throw new Error(`Gemma Desktop could not extract readable text from ${input.file.name}.`)
     }
@@ -1758,6 +1764,114 @@ export function createSmartContentService(dependencies: SmartContentServiceDepen
       helperRuntimeId: input.worker.runtimeId,
       cacheHit: false,
     }
+  }
+
+  async function runMultimodalTextExtractionAttempt(input: {
+    file: ResolvedInspectableFile
+    worker: FileWorkerCapabilitySnapshot
+    kind: 'audio' | 'image'
+    retryForSparseImageExtraction: boolean
+    signal?: AbortSignal
+  }): Promise<string> {
+    const workerResult = await runMultimodalFileWorkerSession({
+      worker: input.worker,
+      workingDirectory: path.dirname(input.file.path),
+      signal: input.signal,
+      responseFormat: FILE_TEXT_EXTRACTION_RESPONSE_FORMAT,
+      systemInstructions:
+        input.kind === 'audio'
+          ? [
+              'You are Gemma Desktop\'s internal audio-to-text reader.',
+              'Listen faithfully and return the spoken content as plain text.',
+              'If there is no speech, describe the important audible content briefly as plain text.',
+            ].join('\n')
+          : buildImageExtractionSystemInstructions(input.retryForSparseImageExtraction),
+      sessionInput: input.kind === 'audio'
+        ? [
+            { type: 'text', text: `Audio file: ${input.file.name}\nRead this file into plain text.` },
+            { type: 'audio_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
+          ]
+        : [
+            {
+              type: 'text',
+              text: input.retryForSparseImageExtraction
+                ? `Image file: ${input.file.name}\nThe previous image extraction was too sparse. Extract this image again into a detailed plain-text visual record.`
+                : `Image file: ${input.file.name}\nExtract this image into a detailed plain-text visual record.`,
+            },
+            { type: 'image_url', url: input.file.fileUrl, mediaType: input.file.mediaType },
+          ],
+    })
+
+    return (
+      toTrimmedString(workerResult.structuredOutput.text)
+      ?? toTrimmedString(workerResult.outputText)
+      ?? ''
+    )
+  }
+
+  function buildImageExtractionSystemInstructions(retryForSparseExtraction: boolean): string {
+    return [
+      'You are Gemma Desktop\'s internal image-to-text reader.',
+      'Read visible text faithfully.',
+      'Return a dense, task-neutral visual extraction, not a short caption.',
+      'Capture as much useful visible detail as possible so another model can decide how to use it.',
+      'Include: visible text, scene type, primary subjects, object inventory, spatial layout, colors, materials, visual style, camera/viewpoint, UI/chrome if present, notable small details, and uncertainty where details are ambiguous.',
+      'Use concrete nouns and spatial relationships. Prefer a compact but detailed paragraph or bullet list over a title.',
+      retryForSparseExtraction
+        ? 'The previous attempt was too short to be useful. Unless the image is truly blank, provide at least 8 concrete visual details.'
+        : '',
+      'Do not invent hidden context or summarize away implementation-relevant visual details.',
+    ].filter(Boolean).join('\n')
+  }
+
+  function assessImageExtractionQuality(text: string): { ok: boolean; reason: string } {
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (!normalized) {
+      return { ok: false, reason: 'the extraction was empty' }
+    }
+
+    const words = normalized.split(' ').filter(Boolean)
+    const lower = normalized.toLowerCase()
+    if (/^(remix|image|photo|screenshot|caption)\s*\d*\s*:/i.test(normalized) && words.length < 12) {
+      return { ok: false, reason: 'the extraction looked like a title or caption only' }
+    }
+
+    if (normalized.length < IMAGE_EXTRACTION_MIN_CHARS || words.length < IMAGE_EXTRACTION_MIN_WORDS) {
+      return {
+        ok: false,
+        reason: `the extraction was too short (${normalized.length} characters, ${words.length} words)`,
+      }
+    }
+
+    const visualSignalWords = [
+      'background',
+      'camera',
+      'color',
+      'foreground',
+      'image',
+      'layout',
+      'left',
+      'material',
+      'object',
+      'right',
+      'scene',
+      'shape',
+      'style',
+      'subject',
+      'text',
+      'top',
+      'view',
+      'visible',
+    ]
+    const signalCount = visualSignalWords.filter((word) => lower.includes(word)).length
+    if (signalCount < 3) {
+      return {
+        ok: false,
+        reason: 'the extraction did not include enough concrete visual-detail signals',
+      }
+    }
+
+    return { ok: true, reason: 'the extraction includes enough visual detail' }
   }
 
 

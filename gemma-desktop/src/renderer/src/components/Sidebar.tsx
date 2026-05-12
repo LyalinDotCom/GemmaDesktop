@@ -88,6 +88,16 @@ function normalizeIconInput(input: string): string {
   return normalizeConversationIcon(input) ?? ''
 }
 
+function modelSelectionFeedbackKey(modelSelection: AppSettings['modelSelection']): string {
+  return [
+    modelSelection.mainModel.runtimeId,
+    modelSelection.mainModel.modelId,
+    modelSelection.helperModelEnabled ? 'helper-on' : 'helper-off',
+    modelSelection.helperModelEnabled ? modelSelection.helperModel.runtimeId : '',
+    modelSelection.helperModelEnabled ? modelSelection.helperModel.modelId : '',
+  ].join('\u001f')
+}
+
 interface SidebarInitialSearchState {
   query: string
   status: SidebarSearchStatus
@@ -312,6 +322,7 @@ export function Sidebar({
     tone: 'info' | 'success' | 'error'
     message: string
     details: string[]
+    selectionKey: string
   } | null>(null)
   const [modelMemoryPanelOpen, setModelMemoryPanelOpen] = useState(false)
   const [modelReloadPending, setModelReloadPending] = useState(false)
@@ -427,6 +438,18 @@ export function Sidebar({
     modelSelection.helperModel,
     modelAvailabilityIssues,
   )
+  const currentModelSelectionKey = useMemo(
+    () => modelSelectionFeedbackKey(modelSelection),
+    [modelSelection],
+  )
+  const currentModelSelectionKeyRef = useRef(currentModelSelectionKey)
+
+  useEffect(() => {
+    currentModelSelectionKeyRef.current = currentModelSelectionKey
+    setModelSelectionLoadFeedback((feedback) =>
+      feedback && feedback.selectionKey !== currentModelSelectionKey ? null : feedback,
+    )
+  }, [currentModelSelectionKey])
 
   useEffect(() => {
     if (renameDialog && renameTitleInputRef.current) {
@@ -468,6 +491,7 @@ export function Sidebar({
         tone: 'error',
         message: effectiveModelSelectionDisabledReason,
         details: [],
+        selectionKey: currentModelSelectionKey,
       })
       return
     }
@@ -481,6 +505,7 @@ export function Sidebar({
           ? error.message.trim()
           : 'Could not update global model selection.',
         details: [],
+        selectionKey: currentModelSelectionKey,
       })
     })
   }
@@ -511,21 +536,32 @@ export function Sidebar({
         tone: 'error',
         message: effectiveReloadModelsDisabledReason,
         details: [],
+        selectionKey: currentModelSelectionKey,
       })
       return
     }
 
+    const requestSelectionKey = currentModelSelectionKey
     setModelSelectionLoadPending(true)
     setModelSelectionLoadFeedback({
       tone: 'info',
       message: 'Loading selected models...',
       details: [],
+      selectionKey: requestSelectionKey,
     })
 
     try {
       const result = await onLoadModelSelection(modelSelection)
       if (!result) {
         setModelSelectionLoadFeedback(null)
+        return
+      }
+
+      const resultSelectionKey = modelSelectionFeedbackKey(result.selection)
+      if (
+        resultSelectionKey !== requestSelectionKey
+        || currentModelSelectionKeyRef.current !== resultSelectionKey
+      ) {
         return
       }
 
@@ -536,14 +572,19 @@ export function Sidebar({
           ...result.errors.map(formatDefaultModelLoadStep),
           ...result.skipped.map(formatDefaultModelLoadStep),
         ],
+        selectionKey: resultSelectionKey,
       })
     } catch (error) {
+      if (currentModelSelectionKeyRef.current !== requestSelectionKey) {
+        return
+      }
       setModelSelectionLoadFeedback({
         tone: 'error',
         message: error instanceof Error && error.message.trim().length > 0
           ? error.message.trim()
           : 'Could not load the selected models.',
         details: [],
+        selectionKey: requestSelectionKey,
       })
     } finally {
       setModelSelectionLoadPending(false)

@@ -22,7 +22,7 @@ const CONNECTION_FAILURE_MESSAGE_PATTERN =
   /\b(fetch failed|connection refused|econnrefused|econnreset|ehostunreach|enetunreach|enotfound|etimedout|eai_again)\b/i
 
 const MODEL_NOT_LOADED_MESSAGE_PATTERN =
-  /\b(model not loaded|no loaded model|model is not loaded)\b/i
+  /\b(model not loaded|no loaded model|model is not loaded|model\b[^.\n]{0,120}\bis not loaded)\b/i
 
 export function getLocalRuntimeDisplayName(runtimeId: string): string {
   if (runtimeId === 'ollama-native' || runtimeId === 'ollama-openai') {

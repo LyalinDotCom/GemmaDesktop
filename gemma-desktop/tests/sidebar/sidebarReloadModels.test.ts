@@ -331,6 +331,77 @@ describe('Sidebar reload models control', () => {
     expect(container.textContent).toContain('Reloaded expected models.')
   })
 
+  it('does not show stale selected-model load failures after the selection changes', async () => {
+    const oldSelection: AppSettings['modelSelection'] = {
+      ...DEFAULT_MODEL_SELECTION_SETTINGS,
+      mainModel: {
+        modelId: 'deepseek-v4-flash-dq',
+        runtimeId: 'lmstudio-openai',
+      },
+      helperModelEnabled: false,
+    }
+    const newSelection: AppSettings['modelSelection'] = {
+      ...DEFAULT_MODEL_SELECTION_SETTINGS,
+      mainModel: {
+        modelId: 'qwen3:8b',
+        runtimeId: 'lmstudio-openai',
+      },
+      helperModelEnabled: false,
+    }
+    let resolveLoad: ((result: LoadDefaultModelsResult) => void) | null = null
+    const onLoadModelSelection = vi.fn(() => new Promise<LoadDefaultModelsResult>((resolve) => {
+      resolveLoad = resolve
+    }))
+    const nextRoot = createRoot(container)
+    root = nextRoot
+
+    act(() => {
+      nextRoot.render(createElement(Sidebar, sidebarProps({
+        modelSelection: oldSelection,
+        onLoadModelSelection,
+      })))
+    })
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+    await click(getButtonByText(container, 'Load Selected Models'))
+
+    expect(onLoadModelSelection).toHaveBeenCalledWith(oldSelection)
+    expect(container.textContent).toContain('Loading selected models...')
+
+    act(() => {
+      nextRoot.render(createElement(Sidebar, sidebarProps({
+        modelSelection: newSelection,
+        onLoadModelSelection,
+      })))
+    })
+
+    expect(container.textContent).not.toContain('Loading selected models...')
+
+    await act(async () => {
+      resolveLoad?.({
+        ok: false,
+        message: 'Could not finish loading defaults. Loaded 0 of 1 default model; 1 operation need attention.',
+        selection: oldSelection,
+        targets: [],
+        unloaded: [],
+        loaded: [],
+        skipped: [],
+        errors: [{
+          action: 'unload',
+          ok: false,
+          modelId: 'deepseek-v4-flash-dq',
+          runtimeId: 'lmstudio-openai',
+          roles: ['main'],
+          error: "Could not unload lmstudio-openai / deepseek-v4-flash-dq before reload: Model with instance identifier 'deepseek-v4-flash-dq' is not loaded.",
+        }],
+      })
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).not.toContain('Could not finish loading defaults')
+    expect(container.textContent).not.toContain('deepseek-v4-flash-dq')
+  })
+
   it('marks selected model load failures while keeping the model selected', async () => {
     renderSidebar(sidebarProps({
       modelAvailabilityIssues: [{

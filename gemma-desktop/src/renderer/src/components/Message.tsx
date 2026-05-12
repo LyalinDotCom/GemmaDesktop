@@ -109,6 +109,11 @@ interface AssistantTimelineEvent {
   contentBlockIndex: number
 }
 
+interface AssistantTimelineSummaryRun {
+  label: string
+  count: number
+}
+
 function NoticeBlock({
   tone,
   message,
@@ -732,15 +737,20 @@ function getToolActionLabel(input: Record<string, unknown>): string | null {
   return null
 }
 
+function formatToolNameForTimeline(toolName: string): string {
+  return toolName.replace(/[-_]+/g, ' ')
+}
+
 function getAssistantTimelineEventLabel(content: AssistantEventContent): string {
   if (content.type === 'thinking') {
     return 'Thinking'
   }
 
   const actionLabel = getToolActionLabel(content.input)
+  const toolLabel = formatToolNameForTimeline(content.toolName)
   return actionLabel
-    ? `${content.toolName} ${actionLabel}`
-    : content.toolName
+    ? `${toolLabel} ${actionLabel}`
+    : toolLabel
 }
 
 function getAssistantTimelineEventSummary(content: AssistantEventContent): string | null {
@@ -749,6 +759,31 @@ function getAssistantTimelineEventSummary(content: AssistantEventContent): strin
   }
 
   return content.summary?.trim() || content.worker?.currentAction?.trim() || null
+}
+
+function buildAssistantTimelineSummaryRuns(
+  events: AssistantTimelineEvent[],
+): AssistantTimelineSummaryRun[] {
+  const runs: AssistantTimelineSummaryRun[] = []
+
+  for (const event of events) {
+    const label = getAssistantTimelineEventLabel(event.content)
+    const previousRun = runs.at(-1)
+    if (previousRun?.label === label) {
+      previousRun.count += 1
+      continue
+    }
+
+    runs.push({ label, count: 1 })
+  }
+
+  return runs
+}
+
+function formatAssistantTimelineSummary(events: AssistantTimelineEvent[]): string {
+  return buildAssistantTimelineSummaryRuns(events)
+    .map((run) => `${run.label} (${run.count})`)
+    .join(' / ')
 }
 
 function AssistantEventTimeline({
@@ -765,6 +800,8 @@ function AssistantEventTimeline({
     return null
   }
 
+  const summaryLabel = formatAssistantTimelineSummary(events)
+
   return (
     <div
       data-assistant-event-timeline="true"
@@ -780,8 +817,11 @@ function AssistantEventTimeline({
           size={12}
           className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
         />
-        <span className="min-w-0 flex-1 truncate font-medium text-zinc-600 dark:text-zinc-300">
-          {getAssistantTimelineEventLabel(events.at(-1)!.content)}
+        <span
+          className="min-w-0 flex-1 truncate font-medium text-zinc-600 dark:text-zinc-300"
+          title={summaryLabel}
+        >
+          {summaryLabel}
         </span>
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
           {events.length}
