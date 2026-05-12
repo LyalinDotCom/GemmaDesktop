@@ -3,6 +3,8 @@ import { createGemmaDesktop } from "@gemma-sdk/node";
 import type {
   ChatRequest,
   ChatResponse,
+  InferenceAdapter,
+  ModelDiscoveryProvider,
   RuntimeAdapter,
   RuntimeInspectionResult,
 } from "@gemma-sdk/core";
@@ -87,5 +89,68 @@ describe("GemmaDesktop runtime adapters", () => {
     ]);
     expect(originalAdapter.inspectCount).toBe(1);
     expect(updatedAdapter.inspectCount).toBe(1);
+  });
+
+  it("keeps inference adapters separate from model discovery providers", async () => {
+    const inferenceAdapter: InferenceAdapter = {
+      identity: {
+        id: "test-openai",
+        family: "unknown",
+        kind: "openai-compatible",
+        displayName: "Test OpenAI",
+        endpoint: "http://inference.local",
+      },
+      async generate(_request: ChatRequest): Promise<ChatResponse> {
+        throw new Error("generate() is not used in this test.");
+      },
+      async *stream(): AsyncIterable<never> {
+        yield* [];
+      },
+    };
+    const discoveryProvider: ModelDiscoveryProvider = {
+      identity: {
+        id: "test-openai",
+        family: "unknown",
+        kind: "openai-compatible",
+        displayName: "Test Inventory",
+        endpoint: "http://discovery.local",
+      },
+      async inspect(): Promise<RuntimeInspectionResult> {
+        return {
+          runtime: discoveryProvider.identity,
+          installed: true,
+          reachable: true,
+          healthy: true,
+          capabilities: [],
+          models: [{
+            id: "inventory-model",
+            runtimeId: "test-openai",
+            discoveryRuntimeId: "test-native",
+            kind: "llm",
+            availability: "visible",
+            metadata: {},
+            capabilities: [],
+          }],
+          loadedInstances: [],
+          warnings: [],
+          diagnosis: [],
+        };
+      },
+    };
+
+    const gemmaDesktop = await createGemmaDesktop({
+      inferenceAdapters: [inferenceAdapter],
+      modelDiscoveryProviders: [discoveryProvider],
+    });
+
+    const inspection = await gemmaDesktop.inspectEnvironment();
+
+    expect(inspection.runtimes).toHaveLength(1);
+    expect(inspection.runtimes[0]?.runtime.endpoint).toBe("http://discovery.local");
+    expect(inspection.runtimes[0]?.models[0]).toEqual(expect.objectContaining({
+      id: "inventory-model",
+      runtimeId: "test-openai",
+      discoveryRuntimeId: "test-native",
+    }));
   });
 });

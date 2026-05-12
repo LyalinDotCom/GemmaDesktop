@@ -1851,7 +1851,7 @@ export function App() {
     const gemmaEntry = findGemmaCatalogEntryByTag(target.modelId)
     if (
       !gemmaEntry
-      || target.runtimeId !== 'ollama-native'
+      || normalizeProviderRuntimeId(target.runtimeId) !== 'ollama-openai'
       || !isGuidedGemmaMissing(
         state.models,
         target.modelId,

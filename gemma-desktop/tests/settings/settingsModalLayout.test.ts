@@ -150,7 +150,7 @@ function modelOption(
   label: string,
   runtimeId: string,
   providerLabel: string,
-  apiTypeLabel: string,
+  inferenceTypeLabel: string,
   optimizationTags?: string[],
 ): ModelTargetOption {
   return {
@@ -158,7 +158,7 @@ function modelOption(
     runtimeId,
     label,
     providerLabel,
-    apiTypeLabel,
+    inferenceTypeLabel,
     optimizationTags,
   }
 }
@@ -203,12 +203,12 @@ describe('SettingsModal layout', () => {
 
   it('groups model target options by provider and sorts inside each group', () => {
     const groups = groupModelTargetOptions([
-      modelOption('zeta:7b', 'Zeta 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
-      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
-      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API'),
-      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-native', 'LM Studio', 'Native API'),
-      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
-      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-openai', 'Ollama', 'OpenAI-compatible API'),
+      modelOption('zeta:7b', 'Zeta 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference'),
+      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference'),
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference'),
+      modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-native', 'LM Studio', 'Provider-native inference'),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Provider-native inference'),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-openai', 'Ollama', 'OpenAI-compatible inference'),
     ])
 
     expect(groups.map((group) => group.providerLabel)).toEqual([
@@ -216,26 +216,26 @@ describe('SettingsModal layout', () => {
       'Ollama',
     ])
     expect(groups[0]?.options.map(formatModelTargetOptionLabel)).toEqual([
-      'Alpha 7B - LM Studio - OpenAI-compatible API',
-      'Qwen3 8B - LM Studio - OpenAI-compatible API',
-      'Zeta 7B - LM Studio - OpenAI-compatible API',
+      'Alpha 7B - LM Studio - OpenAI-compatible inference',
+      'Qwen3 8B - LM Studio - OpenAI-compatible inference',
+      'Zeta 7B - LM Studio - OpenAI-compatible inference',
     ])
     expect(groups[1]?.options.map(formatModelTargetOptionLabel)).toEqual([
-      'Gemma 4 26B - Ollama - Native API',
+      'Gemma 4 26B - Ollama - OpenAI-compatible inference',
     ])
   })
 
   it('opens model target pickers as bounded searchable lists', () => {
     const groups = groupModelTargetOptions([
-      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible API', ['MLX']),
-      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Native API'),
+      modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference', ['MLX']),
+      modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Provider-native inference'),
     ])
     const markup = renderToStaticMarkup(
       createElement(ModelTargetPicker, {
         ariaLabel: 'Primary model',
         value: {
           modelId: 'gemma4:26b',
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
         },
         groups,
         onSelect: () => {},
@@ -243,7 +243,7 @@ describe('SettingsModal layout', () => {
       }),
     )
 
-    expect(markup).toContain('Filter by model, provider, or API...')
+    expect(markup).toContain('Filter by model, provider, or inference...')
     expect(markup).toContain('role="listbox"')
     expect(markup).toContain('max-h-64 overflow-y-auto overscroll-contain')
     expect(markup).toContain('LM Studio')

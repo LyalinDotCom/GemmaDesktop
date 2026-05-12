@@ -17,7 +17,7 @@ export interface SelectableModel {
 
 const RUNTIME_PREFERENCE: Record<string, string[]> = {
   lmstudio: ['lmstudio-openai', 'lmstudio-native'],
-  ollama: ['ollama-native', 'ollama-openai'],
+  ollama: ['ollama-openai', 'ollama-native'],
   llamacpp: ['llamacpp-server'],
   omlx: ['omlx-openai'],
 }

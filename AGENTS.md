@@ -110,6 +110,17 @@ Future agents must treat CLI coverage as part of the acceptance criteria for SDK
 - keep root validation wired so `npm run check` covers SDK, CLI, and app deterministic lanes
 - if a desktop SDK change or app-local fix genuinely does not affect the CLI, say why in the work notes or final summary instead of leaving the parity decision implicit
 
+### Model Runtime Vocabulary
+
+Keep model runtime concepts split clearly in code, UI, diagnostics, prompts, and tests.
+
+- An **inference adapter** is the provider used to talk to the model for generation, streaming, embeddings, and request-time behavior. Session runtime ids should identify inference adapters.
+- A **model discovery provider** is the provider used to inspect runtime health, available models, loaded instances, model metadata, and capability hints. Discovery may legitimately use a different protocol from inference.
+- Prefer OpenAI-compatible inference for Ollama, LM Studio, and oMLX when those stacks expose it. Provider-native APIs may still be the correct source for discovery, lifecycle, warm-loads, diagnostics, residency, or richer model metadata.
+- Do not infer that a model should use provider-native inference just because provider-native discovery returned better metadata. Carry the intended inference runtime id through discovered model records.
+- When changing model/runtime behavior, update SDK contracts first, then keep `gemma-cli`, `gemma-desktop`, Settings, Doctor, model pickers, memory/residency displays, and tests aligned with the same terminology.
+- User-facing text should say whether it is describing inference, discovery/inventory, lifecycle/warm-load, or diagnostics. Avoid vague labels like "Native API" when the selected model will actually chat through an OpenAI-compatible endpoint.
+
 ### App Main-Process Architecture
 
 `gemma-desktop/src/main/ipc.ts` is an IPC composition edge, not the home for product behavior. The durable direction is to keep Electron channel registration thin and move domain behavior into named main-process modules with explicit dependencies.

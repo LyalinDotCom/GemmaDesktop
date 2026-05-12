@@ -38,11 +38,7 @@ const SECONDARY_MODEL: ModelSummary = {
 const LOAD_RESULT: LoadDefaultModelsResult = {
   ok: true,
   message: 'Reloaded expected models.',
-  selection: {
-    mainModel: { modelId: 'gemma4:26b', runtimeId: 'ollama-native' },
-    helperModel: { modelId: 'gemma4:e2b', runtimeId: 'ollama-native' },
-    helperModelEnabled: true,
-  },
+  selection: DEFAULT_MODEL_SELECTION_SETTINGS,
   targets: [],
   unloaded: [],
   loaded: [],

@@ -25,8 +25,10 @@ import {
   type BuildTurnPolicyInput,
   type EnvironmentInspectionResult,
   type GemmaDesktopEvent,
+  type InferenceAdapter,
   type MachineProfile,
   type ModeSelection,
+  type ModelDiscoveryProvider,
   type ResolvedSystemInstructionSection,
   type RuntimeAdapter,
   type RuntimeInspectionResult,
@@ -40,7 +42,11 @@ import { HarnessRunner } from "@gemma-sdk/harness";
 import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
 import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
-import { createOllamaNativeAdapter, createOllamaOpenAICompatibleAdapter } from "@gemma-sdk/runtime-ollama";
+import {
+  createOllamaNativeAdapter,
+  createOllamaOpenAICompatibleAdapter,
+  createOllamaOpenAICompatibleModelDiscoveryProvider,
+} from "@gemma-sdk/runtime-ollama";
 import {
   ToolRegistry,
   ToolRuntime,
@@ -1250,9 +1256,36 @@ function resolveModeToolNames(mode: ModeSelection): string[] {
   return [...names];
 }
 
+function createDefaultInferenceAdapters(): RuntimeAdapter[] {
+  return [
+    createOllamaOpenAICompatibleAdapter(),
+    createOllamaNativeAdapter(),
+    createLmStudioOpenAICompatibleAdapter(),
+    createLmStudioNativeAdapter(),
+    createLlamaCppServerAdapter(),
+    createOmlxOpenAICompatibleAdapter(),
+  ];
+}
+
+function createDefaultModelDiscoveryProviders(): ModelDiscoveryProvider[] {
+  return [
+    createOllamaOpenAICompatibleModelDiscoveryProvider(),
+    createLmStudioOpenAICompatibleAdapter(),
+    createLlamaCppServerAdapter(),
+    createOmlxOpenAICompatibleAdapter(),
+  ];
+}
+
 export interface CreateGemmaDesktopOptions {
   workingDirectory?: string;
+  /**
+   * Legacy combined providers. Prefer `inferenceAdapters` plus
+   * `modelDiscoveryProviders` when a runtime uses one protocol for chat and a
+   * different protocol for model inventory.
+   */
   adapters?: RuntimeAdapter[];
+  inferenceAdapters?: InferenceAdapter[];
+  modelDiscoveryProviders?: ModelDiscoveryProvider[];
   toolPolicy?: ToolPermissionPolicy;
   extraTools?: RegisteredTool[];
   geminiApiKey?: string;
@@ -1329,7 +1362,8 @@ export class GemmaDesktop {
   };
 
   private readonly workingDirectory: string;
-  private readonly adapters: Map<string, RuntimeAdapter>;
+  private readonly inferenceAdapters: Map<string, InferenceAdapter>;
+  private modelDiscoveryProviders: ModelDiscoveryProvider[];
   private readonly registry: ToolRegistry;
   private readonly toolPolicy?: ToolPermissionPolicy;
   private geminiApiKey?: string;
@@ -1338,16 +1372,19 @@ export class GemmaDesktop {
 
   public constructor(options: CreateGemmaDesktopOptions = {}) {
     this.workingDirectory = options.workingDirectory ?? process.cwd();
-    this.adapters = new Map(
-      (options.adapters ?? [
-        createOllamaNativeAdapter(),
-        createOllamaOpenAICompatibleAdapter(),
-        createLmStudioNativeAdapter(),
-        createLmStudioOpenAICompatibleAdapter(),
-        createLlamaCppServerAdapter(),
-        createOmlxOpenAICompatibleAdapter(),
-      ]).map((adapter) => [adapter.identity.id, adapter]),
+    const legacyAdapters = options.adapters;
+    const inferenceAdapters =
+      options.inferenceAdapters
+      ?? legacyAdapters
+      ?? createDefaultInferenceAdapters();
+    const modelDiscoveryProviders =
+      options.modelDiscoveryProviders
+      ?? legacyAdapters
+      ?? createDefaultModelDiscoveryProviders();
+    this.inferenceAdapters = new Map(
+      inferenceAdapters.map((adapter) => [adapter.identity.id, adapter]),
     );
+    this.modelDiscoveryProviders = modelDiscoveryProviders;
     this.toolPolicy = options.toolPolicy;
     this.geminiApiKey = options.geminiApiKey;
     this.geminiApiModel = options.geminiApiModel;
@@ -1370,7 +1407,7 @@ export class GemmaDesktop {
 
   public async inspectEnvironment(): Promise<EnvironmentInspectionResult> {
     const machine = this.inspectMachine();
-    const runtimes = await Promise.all([...this.adapters.values()].map(async (adapter) => await adapter.inspect()));
+    const runtimes = await Promise.all(this.modelDiscoveryProviders.map(async (provider) => await provider.inspect()));
     const warnings = runtimes.flatMap((runtime) => runtime.warnings);
     const diagnosis = runtimes.flatMap((runtime) => runtime.diagnosis);
     return {
@@ -1383,7 +1420,7 @@ export class GemmaDesktop {
   }
 
   public async listAvailableRuntimes(): Promise<RuntimeInspectionResult[]> {
-    return await Promise.all([...this.adapters.values()].map(async (adapter) => await adapter.inspect()));
+    return await Promise.all(this.modelDiscoveryProviders.map(async (provider) => await provider.inspect()));
   }
 
   public describeSession(snapshot: SessionSnapshot): SessionDebugSnapshot {
@@ -1396,9 +1433,20 @@ export class GemmaDesktop {
   }
 
   public updateAdapters(adapters: RuntimeAdapter[]): void {
-    this.adapters.clear();
-    for (const adapter of adapters) {
-      this.adapters.set(adapter.identity.id, adapter);
+    this.updateRuntimeProviders({
+      inferenceAdapters: adapters,
+      modelDiscoveryProviders: adapters,
+    });
+  }
+
+  public updateRuntimeProviders(options: {
+    inferenceAdapters: InferenceAdapter[];
+    modelDiscoveryProviders: ModelDiscoveryProvider[];
+  }): void {
+    this.inferenceAdapters.clear();
+    this.modelDiscoveryProviders = [...options.modelDiscoveryProviders];
+    for (const adapter of options.inferenceAdapters) {
+      this.inferenceAdapters.set(adapter.identity.id, adapter);
     }
     this.capabilityContextCache.clear();
   }
@@ -1441,8 +1489,8 @@ export class GemmaDesktop {
     };
   }
 
-  private getAdapter(runtimeId: string): RuntimeAdapter {
-    const adapter = this.adapters.get(runtimeId);
+  private getAdapter(runtimeId: string): InferenceAdapter {
+    const adapter = this.inferenceAdapters.get(runtimeId);
     if (!adapter) {
       throw new GemmaDesktopError("runtime_unavailable", `Unknown runtime adapter "${runtimeId}".`);
     }
@@ -1450,7 +1498,7 @@ export class GemmaDesktop {
   }
 
   private async resolveSessionCapabilityContext(
-    adapter: RuntimeAdapter,
+    adapter: InferenceAdapter,
     modelId: string,
   ): Promise<SessionSnapshot["capabilityContext"]> {
     const cacheKey = `${adapter.identity.id}:${modelId}`;
@@ -1461,18 +1509,50 @@ export class GemmaDesktop {
 
     const lookup = (async () => {
       try {
-        const inspection = await adapter.inspect();
-        const model = inspection.models.find((candidate) => candidate.id === modelId);
+        const inspections = (await Promise.all(
+          this.modelDiscoveryProviders.map(async (provider) => {
+            try {
+              return await provider.inspect();
+            } catch {
+              return undefined;
+            }
+          }),
+        )).filter((inspection): inspection is RuntimeInspectionResult => Boolean(inspection));
+        const exactRuntimeInspection = inspections.find(
+          (inspection) => inspection.runtime.id === adapter.identity.id,
+        );
+        const modelMatch =
+          exactRuntimeInspection?.models.find((candidate) =>
+            candidate.id === modelId
+            && candidate.runtimeId === adapter.identity.id
+          )
+          ?? inspections
+            .flatMap((inspection) =>
+              inspection.models.map((model) => ({ inspection, model })),
+            )
+            .find(({ model }) =>
+              model.id === modelId
+              && model.runtimeId === adapter.identity.id
+            )?.model
+          ?? inspections
+            .flatMap((inspection) =>
+              inspection.models.map((model) => ({ inspection, model })),
+            )
+            .find(({ inspection, model }) =>
+              model.id === modelId
+              && inspection.runtime.family === adapter.identity.family
+            )?.model;
+        const runtimeCapabilities = exactRuntimeInspection?.capabilities ?? [];
         return {
           runtime: {
-            id: inspection.runtime.id,
-            displayName: inspection.runtime.displayName,
-            family: inspection.runtime.family,
-            kind: inspection.runtime.kind,
+            id: adapter.identity.id,
+            displayName: adapter.identity.displayName,
+            family: adapter.identity.family,
+            kind: adapter.identity.kind,
           },
           modelId,
-          runtimeCapabilities: structuredClone(inspection.capabilities),
-          modelCapabilities: structuredClone(model?.capabilities ?? []),
+          runtimeCapabilities: structuredClone(runtimeCapabilities),
+          modelCapabilities: structuredClone(modelMatch?.capabilities ?? []),
         };
       } catch {
         return {
@@ -1494,7 +1574,7 @@ export class GemmaDesktop {
   }
 
   private async runSubsession(
-    adapter: RuntimeAdapter,
+    adapter: InferenceAdapter,
     model: string,
     workingDirectory: string,
     request: ToolSubsessionRequest,

@@ -80,15 +80,15 @@ export function describeMemoryModelStack(
 ): string {
   switch (model.runtimeId) {
     case 'ollama-native':
-      return 'Ollama native'
+      return 'Ollama provider-native'
     case 'ollama-openai':
-      return 'Ollama OpenAI'
+      return 'Ollama OpenAI-compatible'
     case 'lmstudio-native':
-      return 'LM Studio native'
+      return 'LM Studio provider-native'
     case 'lmstudio-openai':
-      return 'LM Studio OpenAI'
+      return 'LM Studio OpenAI-compatible'
     case 'omlx-openai':
-      return 'oMLX OpenAI'
+      return 'oMLX OpenAI-compatible'
     default:
       return model.runtimeName
   }

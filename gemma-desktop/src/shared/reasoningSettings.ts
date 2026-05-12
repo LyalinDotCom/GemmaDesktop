@@ -46,7 +46,10 @@ export function supportsReasoningControlForModel(
   modelId: string,
   runtimeId: string,
 ): boolean {
-  return runtimeId === 'ollama-native' && Boolean(resolveGemmaCatalogEntryForModel(modelId))
+  return (
+    (runtimeId === 'ollama-openai' || runtimeId === 'ollama-native')
+    && Boolean(resolveGemmaCatalogEntryForModel(modelId))
+  )
 }
 
 export function listKnownReasoningControlModels(): readonly GemmaCatalogEntry[] {

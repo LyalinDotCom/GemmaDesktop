@@ -34,10 +34,13 @@ describe('reasoning settings helpers', () => {
 
   it('only exposes explicit reasoning control for guided Gemma on Ollama', () => {
     expect(
-      supportsReasoningControlForModel('gemma4:31b', 'ollama-native'),
+      supportsReasoningControlForModel('gemma4:31b', 'ollama-openai'),
     ).toBe(true)
     expect(
-      supportsReasoningControlForModel('gemma4:31b-mlx-bf16', 'ollama-native'),
+      supportsReasoningControlForModel('gemma4:31b-mlx-bf16', 'ollama-openai'),
+    ).toBe(true)
+    expect(
+      supportsReasoningControlForModel('gemma4:31b', 'ollama-native'),
     ).toBe(true)
     expect(
       supportsReasoningControlForModel('gemma4:31b', 'lmstudio-native'),

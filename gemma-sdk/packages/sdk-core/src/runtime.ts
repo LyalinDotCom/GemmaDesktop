@@ -262,7 +262,20 @@ export interface RuntimeIdentity {
 
 export interface ModelRecord {
   id: string;
+  /**
+   * Runtime id to use when opening a session with this model.
+   *
+   * This is intentionally an inference target, not necessarily the protocol
+   * that discovered the model. For example, Ollama model inventory can come
+   * from native `/api/*` endpoints while the selected session still talks to
+   * `ollama-openai`.
+   */
   runtimeId: string;
+  /**
+   * Optional runtime/protocol that produced this inventory record when it
+   * differs from the inference target.
+   */
+  discoveryRuntimeId?: string;
   kind: "llm" | "embedding" | "unknown";
   availability: "available" | "visible" | "loaded-only-view";
   metadata: Record<string, unknown>;
@@ -273,7 +286,11 @@ export interface ModelRecord {
 export interface LoadedModelInstance {
   id: string;
   modelId: string;
+  /**
+   * Runtime id that should be used for inference against this loaded model.
+   */
   runtimeId: string;
+  discoveryRuntimeId?: string;
   status: "loading" | "loaded" | "sleeping" | "unloaded" | "unknown";
   config: Record<string, unknown>;
   capabilities: CapabilityRecord[];
@@ -300,14 +317,35 @@ export interface RuntimeLifecycleController {
   downloadModel?(modelId: string): Promise<Record<string, unknown>>;
 }
 
-export interface RuntimeAdapter {
+/**
+ * A provider that discovers runtime health, model inventory, loaded instances,
+ * and model capabilities. It does not imply this same protocol should be used
+ * for inference.
+ */
+export interface ModelDiscoveryProvider {
   readonly identity: RuntimeIdentity;
   inspect(): Promise<RuntimeInspectionResult>;
+}
+
+/**
+ * A provider that sends model requests. Session runtime ids resolve to these
+ * inference adapters. Discovery may come from a different provider when that
+ * stack exposes richer inventory APIs.
+ */
+export interface InferenceAdapter {
+  readonly identity: RuntimeIdentity;
   generate(request: ChatRequest): Promise<ChatResponse>;
   stream(request: ChatRequest): AsyncIterable<AdapterStreamEvent>;
   embed?(request: EmbeddingRequest): Promise<EmbeddingResult>;
   lifecycle?: RuntimeLifecycleController;
 }
+
+/**
+ * Backward-compatible combined adapter. New SDK/app code should pass
+ * `InferenceAdapter` and `ModelDiscoveryProvider` separately when it needs to
+ * make the distinction explicit.
+ */
+export interface RuntimeAdapter extends InferenceAdapter, ModelDiscoveryProvider {}
 
 export interface MachineProfile {
   platform: NodeJS.Platform;

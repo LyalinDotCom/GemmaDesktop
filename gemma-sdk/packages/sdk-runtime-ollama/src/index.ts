@@ -6,6 +6,7 @@ import type {
   EmbeddingResult,
   ModelRecord,
   LoadedModelInstance,
+  ModelDiscoveryProvider,
   RuntimeAdapter,
   RuntimeIdentity,
   RuntimeInspectionResult,
@@ -210,6 +211,51 @@ function resolveOllamaKeepAliveValue(
     return value;
   }
   return undefined;
+}
+
+function withOllamaOpenAICompatibleSettings(request: ChatRequest): ChatRequest {
+  const ollamaOptions = resolveOllamaRequestOptions(request.settings);
+  if (!ollamaOptions) {
+    return request;
+  }
+
+  const existing =
+    request.settings?.openAICompatibleOptions
+    && typeof request.settings.openAICompatibleOptions === "object"
+    && !Array.isArray(request.settings.openAICompatibleOptions)
+      ? request.settings.openAICompatibleOptions as Record<string, unknown>
+      : {};
+  const translated: Record<string, number> = {};
+
+  for (const key of ["temperature", "top_p", "top_k", "min_p", "repeat_penalty", "seed"] as const) {
+    const value = ollamaOptions[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      translated[key] = value;
+    }
+  }
+
+  if (
+    typeof ollamaOptions.num_predict === "number"
+    && Number.isFinite(ollamaOptions.num_predict)
+    && existing.max_tokens == null
+  ) {
+    translated.max_tokens = ollamaOptions.num_predict;
+  }
+
+  if (Object.keys(translated).length === 0) {
+    return request;
+  }
+
+  return {
+    ...request,
+    settings: {
+      ...(request.settings ?? {}),
+      openAICompatibleOptions: {
+        ...translated,
+        ...existing,
+      },
+    },
+  };
 }
 
 function mapUsage(raw: Record<string, unknown>): TokenUsage | undefined {
@@ -611,7 +657,12 @@ function parseParametersText(parameters: unknown): Record<string, string | numbe
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function normalizeModel(raw: Record<string, unknown>, show?: Record<string, unknown>): ModelRecord {
+function normalizeModel(
+  raw: Record<string, unknown>,
+  show?: Record<string, unknown>,
+  runtimeId = "ollama-native",
+  discoveryRuntimeId = "ollama-native",
+): ModelRecord {
   const details = typeof raw.details === "object" ? (raw.details as Record<string, unknown>) : {};
   const modelInfo =
     typeof show?.model_info === "object" && show.model_info
@@ -689,7 +740,8 @@ function normalizeModel(raw: Record<string, unknown>, show?: Record<string, unkn
 
   return {
     id: String(raw.name ?? raw.model ?? "unknown"),
-    runtimeId: "ollama-native",
+    runtimeId,
+    discoveryRuntimeId,
     kind: "llm",
     availability: "available",
     metadata: {
@@ -706,6 +758,7 @@ function normalizeModel(raw: Record<string, unknown>, show?: Record<string, unkn
       template: show?.template,
       parameters,
       parametersText: show?.parameters,
+      discoveryRuntimeId,
     },
     capabilities: [
       ...capabilities,
@@ -721,6 +774,132 @@ function normalizeModel(raw: Record<string, unknown>, show?: Record<string, unkn
     raw: {
       tags: raw,
       show,
+    },
+  };
+}
+
+async function inspectOllamaModelInventory(input: {
+  baseUrl: string;
+  identity: RuntimeIdentity;
+  modelRuntimeId: string;
+  discoveryRuntimeId: string;
+  apiKey?: string;
+}): Promise<RuntimeInspectionResult> {
+  const { baseUrl, identity, modelRuntimeId, discoveryRuntimeId, apiKey } = input;
+  const commandVersion = await detectCommandVersion("ollama");
+  const version = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/version`).catch(() => undefined);
+  const tags = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/tags`).catch(() => undefined);
+  const ps = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/ps`).catch(() => undefined);
+  const openAIModels = identity.kind === "openai-compatible"
+    ? await fetchJson<Record<string, unknown>>(`${baseUrl}/v1/models`, {
+        headers: {
+          authorization: `Bearer ${apiKey ?? "ollama"}`,
+        },
+      }).catch(() => undefined)
+    : undefined;
+
+  const rawModels = Array.isArray(tags?.models) ? (tags.models as Array<Record<string, unknown>>) : [];
+  const shows = await Promise.all(
+    rawModels.map(async (model) => {
+      try {
+        return await postJson<Record<string, unknown>>(`${baseUrl}/api/show`, {
+          model: model.name,
+        });
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+
+  const nativeModels = rawModels.map((model, index) =>
+    normalizeModel(model, shows[index], modelRuntimeId, discoveryRuntimeId),
+  );
+  const nativeModelIds = new Set(nativeModels.map((model) => model.id));
+  const openAIOnlyModels = Array.isArray(openAIModels?.data)
+    ? (openAIModels.data as Array<Record<string, unknown>>)
+      .filter((value) => !nativeModelIds.has(String(value.id ?? "unknown")))
+      .map((value) => {
+        const modelId = String(value.id ?? "unknown");
+        return {
+          id: modelId,
+          runtimeId: modelRuntimeId,
+          discoveryRuntimeId,
+          kind: "llm" as const,
+          availability: "visible" as const,
+          metadata: {
+            ownedBy: value.owned_by,
+            discoveryRuntimeId,
+          },
+          capabilities: withInferredModelFamilyCapabilities(modelId, [], {
+            displayName: modelId,
+          }),
+          raw: {
+            openai: value,
+          },
+        };
+      })
+    : [];
+  const models = [...nativeModels, ...openAIOnlyModels];
+  const loadedInstances: LoadedModelInstance[] = Array.isArray(ps?.models)
+    ? (ps.models as Array<Record<string, unknown>>).map((value) => ({
+        id: String(value.name ?? value.model ?? "unknown"),
+        modelId: String(value.name ?? value.model ?? "unknown"),
+        runtimeId: modelRuntimeId,
+        discoveryRuntimeId,
+        status: "loaded",
+        config: {
+          size: value.size,
+          sizeVram: value.size_vram,
+          context_length: value.context_length,
+          expiresAt: value.expires_at,
+          details: value.details,
+        },
+        capabilities: [],
+        raw: value,
+      }))
+    : [];
+
+  const installed = Boolean(commandVersion) || Boolean(version) || Boolean(openAIModels);
+  const nativeReachable = Boolean(version || tags || ps);
+  const openAIReachable = Boolean(openAIModels);
+  const reachable = identity.kind === "openai-compatible"
+    ? openAIReachable || nativeReachable
+    : nativeReachable;
+  const healthy = identity.kind === "openai-compatible"
+    ? openAIReachable
+    : nativeReachable;
+  const warnings: string[] = [];
+  const diagnosis: string[] = [];
+
+  if (installed && !reachable) {
+    warnings.push("Ollama appears installed, but the local server is not reachable.");
+  }
+  if (identity.kind === "openai-compatible" && nativeReachable && !openAIReachable) {
+    warnings.push("Ollama is reachable through native inventory endpoints, but the OpenAI-compatible /v1/models endpoint did not respond.");
+  }
+  if (reachable && models.length === 0) {
+    warnings.push("Ollama is reachable, but no local models were reported.");
+  }
+  if (reachable && loadedInstances.length === 0) {
+    diagnosis.push("No models are currently loaded in memory.");
+  }
+
+  return {
+    runtime: identity,
+    installed,
+    reachable,
+    healthy,
+    version: typeof version?.version === "string" ? version.version : commandVersion,
+    capabilities: createCapabilities(),
+    models,
+    loadedInstances,
+    warnings,
+    diagnosis,
+    raw: {
+      version,
+      tags,
+      ps,
+      openAIModels,
     },
   };
 }
@@ -750,76 +929,13 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
   return {
     identity,
     async inspect(): Promise<RuntimeInspectionResult> {
-      const commandVersion = await detectCommandVersion("ollama");
-      const version = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/version`).catch(() => undefined);
-      const tags = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/tags`).catch(() => undefined);
-      const ps = await fetchJson<Record<string, unknown>>(`${baseUrl}/api/ps`).catch(() => undefined);
-
-      const rawModels = Array.isArray(tags?.models) ? (tags.models as Array<Record<string, unknown>>) : [];
-      const shows = await Promise.all(
-        rawModels.map(async (model) => {
-          try {
-            return await postJson<Record<string, unknown>>(`${baseUrl}/api/show`, {
-              model: model.name,
-            });
-          } catch {
-            return undefined;
-          }
-        }),
-      );
-
-      const models = rawModels.map((model, index) => normalizeModel(model, shows[index]));
-      const loadedInstances: LoadedModelInstance[] = Array.isArray(ps?.models)
-        ? (ps.models as Array<Record<string, unknown>>).map((value) => ({
-            id: String(value.name ?? value.model ?? "unknown"),
-            modelId: String(value.name ?? value.model ?? "unknown"),
-            runtimeId: "ollama-native",
-            status: "loaded",
-            config: {
-              size: value.size,
-              sizeVram: value.size_vram,
-              context_length: value.context_length,
-              expiresAt: value.expires_at,
-              details: value.details,
-            },
-            capabilities: [],
-            raw: value,
-          }))
-        : [];
-
-      const installed = Boolean(commandVersion) || Boolean(version);
-      const reachable = Boolean(version || tags || ps);
-      const healthy = reachable;
-      const warnings: string[] = [];
-      const diagnosis: string[] = [];
-
-      if (installed && !reachable) {
-        warnings.push("Ollama appears installed, but the local server is not reachable.");
-      }
-      if (reachable && models.length === 0) {
-        warnings.push("Ollama is reachable, but no local models were reported.");
-      }
-      if (reachable && loadedInstances.length === 0) {
-        diagnosis.push("No models are currently loaded in memory.");
-      }
-
-      return {
-        runtime: identity,
-        installed,
-        reachable,
-        healthy,
-        version: typeof version?.version === "string" ? version.version : commandVersion,
-        capabilities: createCapabilities(),
-        models,
-        loadedInstances,
-        warnings,
-        diagnosis,
-        raw: {
-          version,
-          tags,
-          ps,
-        },
-      };
+      return await inspectOllamaModelInventory({
+        baseUrl,
+        identity,
+        modelRuntimeId: "ollama-native",
+        discoveryRuntimeId: "ollama-native",
+        apiKey: options.apiKey,
+      });
     },
     async generate(request: ChatRequest): Promise<ChatResponse> {
       const nativeMessages = await toNativeMessages(request.messages);
@@ -1102,8 +1218,35 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
   };
 }
 
+export function createOllamaOpenAICompatibleModelDiscoveryProvider(
+  options: OllamaAdapterOptions = {},
+): ModelDiscoveryProvider {
+  const nativeBaseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const identity: RuntimeIdentity = {
+    id: "ollama-openai",
+    family: "ollama",
+    kind: "openai-compatible",
+    displayName: "Ollama OpenAI-Compatible",
+    endpoint: `${nativeBaseUrl}/v1`,
+  };
+
+  return {
+    identity,
+    async inspect(): Promise<RuntimeInspectionResult> {
+      return await inspectOllamaModelInventory({
+        baseUrl: nativeBaseUrl,
+        identity,
+        modelRuntimeId: "ollama-openai",
+        discoveryRuntimeId: "ollama-native",
+        apiKey: options.apiKey,
+      });
+    },
+  };
+}
+
 export function createOllamaOpenAICompatibleAdapter(options: OllamaAdapterOptions = {}): RuntimeAdapter {
-  const baseUrl = `${options.baseUrl ?? "http://127.0.0.1:11434"}/v1`;
+  const nativeBaseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const baseUrl = `${nativeBaseUrl}/v1`;
   const identity: RuntimeIdentity = {
     id: "ollama-openai",
     family: "ollama",
@@ -1115,50 +1258,21 @@ export function createOllamaOpenAICompatibleAdapter(options: OllamaAdapterOption
   return {
     identity,
     async inspect(): Promise<RuntimeInspectionResult> {
-      const commandVersion = await detectCommandVersion("ollama");
-      const modelsResponse = await fetchJson<Record<string, unknown>>(`${baseUrl}/models`, {
-        headers: {
-          authorization: `Bearer ${options.apiKey ?? "ollama"}`,
-        },
-      }).catch(() => undefined);
-      const models = Array.isArray(modelsResponse?.data)
-        ? (modelsResponse.data as Array<Record<string, unknown>>).map((value) => ({
-            id: String(value.id ?? "unknown"),
-            runtimeId: "ollama-openai",
-            kind: "llm" as const,
-            availability: "visible" as const,
-            metadata: {
-              ownedBy: value.owned_by,
-            },
-            capabilities: [],
-            raw: value,
-          }))
-        : [];
-      return {
-        runtime: identity,
-        installed: Boolean(commandVersion) || Boolean(modelsResponse),
-        reachable: Boolean(modelsResponse),
-        healthy: Boolean(modelsResponse),
-        version: commandVersion,
-        capabilities: [
-          { id: "inference.chat", scope: "request", status: "supported", source: "runtime-probe" },
-          { id: "inference.streaming", scope: "request", status: "supported", source: "runtime-probe" },
-          { id: "inference.embeddings", scope: "request", status: "supported", source: "runtime-probe" },
-          { id: "request.tool-calling", scope: "request", status: "conditional", source: "runtime-docs" },
-          { id: "request.structured-output", scope: "request", status: "conditional", source: "runtime-docs" },
-        ],
-        models,
-        loadedInstances: [],
-        warnings: models.length === 0 ? ["No OpenAI-compatible models were reported by Ollama."] : [],
-        diagnosis: [],
-        raw: modelsResponse,
-      };
+      return await createOllamaOpenAICompatibleModelDiscoveryProvider(options).inspect();
     },
     async generate(request) {
-      return await generateOpenAICompatibleResponse(baseUrl, request, options.apiKey ?? "ollama");
+      return await generateOpenAICompatibleResponse(
+        baseUrl,
+        withOllamaOpenAICompatibleSettings(request),
+        options.apiKey ?? "ollama",
+      );
     },
     async *stream(request) {
-      yield* streamOpenAICompatibleResponse(baseUrl, request, options.apiKey ?? "ollama");
+      yield* streamOpenAICompatibleResponse(
+        baseUrl,
+        withOllamaOpenAICompatibleSettings(request),
+        options.apiKey ?? "ollama",
+      );
     },
     async embed(request) {
       const response = await postJson<Record<string, unknown>>(`${baseUrl}/embeddings`, {

@@ -15,7 +15,7 @@ const BASE_BOOTSTRAP: BootstrapState = {
   message: 'Loading helper model gemma4:e2b…',
   helperModelEnabled: true,
   helperModelId: 'gemma4:e2b',
-  helperRuntimeId: 'ollama-native',
+  helperRuntimeId: 'ollama-openai',
   requiredPrimaryModelIds: ['gemma4:26b'],
   modelAvailabilityIssues: [],
   updatedAt: 0,

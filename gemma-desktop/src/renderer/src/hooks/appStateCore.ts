@@ -436,7 +436,7 @@ export const initialState: AppState = {
     message: 'Preparing local models…',
     helperModelEnabled: DEFAULT_MODEL_SELECTION_SETTINGS.helperModelEnabled,
     helperModelId: DEFAULT_HELPER_GEMMA_TAG,
-    helperRuntimeId: 'ollama-native',
+    helperRuntimeId: 'ollama-openai',
     requiredPrimaryModelIds: [DEFAULT_MODEL_SELECTION_SETTINGS.mainModel.modelId],
     modelAvailabilityIssues: [],
     updatedAt: 0,

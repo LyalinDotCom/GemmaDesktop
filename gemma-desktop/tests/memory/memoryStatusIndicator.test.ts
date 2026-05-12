@@ -62,11 +62,11 @@ describe('memory model compact labels', () => {
     expect(describeMemoryModelStack({
       runtimeId: 'ollama-native',
       runtimeName: 'Ollama Native',
-    })).toBe('Ollama native')
+    })).toBe('Ollama provider-native')
     expect(describeMemoryModelStack({
       runtimeId: 'omlx-openai',
       runtimeName: 'oMLX OpenAI-Compatible',
-    })).toBe('oMLX OpenAI')
+    })).toBe('oMLX OpenAI-compatible')
     expect(describeMemoryModelStack({
       runtimeId: 'custom-runtime',
       runtimeName: 'Custom Runtime',
@@ -276,7 +276,7 @@ describe('MemoryStatusIndicator layout', () => {
     expect(markup).toContain('<summary')
     expect(markup).not.toContain('<details open')
     expect(markup).toContain('Gemma 4 E2B')
-    expect(markup).toContain('Ollama native')
+    expect(markup).toContain('Ollama provider-native')
     expect(markup).toContain('Not MLX')
     expect(markup).toContain('Main')
     expect(markup).toContain('Assistant helper')

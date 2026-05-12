@@ -36,7 +36,7 @@ describe('session model defaults', () => {
       ).mainModel,
     ).toEqual({
       modelId: 'gemma4:31b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
 
     expect(
@@ -48,12 +48,12 @@ describe('session model defaults', () => {
       ),
     ).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
 
     expect(resolveConfiguredHelperModelTarget()).toEqual({
       modelId: 'gemma4:e2b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(resolveHelperModelEnabled()).toBe(true)
   })
@@ -105,7 +105,7 @@ describe('session model defaults', () => {
         },
         helperModel: {
           modelId: 'gemma4:e4b',
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
         },
       }),
     ).toEqual({
@@ -115,7 +115,7 @@ describe('session model defaults', () => {
       },
       helperModel: {
         modelId: 'gemma4:e4b',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       },
       helperModelEnabled: true,
     })
@@ -128,7 +128,7 @@ describe('session model defaults', () => {
         },
         helperModel: {
           modelId: 'gemma4:e4b',
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
         },
         helperModelEnabled: false,
       }).helperModelEnabled,
@@ -137,8 +137,8 @@ describe('session model defaults', () => {
 
   it('normalizes saved provider defaults onto each provider canonical API', () => {
     expect(normalizeProviderRuntimeId('lmstudio-native')).toBe('lmstudio-openai')
-    expect(normalizeProviderRuntimeId('ollama-openai')).toBe('ollama-native')
-    expect(normalizeProviderRuntimeId('ollama-native')).toBe('ollama-native')
+    expect(normalizeProviderRuntimeId('ollama-openai')).toBe('ollama-openai')
+    expect(normalizeProviderRuntimeId('ollama-native')).toBe('ollama-openai')
 
     expect(
       normalizeSessionPrimaryModelTarget({
@@ -158,7 +158,7 @@ describe('session model defaults', () => {
         },
         helperModel: {
           modelId: 'gemma4:e4b',
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
         },
       }).mainModel,
     ).toEqual({
@@ -173,7 +173,7 @@ describe('session model defaults', () => {
       }),
     ).toEqual({
       modelId: 'gemma4:31b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
   })
 
@@ -185,7 +185,7 @@ describe('session model defaults', () => {
       },
       helperModel: {
         modelId: 'gemma4:e4b',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       },
       helperModelEnabled: false,
     }

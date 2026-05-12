@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOllamaNativeAdapter } from "@gemma-sdk/runtime-ollama";
+import {
+  createOllamaNativeAdapter,
+  createOllamaOpenAICompatibleModelDiscoveryProvider,
+} from "@gemma-sdk/runtime-ollama";
 import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
 
@@ -85,6 +88,95 @@ describe("environment inspection", () => {
       },
       parametersText: "temperature 1\ntop_k 64\ntop_p 0.95",
     }));
+  });
+
+  it("can report Ollama native inventory for OpenAI-compatible inference targets", async () => {
+    const server = await createMockServer((request) => {
+      switch (request.path) {
+        case "/v1/models":
+          return {
+            json: {
+              object: "list",
+              data: [{ id: "gemma4:31b", owned_by: "ollama" }],
+            },
+          };
+        case "/api/version":
+          return {
+            json: { version: "0.6.0" },
+          };
+        case "/api/tags":
+          return {
+            json: {
+              models: [
+                {
+                  name: "gemma4:31b",
+                  size: 123,
+                  digest: "abc",
+                  details: {
+                    format: "gguf",
+                    family: "gemma",
+                    quantization_level: "Q4_K_M",
+                  },
+                },
+              ],
+            },
+          };
+        case "/api/ps":
+          return {
+            json: {
+              models: [
+                {
+                  name: "gemma4:31b",
+                  size: 123,
+                  size_vram: 45,
+                  context_length: 262144,
+                  expires_at: null,
+                },
+              ],
+            },
+          };
+        case "/api/show":
+          return {
+            json: {
+              capabilities: ["completion", "vision"],
+              model_info: {
+                context_length: 262144,
+              },
+            },
+          };
+        default:
+          throw new Error(`Unhandled route: ${request.path}`);
+      }
+    });
+    cleanup.push(server.close);
+
+    const inspection = await createOllamaOpenAICompatibleModelDiscoveryProvider({
+      baseUrl: server.url,
+    }).inspect();
+
+    expect(inspection.runtime.id).toBe("ollama-openai");
+    expect(inspection.healthy).toBe(true);
+    const discoveredModel = inspection.models[0];
+    expect(discoveredModel?.id).toBe("gemma4:31b");
+    expect(discoveredModel?.runtimeId).toBe("ollama-openai");
+    expect(discoveredModel?.discoveryRuntimeId).toBe("ollama-native");
+    expect(discoveredModel?.metadata.contextLength).toBe(262144);
+    expect(discoveredModel?.metadata.discoveryRuntimeId).toBe("ollama-native");
+
+    const loadedInstance = inspection.loadedInstances[0];
+    expect(loadedInstance?.modelId).toBe("gemma4:31b");
+    expect(loadedInstance?.runtimeId).toBe("ollama-openai");
+    expect(loadedInstance?.discoveryRuntimeId).toBe("ollama-native");
+    expect(loadedInstance?.config.context_length).toBe(262144);
+
+    expect(discoveredModel?.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "model.input.image",
+          status: "supported",
+        }),
+      ]),
+    );
   });
 
   it("does not mention llama.cpp router mode when the server endpoint is absent", async () => {

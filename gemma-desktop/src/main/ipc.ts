@@ -440,7 +440,7 @@ import {
   createSmartContentService,
 } from './smartContent'
 import {
-  createConfiguredRuntimeAdapters,
+  createConfiguredRuntimeProviders,
   mapModels as mapEnvironmentModels,
   mapRuntimes,
   type MappedModelSummary,
@@ -3119,7 +3119,7 @@ async function ensureOllamaRunning(endpoint: string): Promise<void> {
 
   if (!(await waitForOllama(endpoint, 10_000))) {
     throw new LocalRuntimeUnavailableError({
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
       endpoint,
       action: 'checking local models',
     })
@@ -3853,7 +3853,7 @@ async function ensureBootstrapReady(force = false): Promise<BootstrapStateRecord
       const unavailable =
         getLocalRuntimeUnavailableError(error)
         ?? toLocalRuntimeUnavailableError(error, {
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
           endpoint: ollamaEndpoint,
           action: 'checking local models',
         })
@@ -4994,12 +4994,12 @@ async function clearPersistedAppState(): Promise<void> {
 async function isGemmaModelInstalled(tag: string): Promise<boolean> {
   try {
     const environment = await gemmaDesktop.inspectEnvironment()
-    const ollamaNative = environment.runtimes.find(
-      (runtime) => runtime.runtime.id === 'ollama-native',
+    const ollamaInventory = environment.runtimes.find(
+      (runtime) => isOllamaModelRuntime(runtime.runtime.id),
     )
 
     return Boolean(
-      ollamaNative?.models.some((model) => model.id === tag),
+      ollamaInventory?.models.some((model) => model.id === tag),
     )
   } catch {
     return false
@@ -5243,7 +5243,7 @@ function resolveEffectiveOllamaKeepAlive(
   currentSettings: AppSettingsRecord,
   target: { runtimeId: string },
 ): string | undefined {
-  return target.runtimeId === 'ollama-native'
+  return isOllamaModelRuntime(target.runtimeId)
     ? resolveOllamaRequestKeepAlive(currentSettings.runtimes.ollama)
     : undefined
 }
@@ -8508,7 +8508,7 @@ async function resetAppDataInternal(
       geminiApiKey: nextSettings.integrations.geminiApi.apiKey,
       geminiApiModel: nextSettings.integrations.geminiApi.model,
     })
-    gemmaDesktop?.updateAdapters(createConfiguredRuntimeAdapters(nextSettings))
+    gemmaDesktop?.updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))
     broadcastEnvironmentModelsChanged()
     await refreshKeepAwakeState()
     broadcastSettingsChanged(nextSettings)
@@ -10183,11 +10183,12 @@ export async function initializeGemmaDesktop(): Promise<void> {
   await reconfigureBrowserToolManager(currentSettings)
   const extraTools = createAppTools()
   const toolPolicy = createAppToolPermissionPolicy()
+  const runtimeProviders = createConfiguredRuntimeProviders(currentSettings)
 
   try {
     gemmaDesktop = await createGemmaDesktop({
       workingDirectory: currentSettings.defaultProjectDirectory,
-      adapters: createConfiguredRuntimeAdapters(currentSettings),
+      ...runtimeProviders,
       extraTools,
       toolPolicy,
       geminiApiKey: currentSettings.integrations.geminiApi.apiKey,
@@ -10198,7 +10199,7 @@ export async function initializeGemmaDesktop(): Promise<void> {
     // Create with defaults — inspectEnvironment will just return empty
     gemmaDesktop = await createGemmaDesktop({
       workingDirectory: currentSettings.defaultProjectDirectory,
-      adapters: createConfiguredRuntimeAdapters(currentSettings),
+      ...runtimeProviders,
       extraTools,
       toolPolicy,
       geminiApiKey: currentSettings.integrations.geminiApi.apiKey,
@@ -15151,7 +15152,7 @@ export function registerIpcHandlers(): void {
         })
       }
       if (Object.prototype.hasOwnProperty.call(settingsPatch, 'runtimes')) {
-        gemmaDesktop?.updateAdapters(createConfiguredRuntimeAdapters(nextSettings))
+        gemmaDesktop?.updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))
         broadcastEnvironmentModelsChanged()
       }
       await refreshKeepAwakeState()

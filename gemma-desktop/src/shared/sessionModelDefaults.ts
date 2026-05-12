@@ -16,7 +16,7 @@ export interface AppModelSelectionSettings {
   helperModelEnabled: boolean
 }
 
-export const DEFAULT_PRIMARY_RUNTIME_ID = 'ollama-native'
+export const DEFAULT_PRIMARY_RUNTIME_ID = 'ollama-openai'
 export const LOW_MEMORY_DEFAULT_PRIMARY_MODEL_ID = 'gemma4:26b'
 export const HIGH_MEMORY_DEFAULT_PRIMARY_MODEL_ID = 'gemma4:31b'
 export const DEFAULT_PRIMARY_MODEL_MEMORY_THRESHOLD_BYTES = 32 * 1024 ** 3
@@ -27,8 +27,8 @@ export function normalizeProviderRuntimeId(runtimeId: string): string {
   switch (runtimeId) {
     case 'lmstudio-native':
       return 'lmstudio-openai'
-    case 'ollama-openai':
-      return 'ollama-native'
+    case 'ollama-native':
+      return 'ollama-openai'
     default:
       return runtimeId
   }

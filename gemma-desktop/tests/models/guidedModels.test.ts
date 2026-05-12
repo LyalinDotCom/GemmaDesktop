@@ -15,8 +15,8 @@ function makeModel(input: Partial<ModelSummary> & Pick<ModelSummary, 'id'>): Mod
   return {
     id: input.id,
     name: input.name ?? input.id,
-    runtimeId: input.runtimeId ?? 'ollama-native',
-    runtimeName: input.runtimeName ?? 'Ollama Native',
+    runtimeId: input.runtimeId ?? 'ollama-openai',
+    runtimeName: input.runtimeName ?? 'Ollama OpenAI-Compatible',
     parameterCount: input.parameterCount,
     quantization: input.quantization,
     contextLength: input.contextLength,
@@ -108,7 +108,7 @@ describe('guided Gemma model helpers', () => {
       makeModel({
         id: 'qwen3:8b',
         name: 'Qwen3 8B',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       }),
     ]
 
@@ -122,7 +122,7 @@ describe('guided Gemma model helpers', () => {
       'explore',
       {
         modelId: 'qwen3:8b',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       },
     )
 
@@ -153,7 +153,7 @@ describe('guided Gemma model helpers', () => {
       'explore',
       {
         modelId: 'gemma4:31b-mlx-bf16',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       },
     )
 
@@ -211,19 +211,19 @@ describe('guided Gemma model helpers', () => {
 
     expect(exploreDefault).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(buildDefault).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(withSmallerGemmaAlsoInstalled).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(withInstallState).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(withPersistedCustomDefault).toEqual({
       modelId: 'qwen3:8b',
@@ -249,7 +249,7 @@ describe('guided Gemma model helpers', () => {
 
     expect(target).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
   })
 
@@ -274,18 +274,18 @@ describe('guided Gemma model helpers', () => {
         ...DEFAULT_MODEL_SELECTION_SETTINGS,
         mainModel: {
           modelId: 'qwen3:14b',
-          runtimeId: 'ollama-native',
+          runtimeId: 'ollama-openai',
         },
       },
     )
 
     expect(target).toEqual({
       modelId: 'gemma4:26b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
     expect(persistedCustomDefault).toEqual({
       modelId: 'qwen3:14b',
-      runtimeId: 'ollama-native',
+      runtimeId: 'ollama-openai',
     })
   })
 
@@ -313,7 +313,7 @@ describe('guided Gemma model helpers', () => {
       'build',
       {
         modelId: 'gemma4:26b',
-        runtimeId: 'ollama-native',
+        runtimeId: 'ollama-openai',
       },
     )
 

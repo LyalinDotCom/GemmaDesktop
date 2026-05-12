@@ -44,7 +44,7 @@ import {
   type ResolvedSystemInstructionSection,
 } from "./systemPrompts.js";
 import type {
-  RuntimeAdapter,
+  InferenceAdapter,
   TokenUsage,
   ToolSubsessionRequest,
   ToolSubsessionResult,
@@ -85,7 +85,7 @@ export interface SessionCompactionState {
 }
 
 export interface SessionEngineOptions {
-  adapter: RuntimeAdapter;
+  adapter: InferenceAdapter;
   model: string;
   mode: ModeSelection;
   workingDirectory: string;
@@ -1563,7 +1563,7 @@ export function resolveSessionSystemInstructions(options: {
 export class SessionEngine {
   public readonly sessionId: string;
 
-  private readonly adapter: RuntimeAdapter;
+  private readonly adapter: InferenceAdapter;
   private readonly model: string;
   private readonly mode: ModeSelection;
   private readonly workingDirectory: string;

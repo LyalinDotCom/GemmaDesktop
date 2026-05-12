@@ -13,6 +13,7 @@ import {
 import {
   createOllamaNativeAdapter,
   createOllamaOpenAICompatibleAdapter,
+  createOllamaOpenAICompatibleModelDiscoveryProvider,
 } from '@gemma-sdk/runtime-ollama'
 import {
   buildLmStudioRequestOptionsRecord,
@@ -215,27 +216,46 @@ function modelTargetKey(target: PendingModelTarget): string {
 }
 
 export function createConfiguredRuntimeAdapters(currentSettings: RuntimeAdapterSettings) {
-  return [
-    createOllamaNativeAdapter({
-      baseUrl: currentSettings.runtimes.ollama.endpoint,
-    }),
-    createOllamaOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.ollama.endpoint,
-    }),
-    createLmStudioNativeAdapter({
-      baseUrl: currentSettings.runtimes.lmstudio.endpoint,
-    }),
-    createLmStudioOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.lmstudio.endpoint,
-    }),
-    createLlamaCppServerAdapter({
-      baseUrl: currentSettings.runtimes.llamacpp.endpoint,
-    }),
-    createOmlxOpenAICompatibleAdapter({
-      baseUrl: currentSettings.runtimes.omlx.endpoint,
-      apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
-    }),
-  ]
+  return createConfiguredRuntimeProviders(currentSettings).inferenceAdapters
+}
+
+export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapterSettings) {
+  const ollamaOpenAI = createOllamaOpenAICompatibleAdapter({
+    baseUrl: currentSettings.runtimes.ollama.endpoint,
+  })
+  const lmStudioOpenAI = createLmStudioOpenAICompatibleAdapter({
+    baseUrl: currentSettings.runtimes.lmstudio.endpoint,
+  })
+  const llamaCppServer = createLlamaCppServerAdapter({
+    baseUrl: currentSettings.runtimes.llamacpp.endpoint,
+  })
+  const omlxOpenAI = createOmlxOpenAICompatibleAdapter({
+    baseUrl: currentSettings.runtimes.omlx.endpoint,
+    apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
+  })
+
+  return {
+    inferenceAdapters: [
+      ollamaOpenAI,
+      createOllamaNativeAdapter({
+        baseUrl: currentSettings.runtimes.ollama.endpoint,
+      }),
+      lmStudioOpenAI,
+      createLmStudioNativeAdapter({
+        baseUrl: currentSettings.runtimes.lmstudio.endpoint,
+      }),
+      llamaCppServer,
+      omlxOpenAI,
+    ],
+    modelDiscoveryProviders: [
+      createOllamaOpenAICompatibleModelDiscoveryProvider({
+        baseUrl: currentSettings.runtimes.ollama.endpoint,
+      }),
+      lmStudioOpenAI,
+      llamaCppServer,
+      omlxOpenAI,
+    ],
+  }
 }
 
 export function mapModels(
@@ -424,7 +444,7 @@ export function mapModels(
       })
 
       const modelKey = modelTargetKey({
-        runtimeId: rt.runtime.id,
+        runtimeId: m.runtimeId,
         modelId: m.id,
       })
       mappedKeys.add(modelKey)
@@ -432,7 +452,7 @@ export function mapModels(
       models.push({
         id: m.id,
         name: displayName,
-        runtimeId: rt.runtime.id,
+        runtimeId: m.runtimeId,
         runtimeName: rt.runtime.displayName,
         parameterCount,
         quantization,

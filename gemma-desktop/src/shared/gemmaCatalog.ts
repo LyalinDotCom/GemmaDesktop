@@ -8,7 +8,7 @@ export interface GemmaCatalogEntry {
   family: 'gemma'
   sizeId: GemmaSizeId
   tag: string
-  runtimeId: 'ollama-native'
+  runtimeId: 'ollama-openai'
   runtimeName: 'Ollama'
   label: string
   shortLabel: string
@@ -36,7 +36,7 @@ export const GEMMA_CATALOG: readonly GemmaCatalogEntry[] = [
     family: 'gemma',
     sizeId: 'e2b',
     tag: 'gemma4:e2b',
-    runtimeId: 'ollama-native',
+    runtimeId: 'ollama-openai',
     runtimeName: 'Ollama',
     label: 'Gemma 4 E2B',
     shortLabel: 'E2B',
@@ -52,7 +52,7 @@ export const GEMMA_CATALOG: readonly GemmaCatalogEntry[] = [
     family: 'gemma',
     sizeId: 'e4b',
     tag: 'gemma4:e4b',
-    runtimeId: 'ollama-native',
+    runtimeId: 'ollama-openai',
     runtimeName: 'Ollama',
     label: 'Gemma 4 E4B',
     shortLabel: 'E4B',
@@ -68,7 +68,7 @@ export const GEMMA_CATALOG: readonly GemmaCatalogEntry[] = [
     family: 'gemma',
     sizeId: '26b',
     tag: 'gemma4:26b',
-    runtimeId: 'ollama-native',
+    runtimeId: 'ollama-openai',
     runtimeName: 'Ollama',
     label: 'Gemma 4 26B',
     shortLabel: '26B',
@@ -84,7 +84,7 @@ export const GEMMA_CATALOG: readonly GemmaCatalogEntry[] = [
     family: 'gemma',
     sizeId: '31b',
     tag: 'gemma4:31b',
-    runtimeId: 'ollama-native',
+    runtimeId: 'ollama-openai',
     runtimeName: 'Ollama',
     label: 'Gemma 4 31B',
     shortLabel: '31B',

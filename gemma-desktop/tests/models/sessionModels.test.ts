@@ -108,7 +108,7 @@ describe('buildSelectableModels', () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: 'gemma4:31b',
-          preferredRuntimeId: 'ollama-native',
+          preferredRuntimeId: 'ollama-openai',
         }),
         expect.objectContaining({
           id: 'gemma-4-31b-it-mlx',

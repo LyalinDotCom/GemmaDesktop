@@ -9,7 +9,7 @@ export interface ModelTargetOption {
   runtimeId: string
   label: string
   providerLabel: string
-  apiTypeLabel: string
+  inferenceTypeLabel: string
   optimizationTags?: string[]
 }
 
@@ -36,10 +36,10 @@ export function providerLabelForRuntime(
   return runtimeName?.trim() || runtimeId
 }
 
-export function apiTypeLabelForRuntime(runtimeId: string): string {
-  if (runtimeId.endsWith('-openai')) return 'OpenAI-compatible API'
-  if (runtimeId.endsWith('-native')) return 'Native API'
-  if (runtimeId.endsWith('-server')) return 'Server API'
+export function inferenceTypeLabelForRuntime(runtimeId: string): string {
+  if (runtimeId.endsWith('-openai')) return 'OpenAI-compatible inference'
+  if (runtimeId.endsWith('-native')) return 'Provider-native inference'
+  if (runtimeId.endsWith('-server')) return 'Server inference'
   return runtimeId
 }
 
@@ -61,7 +61,7 @@ function optionSearchText(option: ModelTargetOption): string {
   return [
     option.label,
     option.providerLabel,
-    option.apiTypeLabel,
+    option.inferenceTypeLabel,
     option.runtimeId,
     option.modelId,
     ...(option.optimizationTags ?? []),
@@ -72,7 +72,7 @@ export function formatModelTargetOptionLabel(option: ModelTargetOption): string 
   const tagLabel = option.optimizationTags?.length
     ? ` - ${option.optimizationTags.join(', ')}`
     : ''
-  return `${option.label} - ${option.providerLabel} - ${option.apiTypeLabel}${tagLabel}`
+  return `${option.label} - ${option.providerLabel} - ${option.inferenceTypeLabel}${tagLabel}`
 }
 
 function compareModelTargetOptions(
@@ -82,7 +82,7 @@ function compareModelTargetOptions(
   return (
     compareModelOptionText(left.label, right.label)
     || compareModelOptionText(left.providerLabel, right.providerLabel)
-    || compareModelOptionText(left.apiTypeLabel, right.apiTypeLabel)
+    || compareModelOptionText(left.inferenceTypeLabel, right.inferenceTypeLabel)
     || compareModelOptionText(left.runtimeId, right.runtimeId)
     || compareModelOptionText(left.modelId, right.modelId)
   )
@@ -94,7 +94,7 @@ function normalizeModelTargetOption(option: ModelTargetOption): ModelTargetOptio
     ...option,
     runtimeId,
     providerLabel: providerLabelForRuntime(runtimeId, option.providerLabel),
-    apiTypeLabel: apiTypeLabelForRuntime(runtimeId),
+    inferenceTypeLabel: inferenceTypeLabelForRuntime(runtimeId),
   }
 }
 
@@ -159,7 +159,7 @@ export function buildModelTargetOptions(input: {
         normalizedTarget.runtimeId,
         targetModel?.runtimeName,
       ),
-      apiTypeLabel: apiTypeLabelForRuntime(normalizedTarget.runtimeId),
+      inferenceTypeLabel: inferenceTypeLabelForRuntime(normalizedTarget.runtimeId),
       optimizationTags: targetModel?.optimizationTags,
     })
   }
@@ -269,7 +269,7 @@ export function ModelTargetPicker({
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
             {selectedOption
-              ? `${selectedOption.providerLabel} - ${selectedOption.apiTypeLabel}`
+              ? `${selectedOption.providerLabel} - ${selectedOption.inferenceTypeLabel}`
               : value.runtimeId}
           </span>
         </span>
@@ -289,7 +289,7 @@ export function ModelTargetPicker({
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Filter by model, provider, or API..."
+                placeholder="Filter by model, provider, or inference..."
                 className="min-w-0 flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-200 dark:placeholder:text-zinc-500"
               />
             </div>
@@ -346,7 +346,7 @@ export function ModelTargetPicker({
                             selected ? 'text-indigo-200' : 'text-zinc-400'
                           }`}
                         >
-                          {option.apiTypeLabel} - {option.runtimeId}
+                          {option.inferenceTypeLabel} - {option.runtimeId}
                         </span>
                       </span>
                       {selected && (

@@ -778,11 +778,11 @@ export function SettingsModal({
 
                   <SettingsSection
                     title="Managed Ollama Runtime Profiles"
-                    description="Gemma Desktop sends explicit Ollama options on native chat requests and warm-loads instead of relying on hidden server defaults. Profiles below are enforced on ollama-native; the OpenAI-compatible endpoint cannot set context size per request."
+                    description="Gemma Desktop uses Ollama native inventory and warm-load endpoints for model metadata and residency, while default chat sessions use the OpenAI-compatible endpoint. Sampling options are forwarded to compatible chat requests when supported; context size is enforced during warm-loads."
                   >
                   {listKnownReasoningControlModels().map((model) => {
                     const runtimeModel = models.find((entry) =>
-                      entry.id === model.tag && entry.runtimeId === 'ollama-native',
+                      entry.id === model.tag && entry.runtimeId === 'ollama-openai',
                     )
                     const profile = local.ollama.modelProfiles[model.tag] ?? {}
                     const baseParameters = runtimeModel?.runtimeConfig?.baseParameters

@@ -172,11 +172,11 @@ describe('main process architecture', () => {
 
     expect(readSource(appToolsSourcePath)).toContain('createAppTools')
     expect(readSource(sessionStoreSourcePath)).toContain('class SessionStore')
-    expect(readSource(modelMappingSourcePath)).toContain('createConfiguredRuntimeAdapters')
+    expect(readSource(modelMappingSourcePath)).toContain('createConfiguredRuntimeProviders')
     expect(readSource(sessionConfigSourcePath)).toContain('APP_SESSION_METADATA_KEY')
     expect(readSource(streamingMessagesSourcePath)).toContain('StreamingContentBlock')
 
-    expect(ipcSource).not.toMatch(/function\s+(sanitizeVersion|mapRuntimes|deriveOptimizationTags|createConfiguredRuntimeAdapters)\b/)
+    expect(ipcSource).not.toMatch(/function\s+(sanitizeVersion|mapRuntimes|deriveOptimizationTags|createConfiguredRuntimeAdapters|createConfiguredRuntimeProviders)\b/)
     expect(ipcSource).not.toMatch(/type\s+Streaming(Text|Thinking|FileEdit|Warning)Block\b/)
     expect(ipcSource).not.toMatch(/interface\s+AppSessionConfig\b/)
     expect(ipcSource).not.toContain("APP_SESSION_METADATA_KEY = 'gemmaDesktopApp'")

@@ -7,7 +7,7 @@ import {
 
 export const TALK_SESSION_ID = GLOBAL_CHAT_FALLBACK_SESSION_ID
 export const TALK_SESSION_TITLE = GLOBAL_CHAT_LABEL
-export const TALK_SESSION_RUNTIME_ID = 'ollama-native'
+export const TALK_SESSION_RUNTIME_ID = 'ollama-openai'
 export const GLOBAL_SESSION_STATE_DIRECTORY_NAME = 'global-session-state'
 export const TALK_SESSION_DIRECTORY_NAME = 'talk'
 export const TALK_SESSION_CONVERSATIONS_DIRECTORY_NAME = 'conversations'
