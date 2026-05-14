@@ -744,6 +744,46 @@ describe('Agent', () => {
     });
   });
 
+  it('rejects cosmetic validated-version comments after validation already passed', async () => {
+    let patchRuns = 0;
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+        '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1,3 +1,4 @@\\n // ============================================================\\n // Gemma Racing - A simple 3D driving game with Three.js\\n+// Version 2.0 - All features validated\\n // ============================================================\\n"}}',
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run command',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n125 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add a HUD visibility toggle and run node validate.js.');
+
+    expect(patchRuns).toBe(0);
+    expect(result.answer).toBe('done');
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolResult: {
+        ok: false,
+        output: expect.stringContaining('Refusing cosmetic success-message edit')
+      }
+    });
+  });
+
   it('blocks repeated file mutation after patch context failure until the agent rereads context', async () => {
     let patchRuns = 0;
     const agent = new Agent({
@@ -794,6 +834,294 @@ describe('Agent', () => {
     });
     expect(result.turns[2]).toMatchObject({ toolCall: { tool: 'read_file' }, toolResult: { ok: true } });
     expect(result.turns[3]).toMatchObject({ toolCall: { tool: 'apply_patch' }, toolResult: { ok: true } });
+  });
+
+  it('blocks retrying the exact same stale apply_patch after rereading context', async () => {
+    let patchRuns = 0;
+    const stalePatch = '--- a/index.html\\n+++ b/index.html\\n@@ -24,6 +24,7 @@\\n </div>\\n+<canvas id="minimap"></canvas>\\n <div id="loading">Loading</div>\\n';
+    const fixedPatch = '--- a/index.html\\n+++ b/index.html\\n@@ -27,2 +27,3 @@\\n </div>\\n+<canvas id="minimap"></canvas>\\n <div id="loading">Loading</div>\\n';
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        '{"tool":"read_file","args":{"path":"index.html","offset":24,"limit":8}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        JSON.stringify({ tool: 'apply_patch', args: { patch: fixedPatch } }),
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            if (patchRuns === 1) {
+              return {
+                ok: false,
+                output: 'apply_patch: hunk @@ -24 did not match in index.html.'
+              };
+            }
+            return { ok: true, output: 'updated index.html (1 hunk)' };
+          }
+        },
+        {
+          name: 'read_file',
+          description: 'read file',
+          async run() {
+            return { ok: true, output: 'current lines 24-31' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('add a minimap canvas');
+
+    expect(result.answer).toBe('done');
+    expect(patchRuns).toBe(2);
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'apply_patch' },
+      toolResult: {
+        ok: false,
+        meta: { presentation: 'notice' },
+        output: expect.stringContaining('exact same apply_patch hunk already failed')
+      }
+    });
+    expect(result.turns[3]).toMatchObject({ toolCall: { tool: 'apply_patch' }, toolResult: { ok: true } });
+  });
+
+  it('allows a narrowed same-region apply_patch after rereading context', async () => {
+    let patchRuns = 0;
+    const stalePatch = `--- a/validate.js\n+++ b/validate.js\n@@ -353,18 +353,30 @@ async function runBrowserSmoke() {\n         );\n+        await client.send('Input.dispatchKeyEvent', {});\n         check(\n`;
+    const narrowedPatch = `--- a/validate.js\n+++ b/validate.js\n@@ -353,5 +353,10 @@ async function runBrowserSmoke() {\n         );\n+        check(\n+            'Browser smoke handbrake creates skid marks',\n+            handbrake.skidMarkCount > 0\n+        );\n         check(\n`;
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        '{"tool":"read_file","args":{"path":"validate.js","offset":350,"limit":12}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: narrowedPatch } }),
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            if (patchRuns === 1) {
+              return {
+                ok: false,
+                output: 'apply_patch: hunk @@ -353 did not match in validate.js.'
+              };
+            }
+            return { ok: true, output: 'updated validate.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'read_file',
+          description: 'read file',
+          async run() {
+            return { ok: true, output: 'current validate lines 350-361' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('add skid mark validation');
+
+    expect(result.answer).toBe('done');
+    expect(patchRuns).toBe(2);
+    expect(result.turns[2]).toMatchObject({ toolCall: { tool: 'apply_patch' }, toolResult: { ok: true } });
+  });
+
+  it('blocks read-only inspection loops after stale apply_patch context has already been refreshed', async () => {
+    let patchRuns = 0;
+    let inspectionRuns = 0;
+    const stalePatch = '--- a/game.js\\n+++ b/game.js\\n@@ -100,3 +100,4 @@\\n const speed = 0;\\n+const rainMode = true;\\n';
+    const fixedPatch = '--- a/game.js\\n+++ b/game.js\\n@@ -3,2 +3,3 @@\\n const speed = 0;\\n+const rainMode = true;\\n';
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        '{"tool":"read_file","args":{"path":"game.js","offset":95,"limit":20}}',
+        '{"tool":"search_text","args":{"path":"game.js","query":"speed"}}',
+        '{"tool":"read_file","args":{"path":"game.js","offset":1,"limit":20}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: fixedPatch } }),
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            if (patchRuns === 1) {
+              return {
+                ok: false,
+                output: 'apply_patch: hunk @@ -100 did not match in game.js.'
+              };
+            }
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'read_file',
+          description: 'read file',
+          async run() {
+            inspectionRuns += 1;
+            return { ok: true, output: 'current game.js lines' };
+          }
+        },
+        {
+          name: 'search_text',
+          description: 'search file',
+          async run() {
+            inspectionRuns += 1;
+            return { ok: true, output: '3:const speed = 0;' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('add rain mode to the web game');
+
+    expect(result.answer).toBe('done');
+    expect(patchRuns).toBe(2);
+    expect(inspectionRuns).toBe(2);
+    expect(result.turns[3]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'read_file' },
+      toolResult: {
+        ok: false,
+        meta: { presentation: 'notice' },
+        output: expect.stringContaining('Read-only recovery loop guard')
+      }
+    });
+    expect(result.turns[4]).toMatchObject({ toolCall: { tool: 'apply_patch' }, toolResult: { ok: true } });
+  });
+
+  it('blocks shell-based read-only inspection loops after stale apply_patch context', async () => {
+    let patchRuns = 0;
+    let commandRuns = 0;
+    const stalePatch = '--- a/game.js\\n+++ b/game.js\\n@@ -100,3 +100,4 @@\\n const speed = 0;\\n+const rainMode = true;\\n';
+    const fixedPatch = '--- a/game.js\\n+++ b/game.js\\n@@ -3,2 +3,3 @@\\n const speed = 0;\\n+const rainMode = true;\\n';
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        '{"tool":"read_file","args":{"path":"game.js","offset":95,"limit":20}}',
+        '{"tool":"exec_command","args":{"command":"sed -n 90,110p game.js"}}',
+        '{"tool":"exec_command","args":{"command":"head -n 120 game.js"}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: fixedPatch } }),
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            if (patchRuns === 1) {
+              return {
+                ok: false,
+                output: 'apply_patch: hunk @@ -100 did not match in game.js.'
+              };
+            }
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'read_file',
+          description: 'read file',
+          async run() {
+            return { ok: true, output: 'current game.js lines' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run command',
+          async run() {
+            commandRuns += 1;
+            return { ok: true, output: 'Command exited with 0.\ncurrent game.js lines' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('add rain mode to the web game');
+
+    expect(result.answer).toBe('done');
+    expect(patchRuns).toBe(2);
+    expect(commandRuns).toBe(1);
+    expect(result.turns[3]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'exec_command' },
+      toolResult: {
+        ok: false,
+        meta: { presentation: 'notice' },
+        output: expect.stringContaining('Read-only recovery loop guard')
+      }
+    });
+    expect(result.turns[4]).toMatchObject({ toolCall: { tool: 'apply_patch' }, toolResult: { ok: true } });
+  });
+
+  it('blocks repeated stale apply_patch attempts against the same file', async () => {
+    let patchRuns = 0;
+    const stalePatch = '--- a/game.js\\n+++ b/game.js\\n@@ -609,17 +609,63 @@ function createCheckpoints() {\\n-        scene.add(marker);\\n+        scene.add(gate);\\n';
+    const sameRangePatch = '--- a/game.js\\n+++ b/game.js\\n@@ -609,15 +609,15 @@ function createCheckpoints() {\\n-        scene.add(marker);\\n+        scene.add(leftPost);\\n+        scene.add(rightPost);\\n';
+    const focusedPatch = '--- a/game.js\\n+++ b/game.js\\n@@ -616,7 +616,10 @@ function createCheckpoints() {\\n-        const markerGeo = new THREE.SphereGeometry(0.5, 6, 6);\\n+        const leftPost = new THREE.Mesh(postGeo, postMat);\\n+        const rightPost = new THREE.Mesh(postGeo, postMat);\\n+        scene.add(leftPost);\\n+        scene.add(rightPost);\\n';
+    const fourthPatch = '--- a/game.js\\n+++ b/game.js\\n@@ -620,5 +620,8 @@ function createCheckpoints() {\\n-        marker.position.copy(pt);\\n+        leftPost.position.copy(pt);\\n+        rightPost.position.copy(pt);\\n';
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'apply_patch', args: { patch: stalePatch } }),
+        '{"tool":"read_file","args":{"path":"game.js","offset":605,"limit":35}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: sameRangePatch } }),
+        '{"tool":"read_file","args":{"path":"game.js","offset":605,"limit":35}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: focusedPatch } }),
+        '{"tool":"read_file","args":{"path":"game.js","offset":616,"limit":20}}',
+        JSON.stringify({ tool: 'apply_patch', args: { patch: fourthPatch } }),
+        '{"tool":"write_file","args":{"path":"game.js","content":"const checkpointGates = true;\\n"}}',
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'apply patch',
+          async run() {
+            patchRuns += 1;
+            return {
+              ok: false,
+              output: 'apply_patch: hunk @@ -609 did not match in game.js.'
+            };
+          }
+        },
+        {
+          name: 'read_file',
+          description: 'read file',
+          async run() {
+            return { ok: true, output: 'current checkpoint lines 605-639' };
+          }
+        },
+        {
+          name: 'write_file',
+          description: 'write file',
+          async run() {
+            return { ok: true, output: 'wrote game.js' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('replace checkpoint marker spheres with gates');
+
+    expect(result.answer).toBe('done');
+    expect(patchRuns).toBe(3);
+    expect(result.turns[6]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'apply_patch' },
+      toolResult: {
+        ok: false,
+        meta: { presentation: 'notice' },
+        output: expect.stringContaining('Repeated apply_patch attempts have failed')
+      }
+    });
+    expect(result.turns[7]).toMatchObject({ toolCall: { tool: 'write_file' }, toolResult: { ok: true } });
   });
 
   it('repairs invalid JSON escapes in a tool call instead of rendering raw tool JSON', async () => {
@@ -1234,6 +1562,137 @@ describe('Agent', () => {
     expect(result.turns[0]).toMatchObject({ kind: 'final' });
   });
 
+  it('recovers tool calls emitted with smart double quotes', async () => {
+    const seen: string[] = [];
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        '{“tool”:“echo”,“args”:{“message”:“hi”}}',
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo a message',
+          async run(args) {
+            seen.push(String(args.message));
+            return { ok: true, output: String(args.message) };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('use echo');
+    expect(seen).toEqual(['hi']);
+    expect(result.answer).toBe('done');
+    expect(result.stats).toMatchObject({ turns: 2, toolCalls: 1 });
+  });
+
+  it('retries malformed smart-quote tool calls instead of accepting them as final answers', async () => {
+    const seen: string[] = [];
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        '{“tool”:“read_file”,“args”:“path”:“game.js”}',
+        '{"tool":"read_file","args":{"path":"game.js"}}',
+        '{"answer":"done"}'
+      ]),
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read a file',
+          async run(args) {
+            seen.push(String(args.path));
+            return { ok: true, output: 'file contents' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('read game.js');
+    expect(seen).toEqual(['game.js']);
+    expect(result.answer).toBe('done');
+    expect(result.stats).toMatchObject({ turns: 2, toolCalls: 1 });
+  });
+
+  it('retries escaped tool-call JSON embedded in a workspace final answer', async () => {
+    let patchRuns = 0;
+    let readRuns = 0;
+    const patch = '--- a/game.js\n+++ b/game.js\n@@ -1 +1 @@\n-old\n+new\n';
+    const provider = new ScriptedProvider([
+      JSON.stringify({ tool: 'read_file', args: { path: 'game.js' } }),
+      JSON.stringify({
+        answer: `Tool payload: ${JSON.stringify({ tool: 'apply_patch', args: { patch } }).replace(/"/g, '\\"')}`
+      }),
+      JSON.stringify({ tool: 'apply_patch', args: { patch } }),
+      '{"answer":"done"}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read a file',
+          async run() {
+            readRuns += 1;
+            return { ok: true, output: 'old' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'apply a patch',
+          async run() {
+            patchRuns += 1;
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Update game.js with the requested fix.');
+
+    expect(result.answer).toBe('done');
+    expect(readRuns).toBe(1);
+    expect(patchRuns).toBe(1);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('premature final answer'))).toBe(true);
+  });
+
+  it('marks repeated escaped tool-call final answers incomplete after retry budget is exhausted', async () => {
+    const patch = '--- a/game.js\n+++ b/game.js\n@@ -1 +1 @@\n-old\n+new\n';
+    const escapedToolAnswer = JSON.stringify({
+      answer: `Tool payload: ${JSON.stringify({ tool: 'apply_patch', args: { patch } }).replace(/"/g, '\\"')}`
+    });
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        JSON.stringify({ tool: 'read_file', args: { path: 'game.js' } }),
+        escapedToolAnswer,
+        escapedToolAnswer,
+        escapedToolAnswer
+      ]),
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read a file',
+          async run() {
+            return { ok: true, output: 'old' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'apply a patch',
+          async run() {
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Update game.js with the requested fix.');
+
+    expect(result.completionStatus).toBe('incomplete');
+    expect(result.completionReason).toBe('final_response_unverified');
+    expect(result.answer).toContain('session evidence is incomplete');
+    expect(result.answer).toContain('premature final answer');
+  });
+
   it('uses the first complete JSON object from noisy model output', async () => {
     const agent = new Agent({
       provider: new ScriptedProvider(['{"answer":"first"}\n{"answer":"second"}'])
@@ -1523,6 +1982,224 @@ describe('Agent', () => {
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Missing validation evidence for: npm test, npm run build'))).toBe(true);
   });
 
+  it('retries completed change claims when only inspection and validation ran', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"read_file","args":{"path":"game.js"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"answer":"Pause and resume are implemented, and validation passed."}',
+      '{"tool":"write_file","args":{"path":"game.js","content":"let paused = false;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"answer":"Added P pause/resume and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: 'const speed = 0;' };
+          }
+        },
+        {
+          name: 'write_file',
+          description: 'write',
+          capability: 'write',
+          async run() {
+            return { ok: true, output: 'wrote game.js' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: true, output: '62 passed, 0 failed' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add P key pause/resume support to this web game and run node --check game.js plus node validate.js.');
+
+    expect(result.answer).toBe('Added P pause/resume and validation passed.');
+    expect(result.stats).toMatchObject({ turns: 5, toolCalls: 4 });
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'tool', 'tool', 'tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Successful validation alone is not evidence'))).toBe(true);
+  });
+
+  it('retries pending next-step answers for requested workspace changes after read-only tools', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"read_file","args":{"path":"game.js"}}',
+      '{"answer":"I did not edit any files this turn. To proceed, the next step should add the C-key camera toggle to game.js."}',
+      '{"tool":"write_file","args":{"path":"game.js","content":"let cameraMode = \\"chase\\";\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js"}}',
+      '{"answer":"Added the C-key camera toggle and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: 'const camera = {};' };
+          }
+        },
+        {
+          name: 'write_file',
+          description: 'write',
+          capability: 'write',
+          async run() {
+            return { ok: true, output: 'wrote game.js' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add C-key camera-mode support to this web game and validate it.');
+
+    expect(result.answer).toBe('Added the C-key camera toggle and validation passed.');
+    expect(result.stats).toMatchObject({ turns: 4, toolCalls: 3 });
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'tool', 'tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('tool history only shows inspection'))).toBe(true);
+  });
+
+  it('retries partial-implementation final answers for requested workspace changes after mutation', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"write_file","args":{"path":"game.js","content":"let rainMode = true;\\n"}}',
+      '{"answer":"I have partially implemented the wet grip feature. The physics integration has not been applied yet. Would you like me to retry the patch?"}',
+      '{"tool":"write_file","args":{"path":"game.js","content":"let rainMode = true;\\nlet wetGripMultiplier = 0.72;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"answer":"Wet grip is implemented and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'write_file',
+          description: 'write',
+          capability: 'write',
+          async run() {
+            return { ok: true, output: 'wrote game.js' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Make rain mode affect gameplay in this web game and validate it.');
+
+    expect(result.answer).toBe('Wet grip is implemented and validation passed.');
+    expect(result.stats).toMatchObject({ turns: 4, toolCalls: 3 });
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('local work is still pending'))).toBe(true);
+  });
+
+  it('retries success answers when a failed patch target was not repaired', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"apply_patch","args":{"patch":"--- a/index.html\\n+++ b/index.html\\n@@ -1 +1,2 @@\\n <div id=\\"hud\\"></div>\\n+<div id=\\"fuel-display\\">Fuel: 100%</div>\\n"}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/styles.css\\n+++ b/styles.css\\n@@ -1,2 +1,3 @@\\n * { box-sizing: border-box; }\\n #hud { color: white; }\\n+#fuel-display { color: green; }\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"answer":"Fuel meter added and validation passed."}',
+      '{"tool":"read_file","args":{"path":"styles.css"}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/styles.css\\n+++ b/styles.css\\n@@ -1 +1,2 @@\\n #hud { color: white; }\\n+#fuel-display { color: green; }\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"answer":"Fuel meter added and validation passed."}',
+      '{"answer":"Fuel meter added and validation passed."}'
+    ]);
+    let patchCalls = 0;
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: '#hud { color: white; }' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          capability: 'write',
+          async run() {
+            patchCalls += 1;
+            if (patchCalls === 2) {
+              return { ok: false, output: 'apply_patch: hunk @@ -1 did not match in styles.css.' };
+            }
+            return { ok: true, output: 'updated file (1 hunk)' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n169 passed, 0 failed' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add a fuel meter to the racing game and run node validate.js.');
+
+    expect(result.answer).toBe('Fuel meter added and validation passed.');
+    expect(patchCalls).toBe(3);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('apply_patch attempt failed for styles.css'))).toBe(true);
+  });
+
+  it('marks final response pass incomplete when requested changes remain next steps', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"read_file","args":{"path":"game.js"}}',
+      '{"answer":"I did not edit any files. To proceed, the next step should add the C-key camera toggle to game.js."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      maxTurns: 1,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: 'const camera = {};' };
+          }
+        },
+        {
+          name: 'write_file',
+          description: 'write',
+          capability: 'write',
+          async run() {
+            return { ok: true, output: 'unused' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add C-key camera-mode support to this web game.');
+
+    expect(result).toMatchObject({
+      completionStatus: 'incomplete',
+      completionReason: 'final_response_unverified'
+    });
+    expect(result.answer).toContain('could not be accepted as completed');
+    expect(result.answer).toContain('premature final answer');
+  });
+
   it('retries claimed npm validation when requested build evidence is missing', async () => {
     const provider = new ScriptedProvider([
       '{"tool":"write_file","args":{"path":"package.json","content":"{\\"scripts\\":{\\"test\\":\\"node test.js\\",\\"build\\":\\"node --check index.js\\"}}"}}',
@@ -1593,7 +2270,7 @@ describe('Agent', () => {
 
     expect(result.answer).toBe('Created task_file/output_data/answer.py.');
     expect(result.stats).toMatchObject({ turns: 3, toolCalls: 2 });
-    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('premature final answer'))).toBe(true);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('tool history only shows inspection'))).toBe(true);
   });
 
   it('retries final answers after an unvalidated rewrite following a failed run', async () => {
@@ -1824,6 +2501,47 @@ describe('Agent', () => {
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('requests_bucket_1.jsonl Cost 4.310e+11 > 3.000e+11'))).toBe(true);
   });
 
+  it('rejects finalize_build when the prompt explicitly forbids it', async () => {
+    let finalized = false;
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node --check validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"verified","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js && node --check validate.js","status":"passed"}],"instructionChecklist":["verified syntax"]}}',
+      '{"answer":"Syntax checks passed and overspeed validation lines are present."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n152:speed warning state\n153:speed warning uses\n688:Browser smoke speed warning' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            finalized = true;
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Verification-only. Do not call finalize_build. Run syntax checks and answer.');
+
+    expect(finalized).toBe(false);
+    expect(result.answer).toBe('Syntax checks passed and overspeed validation lines are present.');
+    expect(result.stats).toMatchObject({ turns: 3, toolCalls: 2 });
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[1]?.content).toContain('explicitly said not to call finalize_build');
+  });
+
   it('rejects passed finalize_build validation without matching command evidence', async () => {
     const provider = new ScriptedProvider([
       '{"tool":"write_file","args":{"path":"app.js","content":"console.log(1)"}}',
@@ -1868,7 +2586,715 @@ describe('Agent', () => {
       toolCall: { tool: 'finalize_build' },
       toolResult: { ok: false, meta: { presentation: 'notice' } }
     });
-    expect(result.turns[1]?.content).toContain('Missing successful exec_command result for: npm start');
+    expect(result.turns[1]?.content).toContain('Missing completed successful command result for: npm start');
+    expect(result.turns[3]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('rejects finalize_build for mutation requests when only inspection and validation ran', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"read_file","args":{"path":"game.js"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added visible checkpoint markers.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js","status":"passed"},{"command":"node validate.js","status":"passed"}],"instructionChecklist":["checkpoint markers added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const game = true;\\n+const checkpointMarkers = true;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added visible checkpoint markers.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js","status":"passed"},{"command":"node validate.js","status":"passed"}],"instructionChecklist":["checkpoint markers added"]}}',
+      '{"answer":"Added checkpoint markers and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: 'const game = true;' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n82 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add visible checkpoint markers to the racing game and run node --check game.js plus node validate.js.');
+
+    expect(result.answer).toBe('Added checkpoint markers and validation passed.');
+    expect(result.stats).toMatchObject({ turns: 7, toolCalls: 6 });
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[2]?.content).toContain('has not produced substantive file mutation evidence');
+    expect(result.turns[5]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('does not treat whitespace-only apply_patch changes as mutation evidence for finalize_build', async () => {
+    let patchCalls = 0;
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added overspeed warning.","artifacts":["game.js","validate.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["overspeed warning added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/validate.js\\n+++ b/validate.js\\n@@ -1 +1,2 @@\\n const checks = true;\\n+\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added overspeed warning.","artifacts":["game.js","validate.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["overspeed warning added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const speed = 0;\\n+const speedWarning = speed > 55;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added overspeed warning.","artifacts":["game.js","validate.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["overspeed warning added"]}}',
+      '{"answer":"Added overspeed warning and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n231 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            patchCalls += 1;
+            return {
+              ok: true,
+              output: patchCalls === 1 ? 'updated validate.js (1 hunk)' : 'updated game.js (1 hunk)',
+              meta: {
+                fileChange: {
+                  tool: 'apply_patch',
+                  changes: patchCalls === 1
+                    ? [{
+                        path: 'validate.js',
+                        status: 'updated',
+                        linesAdded: 1,
+                        linesRemoved: 0,
+                        hunks: [{ oldStart: 1, newStart: 1, oldLines: [], newLines: [''] }]
+                      }]
+                    : [{
+                        path: 'game.js',
+                        status: 'updated',
+                        linesAdded: 1,
+                        linesRemoved: 0,
+                        hunks: [{ oldStart: 1, newStart: 1, oldLines: [], newLines: ['const speedWarning = speed > 55;'] }]
+                      }]
+                }
+              }
+            };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add an overspeed warning to the racing game and run node validate.js.');
+
+    expect(result.answer).toBe('Added overspeed warning and validation passed.');
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[1]?.content).toContain('has not produced substantive file mutation evidence');
+    expect(result.turns[4]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[4]?.content).toContain('has not produced substantive file mutation evidence');
+    expect(result.turns[7]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('still requires mutation evidence when a continuation asks for a change but forbids unrelated features', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Verified tire wear.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js && node validate.js","status":"passed"}],"instructionChecklist":["tire wear implemented","tire wear validation added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const tireWear = 100;\\n+const wornTireGripPenalty = true;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Implemented and verified tire wear.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js && node validate.js","status":"passed"}],"instructionChecklist":["tire wear implemented","tire wear validation added"]}}',
+      '{"answer":"Implemented tire wear and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n191 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run(
+      'Continue the same tire wear recovery. Finish the missing tire wear pieces: add tire DOM wiring, apply worn tire steering penalty, reset tireWear with R, update HUD text/classes, and update validator coverage. Do not add a new feature unless validation exposes a real bug. Run node --check game.js && node validate.js.'
+    );
+
+    expect(result.answer).toBe('Implemented tire wear and validation passed.');
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[1]?.content).toContain('has not produced substantive file mutation evidence');
+    expect(result.turns[4]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('rejects finalize_build when validation output does not satisfy a requested pass-count increase', async () => {
+    let validationRuns = 0;
+    const provider = new ScriptedProvider([
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const game = true;\\n+const tractionControl = false;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added traction control. 198 passed, 0 failed.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js && node validate.js","status":"passed"}],"instructionChecklist":["traction control added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/validate.js\\n+++ b/validate.js\\n@@ -1 +1,2 @@\\n const checks = 198;\\n+const tractionChecks = 3;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node --check game.js && node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added traction control. 201 passed, 0 failed.","artifacts":["game.js","validate.js"],"validation":[{"command":"node --check game.js && node validate.js","status":"passed"}],"instructionChecklist":["traction control added","traction validation added"]}}',
+      '{"answer":"Added traction control and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            return { ok: true, output: 'updated file (1 hunk)' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            validationRuns += 1;
+            return {
+              ok: true,
+              output: validationRuns === 1
+                ? 'Command exited with 0.\n=== Results: 198 passed, 0 failed ==='
+                : 'Command exited with 0.\n=== Results: 201 passed, 0 failed ==='
+            };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add traction control and update validation. Only finalize when the pass count is above 198.');
+
+    expect(result.answer).toBe('Added traction control and validation passed.');
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[2]?.content).toContain('validation pass count above 198');
+    expect(result.turns[5]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('allows finalize_build without mutation evidence for verification-only runs', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Verification complete: 169 passed, 0 failed.","artifacts":["game.js","validate.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["distance odometer verified","RPM tachometer verified","drift scoring verified"]}}',
+      '{"answer":"Verification complete: 169 passed, 0 failed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          capability: 'command',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n169 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Verification-only run. Run node validate.js and confirm the current game behavior.');
+
+    expect(result.answer).toBe('Verification complete: 169 passed, 0 failed.');
+    expect(result.stats).toMatchObject({ turns: 3, toolCalls: 2 });
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('does not treat stderr/stdout redirection as mutation evidence for finalize_build', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"read_file","args":{"path":"game.js"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js 2>&1 | tail -5"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added headlight toggle.","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["headlight toggle added"]}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const game = true;\\n+const headlights = true;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"Added headlight toggle.","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["headlight toggle added"]}}',
+      '{"answer":"Added headlight toggle and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'read_file',
+          description: 'read',
+          async run() {
+            return { ok: true, output: 'const game = true;' };
+          }
+        },
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n119 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add a headlight toggle to the racing game and run node validate.js.');
+
+    expect(result.answer).toBe('Added headlight toggle and validation passed.');
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[2]?.content).toContain('has not produced substantive file mutation evidence');
+    expect(result.turns[5]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('rejects cosmetic validation-status shell edits after validation-only finalize rejection', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"done","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["high contrast added"]}}',
+      '{"tool":"exec_command","args":{"command":"sed -i \'1s/^/\\\\/\\\\/ Validation pass: prompt 77 - all checks confirmed\\\\n/\' game.js"}}',
+      '{"tool":"apply_patch","args":{"patch":"--- a/game.js\\n+++ b/game.js\\n@@ -1 +1,2 @@\\n const game = true;\\n+const highContrastMode = true;\\n"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"added high contrast","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["high contrast added"]}}',
+      '{"answer":"Added high contrast and validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n151 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'apply_patch',
+          description: 'patch',
+          async run() {
+            return { ok: true, output: 'updated game.js (1 hunk)' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Add high contrast HUD mode and run node validate.js.');
+
+    expect(result.answer).toBe('Added high contrast and validation passed.');
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false }
+    });
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'exec_command' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[2]?.content).toContain('Refusing cosmetic validation-status shell edit');
+    expect(result.turns[5]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('does not reuse duplicate validation commands across mutating shell commands', async () => {
+    const commands: string[] = [];
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"exec_command","args":{"command":"sed -i \'s/current/new/\' game.js"}}',
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"answer":"validated after shell mutation."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run(args) {
+            commands.push(String(args.command ?? ''));
+            return { ok: true, output: 'Command exited with 0.' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Edit the game with sed and run node validate.js.');
+
+    expect(result.answer).toBe('validated after shell mutation.');
+    expect(commands).toEqual([
+      'node validate.js',
+      "sed -i 's/current/new/' game.js",
+      'node validate.js'
+    ]);
+    expect(result.turns[2]?.content).not.toContain('reused previous successful validation');
+  });
+
+  it('accepts finalize_build validation backed by combined path-qualified commands', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node --check test-projects/game/game.js && node test-projects/game/validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"done","artifacts":["test-projects/game/game.js"],"validation":[{"command":"node --check game.js","status":"passed"},{"command":"node validate.js","status":"passed"}],"instructionChecklist":["validated game"]}}',
+      '{"answer":"validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('validate the game');
+
+    expect(result.answer).toBe('validation passed.');
+    expect(result.stats).toMatchObject({ turns: 3, toolCalls: 2 });
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('accepts finalize_build validation backed by commands run after cd into the project', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"cd test-projects/game && node --check game.js && node validate.js 2>&1"}}',
+      '{"tool":"finalize_build","args":{"summary":"done","artifacts":["test-projects/game/game.js"],"validation":[{"command":"node --check test-projects/game/game.js","status":"passed"},{"command":"node test-projects/game/validate.js","status":"passed"}],"instructionChecklist":["validated game"]}}',
+      '{"answer":"validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('validate the game');
+
+    expect(result.answer).toBe('validation passed.');
+    expect(result.stats).toMatchObject({ turns: 3, toolCalls: 2 });
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('allows recovery verification finalization without forcing cosmetic mutation', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node --check test-projects/game/game.js"}}',
+      '{"tool":"exec_command","args":{"command":"cd test-projects/game && node validate.js 2>&1"}}',
+      '{"tool":"finalize_build","args":{"summary":"verified fps meter","artifacts":["test-projects/game/game.js"],"validation":[{"command":"node --check test-projects/game/game.js","status":"passed"},{"command":"node validate.js (static + browser smoke)","status":"passed"}],"instructionChecklist":["fps meter verified"]}}',
+      '{"answer":"FPS meter verified."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return { ok: true, output: 'Command exited with 0.\n139 passed, 0 failed' };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Recovery verification for the FPS meter feature. Do not add a new feature unless validation exposes a real bug. Confirm the current game implements it. Run node --check test-projects/game/game.js and node test-projects/game/validate.js. If both pass, finalize with the validation evidence.');
+
+    expect(result.answer).toBe('FPS meter verified.');
+    expect(result.stats).toMatchObject({ turns: 4, toolCalls: 3 });
+    expect(result.turns[2]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: true }
+    });
+  });
+
+  it('retries validation-passed final answers while validation command is still running', async () => {
+    const toolCalls: string[] = [];
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"answer":"Validation passed."}',
+      '{"tool":"wait_command","args":{"commandId":"cmd_1"}}',
+      '{"answer":"Validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            toolCalls.push('exec_command');
+            return {
+              ok: true,
+              output: 'Command is still running.\ncommandId: cmd_1\ncommand: node validate.js',
+              meta: {
+                runningCommand: {
+                  id: 'cmd_1',
+                  command: 'node validate.js',
+                  cwd: '/tmp/game',
+                  status: 'running' as const,
+                  elapsedMs: 15000,
+                  outputChars: 0
+                }
+              }
+            };
+          }
+        },
+        {
+          name: 'wait_command',
+          description: 'wait',
+          async run() {
+            toolCalls.push('wait_command');
+            return {
+              ok: true,
+              output: 'Command exited with 0.\n151 passed, 0 failed',
+              meta: {
+                runningCommand: {
+                  id: 'cmd_1',
+                  command: 'node validate.js',
+                  cwd: '/tmp/game',
+                  status: 'exited' as const,
+                  exitCode: 0,
+                  elapsedMs: 20000,
+                  outputChars: 128
+                }
+              }
+            };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Recovery verification for the game. Run node validate.js and confirm validation passed.');
+
+    expect(result.answer).toBe('Validation passed.');
+    expect(toolCalls).toEqual(['exec_command', 'wait_command']);
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('validation command is still running'))).toBe(true);
+  });
+
+  it('accepts finalize_build validation backed by wait_command completion', async () => {
+    let finalizeCalls = 0;
+    const provider = new ScriptedProvider([
+      '{"tool":"exec_command","args":{"command":"node validate.js"}}',
+      '{"tool":"finalize_build","args":{"summary":"verified game","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["game validated"]}}',
+      '{"tool":"wait_command","args":{"commandId":"cmd_1"}}',
+      '{"tool":"finalize_build","args":{"summary":"verified game","artifacts":["game.js"],"validation":[{"command":"node validate.js","status":"passed"}],"instructionChecklist":["game validated"]}}',
+      '{"answer":"Game validation passed."}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'exec_command',
+          description: 'run',
+          async run() {
+            return {
+              ok: true,
+              output: 'Command is still running.\ncommandId: cmd_1\ncommand: node validate.js',
+              meta: {
+                runningCommand: {
+                  id: 'cmd_1',
+                  command: 'node validate.js',
+                  cwd: '/tmp/game',
+                  status: 'running' as const,
+                  elapsedMs: 15000,
+                  outputChars: 0
+                }
+              }
+            };
+          }
+        },
+        {
+          name: 'wait_command',
+          description: 'wait',
+          async run() {
+            return {
+              ok: true,
+              output: 'Command exited with 0.\n151 passed, 0 failed',
+              meta: {
+                runningCommand: {
+                  id: 'cmd_1',
+                  command: 'node validate.js',
+                  cwd: '/tmp/game',
+                  status: 'exited' as const,
+                  exitCode: 0,
+                  elapsedMs: 20000,
+                  outputChars: 128
+                }
+              }
+            };
+          }
+        },
+        {
+          name: 'finalize_build',
+          description: 'finalize',
+          async run() {
+            finalizeCalls += 1;
+            return { ok: true, output: 'recorded finalize_build' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Recovery verification for the game. Run node validate.js and finalize with validation evidence.');
+
+    expect(result.answer).toBe('Game validation passed.');
+    expect(finalizeCalls).toBe(1);
+    expect(result.turns[1]).toMatchObject({
+      kind: 'tool',
+      toolCall: { tool: 'finalize_build' },
+      toolResult: { ok: false, meta: { presentation: 'notice' } }
+    });
+    expect(result.turns[1]?.content).toContain('Missing completed successful command result for: node validate.js');
     expect(result.turns[3]).toMatchObject({
       kind: 'tool',
       toolCall: { tool: 'finalize_build' },

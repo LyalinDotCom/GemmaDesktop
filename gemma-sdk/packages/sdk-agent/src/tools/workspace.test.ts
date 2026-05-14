@@ -31,6 +31,33 @@ describe('workspace tools', () => {
     });
   });
 
+  it('refuses large existing file overwrites without explicit confirmation', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const write = tool('write_file', cwd);
+    const original = Array.from({ length: 240 }, (_, index) => `const before${index} = ${index};`).join('\n') + '\n';
+    const replacement = Array.from({ length: 240 }, (_, index) => `const after${index} = ${index};`).join('\n') + '\n';
+    await writeFile(join(cwd, 'game.js'), original, 'utf8');
+
+    await expect(write.run({ path: 'game.js', content: replacement })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Refusing large write_file overwrite')
+    });
+    await expect(readFile(join(cwd, 'game.js'), 'utf8')).resolves.toBe(original);
+  });
+
+  it('allows explicitly confirmed large existing file overwrites', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const write = tool('write_file', cwd);
+    const original = Array.from({ length: 240 }, (_, index) => `const before${index} = ${index};`).join('\n') + '\n';
+    const replacement = Array.from({ length: 240 }, (_, index) => `const after${index} = ${index};`).join('\n') + '\n';
+    await writeFile(join(cwd, 'game.js'), original, 'utf8');
+
+    await expect(write.run({ path: 'game.js', content: replacement, overwriteExisting: true })).resolves.toMatchObject({
+      ok: true
+    });
+    await expect(readFile(join(cwd, 'game.js'), 'utf8')).resolves.toBe(replacement);
+  });
+
   it('accepts paths that already include a workspace path relative to the process cwd', async () => {
     const cwd = await mkdtemp(join(process.cwd(), '.tmp-gemma-cli-workspace-'));
     try {
@@ -524,6 +551,43 @@ describe('workspace tools', () => {
     await expect(readFile(join(cwd, 'main.js'), 'utf8')).resolves.toContain('Wait, I see a typo in my thought');
   });
 
+  it('reports apply_patch line details so whitespace-only edits can be classified', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    await writeFile(join(cwd, 'validate.js'), 'runBrowserSmoke();\n', 'utf8');
+    const patch = tool('apply_patch', cwd);
+
+    await expect(patch.run({
+      patch: [
+        '--- a/validate.js',
+        '+++ b/validate.js',
+        '@@ -1 +1,2 @@',
+        ' runBrowserSmoke();',
+        '+',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: true,
+      meta: {
+        fileChange: {
+          changes: [
+            expect.objectContaining({
+              path: 'validate.js',
+              status: 'updated',
+              linesAdded: 1,
+              linesRemoved: 0,
+              hunks: [
+                expect.objectContaining({
+                  oldLines: [],
+                  newLines: ['']
+                })
+              ]
+            })
+          ]
+        }
+      }
+    });
+  });
+
   it('explains how to recover from stale apply_patch context', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
     await writeFile(join(cwd, 'style.css'), '.current { color: green; }\n', 'utf8');
@@ -542,6 +606,150 @@ describe('workspace tools', () => {
       ok: false,
       output: expect.stringContaining('Before another file mutation, re-read')
     });
+    await expect(patch.run({
+      patch: [
+        '--- a/style.css',
+        '+++ b/style.css',
+        '@@ -1 +1 @@',
+        '-.old { color: red; }',
+        '+.new { color: green; }',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Do not switch to exec_command, sed, awk, or helper scripts')
+    });
+    await expect(patch.run({
+      patch: [
+        '--- a/style.css',
+        '+++ b/style.css',
+        '@@ -1 +1 @@',
+        '-.old { color: red; }',
+        '+.new { color: green; }',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('retry one focused hunk at a time')
+    });
+  });
+
+  it('refuses same-file write_file overwrite immediately after stale apply_patch context', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    await writeFile(join(cwd, 'style.css'), '.current { color: green; }\n', 'utf8');
+    const tools = createWorkspaceTools({ cwd });
+    const patch = tools.find((item) => item.name === 'apply_patch');
+    const write = tools.find((item) => item.name === 'write_file');
+    if (!patch || !write) {
+      throw new Error('missing workspace tools');
+    }
+
+    await expect(patch.run({
+      patch: [
+        '--- a/style.css',
+        '+++ b/style.css',
+        '@@ -1 +1 @@',
+        '-.old { color: red; }',
+        '+.new { color: green; }',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Patch context is stale')
+    });
+
+    await expect(write.run({ path: 'style.css', content: '.new { color: green; }\n' })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('immediately after a stale apply_patch failure')
+    });
+    await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
+  });
+
+  it('refuses large same-file write_file replacement after stale apply_patch context even when confirmed', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const original = Array.from({ length: 260 }, (_, index) => `const before${index} = ${index};`).join('\n') + '\n';
+    const replacement = Array.from({ length: 260 }, (_, index) => `const after${index} = ${index};`).join('\n') + '\n';
+    await writeFile(join(cwd, 'game.js'), original, 'utf8');
+    const tools = createWorkspaceTools({ cwd });
+    const patch = tools.find((item) => item.name === 'apply_patch');
+    const write = tools.find((item) => item.name === 'write_file');
+    if (!patch || !write) {
+      throw new Error('missing workspace tools');
+    }
+
+    await expect(patch.run({
+      patch: [
+        '--- a/game.js',
+        '+++ b/game.js',
+        '@@ -999 +999 @@',
+        '-const missing = false;',
+        '+const missing = true;',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Patch context is stale')
+    });
+
+    await expect(write.run({ path: 'game.js', content: replacement, overwriteExisting: true })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Refusing large write_file replacement')
+    });
+    await expect(readFile(join(cwd, 'game.js'), 'utf8')).resolves.toBe(original);
+  });
+
+  it('refuses same-file mutating exec_command immediately after stale apply_patch context', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    await writeFile(join(cwd, 'style.css'), '.current { color: green; }\n', 'utf8');
+    const tools = createWorkspaceTools({ cwd });
+    const patch = tools.find((item) => item.name === 'apply_patch');
+    const run = tools.find((item) => item.name === 'exec_command');
+    if (!patch || !run) {
+      throw new Error('missing workspace tools');
+    }
+
+    await expect(patch.run({
+      patch: [
+        '--- a/style.css',
+        '+++ b/style.css',
+        '@@ -1 +1 @@',
+        '-.old { color: red; }',
+        '+.new { color: green; }',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Patch context is stale')
+    });
+
+    await expect(run.run({ command: "awk 'NR>=1 && NR<=1 { print }' style.css" })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('.current { color: green; }')
+    });
+
+    await expect(run.run({ command: 'grep current style.css > /dev/null' })).resolves.toMatchObject({
+      ok: true
+    });
+
+    await expect(run.run({
+      command: 'node -e "const fs=require(\'fs\'); fs.writeFileSync(\'style.css\', \'.new { color: green; }\\n\')"'
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Refusing exec_command because it appears to mutate style.css')
+    });
+    await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
+
+    await expect(run.run({ command: 'sed -i "" "s/current/new/" style.css' })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Use exec_command for validation and read-only inspection')
+    });
+    await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
+
+    await expect(run.run({ command: 'printf ".new { color: green; }\\n" > style.css' })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Refusing exec_command because it appears to mutate style.css')
+    });
+    await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
   });
 
   it('normalizes model-escaped apply_patch hunk lines before applying', async () => {
@@ -575,6 +783,26 @@ describe('workspace tools', () => {
     await expect(write.run({
       path: 'lib.js',
       content: "export function ok() {}\n// This is just a placeholder, I will fix it in a real write\n"
+    })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('suspicious text detected')
+    });
+  });
+
+  it('warns on cosmetic validation-status source comments', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const write = tool('write_file', cwd);
+
+    await expect(write.run({
+      path: 'game.js',
+      content: [
+        '// ============================================================',
+        '// Gemma Racing - A simple 3D driving game with Three.js',
+        '// Version 2.0 - All features validated',
+        '// ============================================================',
+        'export const ready = true;',
+        ''
+      ].join('\n')
     })).resolves.toMatchObject({
       ok: true,
       output: expect.stringContaining('suspicious text detected')
@@ -945,6 +1173,16 @@ describe('workspace tools', () => {
     });
   });
 
+  it('does not treat quoted sed substitution delimiters as absolute paths', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const shell = tool('exec_command', cwd);
+
+    await expect(shell.run({ command: "printf 'a b\\n' | sed 's/ /./g'" })).resolves.toMatchObject({
+      ok: true,
+      output: expect.stringContaining('a.b')
+    });
+  });
+
   it('allows outside-workspace shell commands when yolo mode is enabled', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
     const shell = tool('exec_command', cwd, { yolo: true });
@@ -1164,10 +1402,14 @@ describe('workspace tools', () => {
       meta: { runningCommand: { id: 'cmd_1', status: 'running' } }
     });
     expect(first.output).toContain('wait_command');
+    expect(first.output).toContain('STATUS: STILL RUNNING');
+    expect(first.output).toContain('not completed test/build/validation evidence');
     expect(first.output).toContain('avg=20.0ms');
 
     const progress = await wait.run({ commandId: 'cmd_1', timeoutMs: 500 });
     expect(progress.output).toContain('New output:');
+    expect(progress.output).toContain('STATUS: STILL RUNNING');
+    expect(progress.output).toContain('Do not claim tests passed or call finalize_build');
     expect(progress.output).toMatch(/avg=2[1-8]\.0ms/);
 
     let done = progress;

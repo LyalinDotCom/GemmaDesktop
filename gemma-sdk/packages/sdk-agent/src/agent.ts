@@ -1,4 +1,4 @@
-import type { AgentRunOptions, AgentRunResult, AgentTurn, ChatMessage, ContentPart, GenerateOptions, ModelProvider, StreamChunk, Tool, ToolCall, ToolResult } from './types.js';
+import type { AgentRunOptions, AgentRunResult, AgentTurn, ChatMessage, ContentPart, FileChange, GenerateOptions, ModelProvider, RunningCommandMeta, StreamChunk, Tool, ToolCall, ToolResult } from './types.js';
 import {
   buildGemmaThinkingInstructions,
   looksLikeGemmaNativeToolCall,
@@ -187,6 +187,25 @@ export class Agent {
           messages.push({ role: 'user', content: suspiciousWorkspaceContentRetry });
           continue;
         }
+        const exhaustedPrematureFinalBlocker = looksLikePrematureWorkspaceFinal(action.answer)
+          ? buildPrematureWorkspaceFinalRetryInstruction(prompt, action.answer, turns, [...this.tools.values()])
+          : undefined;
+        if (exhaustedPrematureFinalBlocker) {
+          const answer = [
+            'Stopped before accepting the final answer because the session evidence is incomplete.',
+            exhaustedPrematureFinalBlocker
+          ].join(' ');
+          const finalTurn = { kind: 'final' as const, content: answer };
+          turns.push(finalTurn);
+          await options.onTurn?.({ index: turns.length - 1, turn: finalTurn });
+          return {
+            answer,
+            turns,
+            stats: this.stats(startedAt, turns),
+            completionStatus: 'incomplete',
+            completionReason: 'final_response_unverified'
+          };
+        }
         const finalTurn = { kind: 'final' as const, content: action.answer };
         turns.push(finalTurn);
         await options.onTurn?.({ index: turns.length - 1, turn: finalTurn });
@@ -206,7 +225,7 @@ export class Agent {
         continue;
       }
 
-      const evidenceFailure = validateToolCallEvidence(action, turns);
+      const evidenceFailure = validateToolCallEvidence(action, turns, prompt);
       const result = evidenceFailure ?? await runToolSafely(tool, action);
       const toolTurn = {
         kind: 'tool',
@@ -305,7 +324,7 @@ export class Agent {
           `Stopped after ${maxTurns} turns immediately after tool use.`,
           'The final summary pass could not be accepted as completed because the session evidence is incomplete.',
           evidenceBlocker,
-          'Resume the session or increase --max-turns so the agent can run the missing validation after the latest file change.'
+          'Resume the session or increase --max-turns so the agent can complete the missing workspace action and validation.'
         ].join(' ');
         completionStatus = 'incomplete';
         completionReason = 'final_response_unverified';
@@ -683,6 +702,23 @@ function looksLikeWorkspaceActionRequest(prompt: string): boolean {
     || /\bcan\s+you\s+(?:make|add|update|change|fix|implement|enable|support|remove|refactor)\b/.test(text);
 }
 
+function looksLikeWorkspaceMutationRequest(prompt: string): boolean {
+  const text = prompt.toLowerCase();
+  if (/\b(?:(?:validation|verification)-only|read-only)\b/.test(text)) {
+    return false;
+  }
+  if (/\b(?:validation|verification)\s+only\b/.test(text)) {
+    return false;
+  }
+  if (/\brecovery verification\b/.test(text)) {
+    return false;
+  }
+  if (/\b(?:do\s+not|don't)\s+(?:edit|change|modify|write|patch|touch|update)\b/.test(text)) {
+    return false;
+  }
+  return looksLikeWorkspaceActionRequest(prompt);
+}
+
 function looksLikeUngroundedActionAnswer(answer: string): boolean {
   const text = answer.trim().toLowerCase();
   if (!text) {
@@ -700,7 +736,7 @@ function buildInsufficientWorkspaceEvidenceRetryInstruction(prompt: string, answ
   if (!looksLikeWorkspaceActionRequest(prompt) || !looksLikeFileOrProjectRequest(prompt)) {
     return undefined;
   }
-  if (!looksLikeUngroundedActionAnswer(answer) && !claimsValidationPassed(answer)) {
+  if (!looksLikeUngroundedActionAnswer(answer) && !claimsValidationPassed(answer) && !looksLikePendingWorkspaceMutationAnswer(answer)) {
     return undefined;
   }
 
@@ -712,7 +748,16 @@ function buildInsufficientWorkspaceEvidenceRetryInstruction(prompt: string, answ
       'Your answer claims the requested validation passed, but the tool history does not contain successful command evidence for all requested npm validation.',
       `Missing validation evidence for: ${missingTasks.map(renderNpmTask).join(', ')}.`,
       'Use tools now to implement or inspect the workspace, then run the missing validation commands before answering.',
-      'Only say validation passed when it is backed by successful exec_command tool output from this run.'
+      'Only say validation passed when it is backed by completed successful exec_command or wait_command tool output from this run.'
+    ].join('\n');
+  }
+
+  if (looksLikeWorkspaceMutationRequest(prompt) && !hasSubstantiveWorkspaceMutationEvidence(turns)) {
+    return [
+      'The user asked for a workspace change, but the tool history only shows inspection, directory setup, or validation.',
+      'Successful validation alone is not evidence that the requested change was implemented.',
+      'Use write_file, apply_patch, or a concrete workspace-mutating command now to make the requested change, then run meaningful verification before answering.',
+      'Only answer without a file mutation if there is a concrete blocker; state that blocker plainly.'
     ].join('\n');
   }
 
@@ -734,6 +779,24 @@ function buildPrematureWorkspaceFinalRetryInstruction(prompt: string, answer: st
   }
   if (!turns.some((turn) => turn.kind === 'tool')) {
     return undefined;
+  }
+  const pendingValidation = pendingRunningValidationCommand(turns);
+  if (pendingValidation && claimsValidationPassed(answer)) {
+    return [
+      'Your previous response was premature: a validation command is still running and has not exited successfully yet.',
+      `Still running: ${pendingValidation.command}.`,
+      'Call wait_command now with the commandId from the running command result, then only say validation passed if it exits with 0.',
+      'If it fails or keeps running without completion, report that concrete blocker instead of claiming success.'
+    ].join('\n');
+  }
+  const unresolvedPatchPath = unresolvedFailedPatchPathBeforeSuccessAnswer(prompt, answer, turns);
+  if (unresolvedPatchPath) {
+    return [
+      `Your previous response was premature: an apply_patch attempt failed for ${unresolvedPatchPath}, and no later successful file mutation repaired that target.`,
+      'Do not rely on broad validation output if it does not explicitly cover the newly requested feature.',
+      'Re-read the current target lines, make the missing implementation or validation change with an exact patch or appropriate write_file, then rerun meaningful validation.',
+      'Only answer after the failed patch target is repaired, or after you report a concrete blocker.'
+    ].join('\n');
   }
   if (latestMutationNeedsValidationAfterFailedRun(prompt, answer, turns)) {
     return [
@@ -761,6 +824,41 @@ function buildPrematureWorkspaceFinalRetryInstruction(prompt: string, answer: st
   ].join('\n');
 }
 
+function unresolvedFailedPatchPathBeforeSuccessAnswer(prompt: string, answer: string, turns: AgentTurn[]): string | undefined {
+  if (!looksLikeWorkspaceActionRequest(prompt) && !looksLikeFileOrProjectRequest(prompt)) {
+    return undefined;
+  }
+  if (!claimsWorkspaceArtifactDone(answer) && !claimsValidationPassed(answer)) {
+    return undefined;
+  }
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!;
+    if (
+      turn.kind !== 'tool'
+      || turn.toolCall?.tool !== 'apply_patch'
+      || turn.toolResult?.ok !== false
+      || typeof turn.toolCall.args.patch !== 'string'
+      || !/apply_patch: hunk .* did not match/i.test(turn.toolResult.output)
+    ) {
+      continue;
+    }
+    const path = primaryPatchPath(turn.toolCall.args.patch);
+    const laterRepair = turns.slice(index + 1).some((candidate) => {
+      if (candidate.kind !== 'tool' || candidate.toolResult?.ok !== true || !candidate.toolCall || !isFileMutationTool(candidate.toolCall.tool)) {
+        return false;
+      }
+      if (!path) {
+        return true;
+      }
+      return fileMutationPaths(candidate.toolCall).some((candidatePath) => candidatePath === path);
+    });
+    if (!laterRepair) {
+      return path ?? 'the failed patch target';
+    }
+  }
+  return undefined;
+}
+
 function latestMutationNeedsValidationAfterFailedRun(prompt: string, answer: string, turns: AgentTurn[]): boolean {
   if (!looksLikeWorkspaceActionRequest(prompt) && !looksLikeFileOrProjectRequest(prompt)) {
     return false;
@@ -768,19 +866,16 @@ function latestMutationNeedsValidationAfterFailedRun(prompt: string, answer: str
   if (!claimsWorkspaceArtifactDone(answer)) {
     return false;
   }
-  const lastMutationIndex = findLastToolTurnIndex(turns, (turn) => isFileMutationTool(turn.toolCall?.tool));
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
   if (lastMutationIndex === -1) {
     return false;
   }
   const successfulRunAfterLatestMutation = turns
     .slice(lastMutationIndex + 1)
-    .some((turn) =>
-      turn.kind === 'tool'
-      && turn.toolCall?.tool === 'exec_command'
-      && turn.toolResult?.ok === true
-      && typeof turn.toolCall.args.command === 'string'
-      && looksLikeValidationOrRunCommand(turn.toolCall.args.command)
-    );
+    .some((turn) => {
+      const evidence = successfulCommandEvidenceFromTurn(turn);
+      return Boolean(evidence && looksLikeValidationOrRunCommand(evidence.command));
+    });
   if (successfulRunAfterLatestMutation) {
     return false;
   }
@@ -790,7 +885,7 @@ function latestMutationNeedsValidationAfterFailedRun(prompt: string, answer: str
     && turn.toolResult?.ok === false
     && typeof turn.toolCall.args.command === 'string'
     && looksLikeValidationOrRunCommand(turn.toolCall.args.command)
-    && findLastToolTurnIndex(turns.slice(0, index), (candidate) => isFileMutationTool(candidate.toolCall?.tool)) !== -1
+    && findLastToolTurnIndex(turns.slice(0, index), isWorkspaceMutationTurn) !== -1
   );
 }
 
@@ -828,23 +923,19 @@ function latestMetricThresholdMisses(prompt: string, turns: AgentTurn[]): string
   if (thresholds.size === 0) {
     return [];
   }
-  const lastMutationIndex = findLastToolTurnIndex(turns, (turn) => isFileMutationTool(turn.toolCall?.tool));
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
   if (lastMutationIndex === -1) {
     return [];
   }
   const latestMetricRun = [...turns]
     .slice(lastMutationIndex + 1)
     .reverse()
-    .find((turn) =>
-      turn.kind === 'tool'
-      && turn.toolCall?.tool === 'exec_command'
-      && turn.toolResult?.ok === true
-      && looksLikeMetricReport(turn.toolResult.output)
-    );
-  if (!latestMetricRun?.toolResult) {
+    .map(successfulCommandEvidenceFromTurn)
+    .find((evidence) => evidence && looksLikeMetricReport(evidence.output));
+  if (!latestMetricRun) {
     return [];
   }
-  return compareMetricReportToThresholds(latestMetricRun.toolResult.output, thresholds);
+  return compareMetricReportToThresholds(latestMetricRun.output, thresholds);
 }
 
 function parsePromptMetricThresholds(prompt: string): Map<string, Partial<Record<MetricKey, number>>> {
@@ -983,7 +1074,7 @@ function claimsWorkspaceArtifactDone(answer: string): boolean {
 }
 
 function looksLikeFileOrProjectRequest(prompt: string): boolean {
-  return /\b(project|app|site|website|file|files|module|package\.json|src|test|tests|script|utility|cli|component|page|artifact|artifacts|workspace|solution|task_file|output_data|output file|folder with|directory with)\b/i.test(prompt);
+  return /\b(project|app|site|website|game|webgame|canvas|file|files|module|package\.json|src|test|tests|script|utility|cli|component|page|artifact|artifacts|workspace|solution|task_file|output_data|output file|folder with|directory with)\b/i.test(prompt);
 }
 
 function looksLikePrematureWorkspaceFinal(answer: string): boolean {
@@ -998,13 +1089,30 @@ function looksLikePrematureWorkspaceFinal(answer: string): boolean {
   if (pendingWorkPattern.test(text)) {
     return true;
   }
+  if (looksLikePendingWorkspaceMutationAnswer(text)) {
+    return true;
+  }
   return /```[\s\S]{80,}```/m.test(text)
     && /\b(?:write|save|run|execute|test|validate|output|artifact|workspace|file)\b/i.test(text)
     && /\b(?:i\s+(?:should|need to|will|(?:'|’)ll)|let\s+me|actually|wait)\b/i.test(text);
 }
 
+function looksLikePendingWorkspaceMutationAnswer(answer: string): boolean {
+  const text = answer.trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return /\b(?:did not|didn'?t|have not|haven'?t|not)\s+(?:edit|change|modify|write|patch|update|implement|apply)\b/.test(text)
+    || /\b(?:next step|remaining step|to proceed|still need|needs to|should)\b[\s\S]{0,180}\b(?:add|update|edit|implement|change|write|patch|modify|create|fix)\b/.test(text)
+    || /\bwithout\s+(?:that|the|this)?\s*(?:edit|change|update|implementation|patch)\b/.test(text)
+    || /\bpartially\s+(?:implemented|complete|done)\b/.test(text)
+    || /\b(?:hasn'?t|haven'?t|has not|have not|not)\s+been\s+(?:applied|implemented|wired|added|updated|completed)\b/.test(text)
+    || /\bwould\s+you\s+like\s+me\s+to\s+(?:retry|continue|finish|fix|read|use|attempt)\b/.test(text);
+}
+
 function containsToolCallLikeJson(text: string): boolean {
-  return /["']tool["']\s*:\s*["'](?:write_file|apply_patch|exec_command|read_file|read_files|list_tree|search_paths|search_text|inspect_file)["']/i.test(text);
+  const normalized = repairJsonSmartQuotes(text).replace(/\\"/g, '"');
+  return /["']tool["']\s*:\s*["'](?:write_file|apply_patch|exec_command|read_file|read_files|list_tree|search_paths|search_text|inspect_file)["']/i.test(normalized);
 }
 
 function hasSubstantiveWorkspaceEvidence(turns: AgentTurn[]): boolean {
@@ -1013,7 +1121,7 @@ function hasSubstantiveWorkspaceEvidence(turns: AgentTurn[]): boolean {
       return false;
     }
     if (isFileMutationTool(turn.toolCall?.tool)) {
-      return true;
+      return hasSubstantiveFileMutationEvidence(turn);
     }
     if (turn.toolCall?.tool !== 'exec_command') {
       return false;
@@ -1021,6 +1129,119 @@ function hasSubstantiveWorkspaceEvidence(turns: AgentTurn[]): boolean {
     const command = typeof turn.toolCall.args.command === 'string' ? turn.toolCall.args.command : '';
     return command.trim().length > 0 && !isThinDirectoryCommand(command);
   });
+}
+
+function hasSubstantiveWorkspaceMutationEvidence(turns: AgentTurn[]): boolean {
+  return turns.some((turn) => {
+    if (turn.kind !== 'tool' || turn.toolResult?.ok !== true) {
+      return false;
+    }
+    if (isFileMutationTool(turn.toolCall?.tool)) {
+      return hasSubstantiveFileMutationEvidence(turn);
+    }
+    if (turn.toolCall?.tool !== 'exec_command') {
+      return false;
+    }
+    const command = typeof turn.toolCall.args.command === 'string' ? turn.toolCall.args.command : '';
+    return isSubstantiveWorkspaceMutationCommand(command)
+      && !isCosmeticValidationStatusMutationCommand(command);
+  });
+}
+
+function isWorkspaceMutationTurn(turn: AgentTurn): boolean {
+  if (turn.kind !== 'tool' || turn.toolResult?.ok !== true) {
+    return false;
+  }
+  if (isFileMutationTool(turn.toolCall?.tool)) {
+    return hasSubstantiveFileMutationEvidence(turn);
+  }
+  if (turn.toolCall?.tool !== 'exec_command') {
+    return false;
+  }
+  const command = typeof turn.toolCall.args.command === 'string' ? turn.toolCall.args.command : '';
+  return isSubstantiveWorkspaceMutationCommand(command);
+}
+
+function isSubstantiveWorkspaceMutationCommand(command: string): boolean {
+  const normalized = normalizeCommandForEvidence(command);
+  if (isThinDirectoryCommand(normalized)) {
+    return false;
+  }
+  return /(?:^|[;&|]\s*)(?:sed\s+-i|perl\s+-pi|touch|tee|cp|mv|rm|truncate)\b/.test(normalized)
+    || hasFileOutputRedirection(normalized)
+    || /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|copyFileSync|renameSync|unlinkSync|mkdirSync)\b/.test(normalized)
+    || /(?:^|[;&|]\s*)(?:npm|pnpm|yarn|bun)\s+(?:create|init|install|add|remove|uninstall|exec|dlx)\b/.test(normalized)
+    || /(?:^|[;&|]\s*)(?:npx|uvx)\s+\S+/.test(normalized)
+    || /(?:^|[;&|]\s*)(?:cargo\s+new|go\s+mod\s+init)\b/.test(normalized);
+}
+
+function hasSubstantiveFileMutationEvidence(turn: AgentTurn): boolean {
+  const fileChange = turn.toolResult?.meta?.fileChange;
+  if (!fileChange) {
+    return true;
+  }
+  return fileChange.changes.some(isSubstantiveFileChange);
+}
+
+function isSubstantiveFileChange(change: FileChange): boolean {
+  if (change.status === 'deleted' || change.status === 'renamed') {
+    return true;
+  }
+
+  if (change.preview !== undefined) {
+    return hasSubstantiveChangedText(change.preview);
+  }
+
+  const changedLines = [
+    ...(change.hunks ?? []).flatMap((hunk) => [...hunk.oldLines, ...hunk.newLines])
+  ];
+  if (changedLines.length > 0) {
+    return changedLines.some(hasSubstantiveChangedLine);
+  }
+
+  const hasLineMetadata = change.linesAdded !== undefined || change.linesRemoved !== undefined || change.hunks !== undefined;
+  if (hasLineMetadata) {
+    return false;
+  }
+
+  return true;
+}
+
+function hasSubstantiveChangedText(text: string): boolean {
+  return text.split(/\r?\n/).some(hasSubstantiveChangedLine);
+}
+
+function hasSubstantiveChangedLine(line: string): boolean {
+  return line.trim().length > 0;
+}
+
+function isCosmeticValidationStatusMutationCommand(command: string): boolean {
+  const normalized = normalizeCommandForEvidence(command);
+  if (!isSubstantiveWorkspaceMutationCommand(normalized)) {
+    return false;
+  }
+  return /\b(?:validation\s+pass|all\s+checks\s+confirmed|all\s+(?:tests?|checks?|validation)\s+(?:passed|pass|succeeded|successful|green)|(?:tests?|checks?|validation)\s+(?:passed|pass|succeeded|successful|green)|features?\s+validated|fully\s+validated)\b/i.test(normalized);
+}
+
+function hasFileOutputRedirection(command: string): boolean {
+  const redirections = command.matchAll(/(?:^|[\s;&|])(?:\d?>{1,2}|&>)\s*([^&|\s;]+)/g);
+  for (const redirection of redirections) {
+    const target = stripShellQuotes(redirection[1] ?? '');
+    if (
+      target.length > 0
+      && !/^&?\d+$/.test(target)
+      && target !== '-'
+      && target !== '/dev/null'
+      && !target.startsWith('/dev/fd/')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function stripShellQuotes(value: string): string {
+  return value.replace(/^['"]|['"]$/g, '');
 }
 
 function isThinDirectoryCommand(command: string): boolean {
@@ -1032,7 +1253,24 @@ function buildValidationRetryInstruction(prompt: string, answer: string, turns: 
   if (!validationWasRequested(prompt) && !mentionsValidationNotRun(answer)) {
     return undefined;
   }
-  const lastMutationIndex = findLastToolTurnIndex(turns, (turn) => isFileMutationTool(turn.toolCall?.tool));
+  const pendingValidation = pendingRunningValidationCommand(turns);
+  if (pendingValidation && claimsValidationPassed(answer)) {
+    return [
+      'Validation is still required before the final answer.',
+      `The validation command is still running and has not exited with 0 yet: ${pendingValidation.command}.`,
+      'Call wait_command now with the commandId from that running command result.',
+      'Only say validation passed after wait_command reports the command exited with 0.'
+    ].join('\n');
+  }
+  if (validationWasRequested(prompt) && claimsValidationPassed(answer) && !hasSuccessfulValidationCommand(turns)) {
+    return [
+      'Validation is still required before the final answer.',
+      'Your answer claims validation passed, but this run has no completed successful validation command evidence.',
+      'Run the requested validation command now, or wait for the running command to exit if one is still active.',
+      'Only say validation passed after an exec_command or wait_command result shows the validation exited with 0.'
+    ].join('\n');
+  }
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
   if (lastMutationIndex === -1) {
     return undefined;
   }
@@ -1045,13 +1283,13 @@ function buildValidationRetryInstruction(prompt: string, answer: string, turns: 
     }
     return [
       'Validation is still required before the final answer.',
-      `The user asked for ${missingTasks.map(renderNpmTask).join(' and ')}, but there is no successful exec_command evidence for that after the last file change.`,
+      `The user asked for ${missingTasks.map(renderNpmTask).join(' and ')}, but there is no completed successful command evidence for that after the last file change.`,
       'Run the missing validation command now, fix any failure, and only then answer.'
     ].join('\n');
   }
   const validatedAfterMutation = turns
     .slice(lastMutationIndex + 1)
-    .some((turn) => turn.kind === 'tool' && turn.toolCall?.tool === 'exec_command' && turn.toolResult?.ok === true);
+    .some((turn) => successfulCommandEvidenceFromTurn(turn) !== undefined);
   if (validatedAfterMutation) {
     return undefined;
   }
@@ -1105,17 +1343,29 @@ function findLastToolTurnIndex(turns: AgentTurn[], predicate: (turn: AgentTurn) 
 }
 
 function isFileMutationTool(tool: string | undefined): boolean {
-  return tool === 'write_file' || tool === 'apply_patch';
+  return tool === 'write_file' || tool === 'apply_patch' || tool === 'edit_file';
 }
 
-function validateToolCallEvidence(action: ToolCall, turns: AgentTurn[]): ToolResult | undefined {
+function validateToolCallEvidence(action: ToolCall, turns: AgentTurn[], prompt: string): ToolResult | undefined {
   const patchRecovery = patchContextRecoveryRequiredResult(action, turns);
   if (patchRecovery) {
     return patchRecovery;
   }
+  const duplicateFailedPatch = duplicateFailedPatchRetryResult(action, turns);
+  if (duplicateFailedPatch) {
+    return duplicateFailedPatch;
+  }
+  const stalePatchReadLoop = stalePatchReadLoopResult(action, turns);
+  if (stalePatchReadLoop) {
+    return stalePatchReadLoop;
+  }
   const cosmeticSuccessEdit = cosmeticSuccessMessageEditAfterValidationResult(action, turns);
   if (cosmeticSuccessEdit) {
     return cosmeticSuccessEdit;
+  }
+  const cosmeticSuccessCommandEdit = cosmeticSuccessCommandEditAfterValidationResult(action, turns);
+  if (cosmeticSuccessCommandEdit) {
+    return cosmeticSuccessCommandEdit;
   }
   const duplicateCommand = duplicateSuccessfulValidationCommandResult(action, turns);
   if (duplicateCommand) {
@@ -1123,6 +1373,45 @@ function validateToolCallEvidence(action: ToolCall, turns: AgentTurn[]): ToolRes
   }
   if (action.tool !== 'finalize_build') {
     return undefined;
+  }
+  if (promptExplicitlyForbidsFinalizeBuild(prompt)) {
+    return {
+      ok: false,
+      output: [
+        'finalize_build rejected: the current user prompt explicitly said not to call finalize_build.',
+        'Continue with the requested non-finalizing work, or answer directly after the requested evidence is complete.'
+      ].join('\n'),
+      meta: { presentation: 'notice' }
+    };
+  }
+  if (looksLikeWorkspaceMutationRequest(prompt) && !hasSubstantiveWorkspaceMutationEvidence(turns)) {
+    return {
+      ok: false,
+      output: [
+        'finalize_build rejected: the user asked for a workspace change, but this run has not produced substantive file mutation evidence.',
+        'Inspection, directory setup, or successful validation alone is not evidence that the requested change was implemented.',
+        'Use write_file, apply_patch, or a concrete workspace-mutating command to make the requested change, then run meaningful verification before finalizing.',
+        'Only finalize without a mutation if there is a concrete blocker; state that blocker plainly in the final answer instead of recording a completed build.'
+      ].join('\n'),
+      meta: { presentation: 'notice' }
+    };
+  }
+  const passCountThreshold = requestedValidationPassCountThreshold(prompt);
+  if (passCountThreshold !== undefined) {
+    const bestPassCount = highestCompletedValidationPassCount(turns);
+    if (bestPassCount === undefined || bestPassCount <= passCountThreshold) {
+      return {
+        ok: false,
+        output: [
+          `finalize_build rejected: the user required validation pass count above ${passCountThreshold}, but this run does not have completed validation evidence above that threshold.`,
+          bestPassCount === undefined
+            ? 'No completed validation result with a parsed pass count was found in this run.'
+            : `Highest completed validation pass count found: ${bestPassCount}.`,
+          'Run or update validation so the completed output proves the requested higher pass count before finalizing.'
+        ].join('\n'),
+        meta: { presentation: 'notice' }
+      };
+    }
   }
   const passedCommands = claimedPassedValidationCommands(action.args.validation);
   if (passedCommands.length === 0) {
@@ -1136,12 +1425,176 @@ function validateToolCallEvidence(action: ToolCall, turns: AgentTurn[]): ToolRes
   return {
     ok: false,
     output: [
-      'finalize_build rejected: passed validation must be backed by a successful exec_command result from this run.',
-      `Missing successful exec_command result for: ${missingCommands.join(', ')}`,
+      'finalize_build rejected: passed validation must be backed by a completed successful exec_command or wait_command result from this run.',
+      `Missing completed successful command result for: ${missingCommands.join(', ')}`,
       'Run the command first, or mark the validation as failed or blocked with the concrete reason.'
     ].join('\n'),
     meta: { presentation: 'notice' }
   };
+}
+
+function promptExplicitlyForbidsFinalizeBuild(prompt: string): boolean {
+  return /\b(?:do\s+not|don't|dont|never)\b(?!\s+forget\b)[\s\S]{0,120}\b`?finalize_build`?\b/i.test(prompt)
+    || /\b(?:without|no)\s+`?finalize_build`?\b/i.test(prompt);
+}
+
+function requestedValidationPassCountThreshold(prompt: string): number | undefined {
+  const matches = prompt.matchAll(/\b(?:pass(?:ed)?\s+count|pass\s+count|count)\b.{0,60}\b(?:above|greater\s+than|more\s+than)\s+(\d+)\b/gi);
+  let threshold: number | undefined;
+  for (const match of matches) {
+    const parsed = Number.parseInt(match[1] ?? '', 10);
+    if (Number.isFinite(parsed)) {
+      threshold = threshold === undefined ? parsed : Math.max(threshold, parsed);
+    }
+  }
+  return threshold;
+}
+
+function highestCompletedValidationPassCount(turns: AgentTurn[]): number | undefined {
+  let highest: number | undefined;
+  for (const turn of turns) {
+    const evidence = successfulCommandEvidenceFromTurn(turn);
+    if (!evidence || !looksLikeValidationCommand(evidence.command)) {
+      continue;
+    }
+    for (const passCount of validationPassCounts(evidence.output)) {
+      highest = highest === undefined ? passCount : Math.max(highest, passCount);
+    }
+  }
+  return highest;
+}
+
+function validationPassCounts(output: string): number[] {
+  return [...output.matchAll(/\b(\d+)\s+passed\b/gi)]
+    .map((match) => Number.parseInt(match[1] ?? '', 10))
+    .filter((count) => Number.isFinite(count));
+}
+
+function duplicateFailedPatchRetryResult(action: ToolCall, turns: AgentTurn[]): ToolResult | undefined {
+  if (action.tool !== 'apply_patch' || typeof action.args.patch !== 'string') {
+    return undefined;
+  }
+  const patch = normalizePatchForDuplicateCheck(action.args.patch);
+  const path = primaryPatchPath(action.args.patch);
+  let stalePatchFailures = 0;
+  let staleFailuresForPath = 0;
+  const maxStalePatchFailuresBeforeBlock = 3;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!;
+    if (turn.kind !== 'tool') {
+      continue;
+    }
+    if (turn.toolResult?.ok === true && isFileMutationTool(turn.toolCall?.tool)) {
+      return undefined;
+    }
+    if (
+      turn.toolCall?.tool === 'apply_patch'
+      && turn.toolResult?.ok === false
+      && typeof turn.toolCall.args.patch === 'string'
+      && normalizePatchForDuplicateCheck(turn.toolCall.args.patch) === patch
+      && /apply_patch: hunk .* did not match/i.test(turn.toolResult.output)
+    ) {
+      return {
+        ok: false,
+        output: [
+          'The exact same apply_patch hunk already failed because the patch context did not match.',
+          'Do not retry that patch unchanged.',
+          'Re-read the exact target lines and issue a smaller patch with current surrounding context, or use write_file only after reading the full current file and confirming full replacement is appropriate.'
+        ].join('\n'),
+        meta: { presentation: 'notice' }
+      };
+    }
+    if (turn.toolCall?.tool !== 'apply_patch' || turn.toolResult?.ok !== false || typeof turn.toolCall.args.patch !== 'string') {
+      continue;
+    }
+    if (!/apply_patch: hunk .* did not match/i.test(turn.toolResult.output)) {
+      continue;
+    }
+    stalePatchFailures += 1;
+    const previousPatch = turn.toolCall.args.patch;
+    const samePath = path && primaryPatchPath(previousPatch) === path;
+    if (samePath) {
+      staleFailuresForPath += 1;
+      if (staleFailuresForPath >= maxStalePatchFailuresBeforeBlock) {
+        return {
+          ok: false,
+          output: [
+            'Repeated apply_patch attempts against this same file have failed because patch context did not match.',
+            'Stop calling apply_patch for this file in this run unless you have a genuinely different, exact hunk from a fresh read.',
+            'Do not use exec_command, sed, cp, Python, or helper scripts to hand-edit source after stale patch failures.',
+            'If patching is still blocked, read the full current file and use the write_file tool with overwriteExisting: true only when full replacement is appropriate.'
+          ].join('\n'),
+          meta: { presentation: 'notice' }
+        };
+      }
+    }
+    if (stalePatchFailures >= maxStalePatchFailuresBeforeBlock) {
+      return {
+        ok: false,
+        output: [
+          'Repeated apply_patch attempts have failed because patch context did not match.',
+          'Stop retrying stale apply_patch context.',
+          'Do not use exec_command, sed, cp, Python, or helper scripts to hand-edit source after stale patch failures.',
+          'If patching is still blocked, read the full current file and use the write_file tool with overwriteExisting: true only when full replacement is appropriate.'
+        ].join('\n'),
+        meta: { presentation: 'notice' }
+      };
+    }
+  }
+  return undefined;
+}
+
+function stalePatchReadLoopResult(action: ToolCall, turns: AgentTurn[]): ToolResult | undefined {
+  if (!isReadOnlyInspectionAction(action)) {
+    return undefined;
+  }
+  const failure = lastPatchContextFailure(turns);
+  if (!failure) {
+    return undefined;
+  }
+  if (failure.path && !readOnlyActionMayInspectPath(action, failure.path)) {
+    return undefined;
+  }
+  const turnsAfterFailure = turns.slice(failure.index + 1);
+  if (turnsAfterFailure.some(isWorkspaceMutationTurn)) {
+    return undefined;
+  }
+  const refreshCount = turnsAfterFailure.filter(isSuccessfulReadOnlyInspectionTurn).length;
+  const maxReadOnlyRefreshesAfterStalePatch = 2;
+  if (refreshCount < maxReadOnlyRefreshesAfterStalePatch) {
+    return undefined;
+  }
+  return {
+    ok: false,
+    output: [
+      `Read-only recovery loop guard: apply_patch already failed because the patch context did not match${failure.path ? ` in ${failure.path}` : ''}.`,
+      `The agent has already refreshed context ${refreshCount} time${refreshCount === 1 ? '' : 's'} after that failure without making a successful file change.`,
+      'Stop broad inspection. Use the refreshed context to issue one focused apply_patch hunk with exact current surrounding lines, or use write_file only after reading enough current content for an intentional full replacement.',
+      'If the missing edit still cannot be made, report the concrete blocker instead of continuing read-only inspection.'
+    ].join('\n'),
+    meta: { presentation: 'notice' }
+  };
+}
+
+function normalizePatchForDuplicateCheck(patch: string): string {
+  return patch.replace(/\r\n/g, '\n').trim();
+}
+
+function primaryPatchPath(patch: string): string | undefined {
+  const normalized = patch.replace(/\r\n/g, '\n');
+  const updateFile = normalized.match(/^\*\*\* Update File:\s*(.+)$/m);
+  if (updateFile?.[1]) {
+    return updateFile[1].trim();
+  }
+  const destination = normalized.match(/^\+\+\+\s+(?:b\/)?(.+)$/m);
+  if (destination?.[1] && destination[1] !== '/dev/null') {
+    return destination[1].trim();
+  }
+  const source = normalized.match(/^---\s+(?:a\/)?(.+)$/m);
+  if (source?.[1] && source[1] !== '/dev/null') {
+    return source[1].trim();
+  }
+  return undefined;
 }
 
 function patchContextRecoveryRequiredResult(action: ToolCall, turns: AgentTurn[]): ToolResult | undefined {
@@ -1186,18 +1639,57 @@ function lastPatchContextFailure(turns: AgentTurn[]): { index: number; path?: st
 
 function hasContextRefreshAfter(turns: AgentTurn[], failureIndex: number): boolean {
   return turns.slice(failureIndex + 1).some((turn) => {
-    if (turn.kind !== 'tool' || turn.toolResult?.ok !== true) {
-      return false;
-    }
-    const tool = turn.toolCall?.tool;
-    if (tool === 'read_file' || tool === 'read_files' || tool === 'search_text' || tool === 'list_tree') {
-      return true;
-    }
-    if (tool !== 'exec_command' || typeof turn.toolCall?.args.command !== 'string') {
-      return false;
-    }
-    return /\b(?:cat|sed|nl|rg|grep|ls|find|head|tail)\b/.test(turn.toolCall.args.command.trim());
+    return isSuccessfulReadOnlyInspectionTurn(turn);
   });
+}
+
+function isSuccessfulReadOnlyInspectionTurn(turn: AgentTurn): boolean {
+  if (turn.kind !== 'tool' || turn.toolResult?.ok !== true || !turn.toolCall) {
+    return false;
+  }
+  return isReadOnlyInspectionAction(turn.toolCall);
+}
+
+function isReadOnlyInspectionAction(action: ToolCall): boolean {
+  if (isReadOnlyInspectionTool(action.tool)) {
+    return true;
+  }
+  if (action.tool !== 'exec_command' || typeof action.args.command !== 'string') {
+    return false;
+  }
+  return looksLikeReadOnlyInspectionCommand(action.args.command);
+}
+
+function isReadOnlyInspectionTool(tool: string | undefined): boolean {
+  return tool === 'read_file'
+    || tool === 'read_files'
+    || tool === 'search_text'
+    || tool === 'search_paths'
+    || tool === 'list_tree'
+    || tool === 'inspect_file';
+}
+
+function readOnlyActionMayInspectPath(action: ToolCall, failedPath: string): boolean {
+  if (action.tool === 'exec_command' && typeof action.args.command === 'string') {
+    return action.args.command.includes(failedPath) || action.args.command.includes(failedPath.replace(/^\.\//, ''));
+  }
+  const requestedPaths = [action.args.path, action.args.target, action.args.file]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim().replace(/^\.\//, ''));
+  if (requestedPaths.length === 0 || action.tool === 'read_files') {
+    return true;
+  }
+  const normalizedFailedPath = failedPath.replace(/^\.\//, '');
+  return requestedPaths.some((requestedPath) =>
+    requestedPath === normalizedFailedPath
+    || normalizedFailedPath.startsWith(`${requestedPath}/`)
+    || normalizedFailedPath.endsWith(`/${requestedPath}`)
+    || requestedPath.endsWith(`/${normalizedFailedPath}`)
+  );
+}
+
+function looksLikeReadOnlyInspectionCommand(command: string): boolean {
+  return /\b(?:cat|sed|nl|rg|grep|ls|find|head|tail|wc|od)\b/.test(command.trim());
 }
 
 function fileMutationPaths(action: ToolCall): string[] {
@@ -1233,19 +1725,20 @@ function cosmeticSuccessMessageEditAfterValidationResult(action: ToolCall, turns
       : typeof action.args.patch === 'string'
         ? action.args.patch
         : '';
-  if (!/\b(?:all\s+)?(?:tests?|build|checks?|validation)\s+(?:passed|pass|succeeded|successful|green)\b/i.test(newContent)) {
+  if (
+    !/\b(?:all\s+)?(?:tests?|build|checks?|validation)\s+(?:passed|pass|succeeded|successful|green)\b/i.test(newContent)
+    && !/\b(?:all\s+)?features?\s+validated\b/i.test(newContent)
+    && !/\bfully\s+validated\b/i.test(newContent)
+  ) {
     return undefined;
   }
-  const lastMutationIndex = findLastToolTurnIndex(turns, (turn) => isFileMutationTool(turn.toolCall?.tool));
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
   const successfulValidationAfterMutation = turns
     .slice(lastMutationIndex + 1)
-    .some((turn) =>
-      turn.kind === 'tool'
-      && turn.toolCall?.tool === 'exec_command'
-      && turn.toolResult?.ok === true
-      && typeof turn.toolCall.args.command === 'string'
-      && looksLikeValidationCommand(turn.toolCall.args.command)
-    );
+    .some((turn) => {
+      const evidence = successfulCommandEvidenceFromTurn(turn);
+      return Boolean(evidence && looksLikeValidationCommand(evidence.command));
+    });
   if (!successfulValidationAfterMutation) {
     return undefined;
   }
@@ -1253,8 +1746,37 @@ function cosmeticSuccessMessageEditAfterValidationResult(action: ToolCall, turns
     ok: false,
     output: [
       'Refusing cosmetic success-message edit after validation already exited with 0.',
-      'Do not change project files only to make test output say "passed"; trust the successful exec_command result and answer the user.',
+      'Do not change project files only to make test output say "passed"; trust the successful validation result and answer the user.',
       'Only edit files now if there is a real implementation or test-coverage gap, not a missing success log.'
+    ].join('\n'),
+    meta: { presentation: 'notice' }
+  };
+}
+
+function cosmeticSuccessCommandEditAfterValidationResult(action: ToolCall, turns: AgentTurn[]): ToolResult | undefined {
+  if (action.tool !== 'exec_command' || typeof action.args.command !== 'string') {
+    return undefined;
+  }
+  const command = action.args.command;
+  if (!isCosmeticValidationStatusMutationCommand(command)) {
+    return undefined;
+  }
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
+  const successfulValidationAfterMutation = turns
+    .slice(lastMutationIndex + 1)
+    .some((turn) => {
+      const evidence = successfulCommandEvidenceFromTurn(turn);
+      return Boolean(evidence && looksLikeValidationCommand(evidence.command));
+    });
+  if (!successfulValidationAfterMutation) {
+    return undefined;
+  }
+  return {
+    ok: false,
+    output: [
+      'Refusing cosmetic validation-status shell edit after validation already exited with 0.',
+      'Do not use exec_command to add comments or text such as "validation pass" or "all checks confirmed" only to create mutation evidence.',
+      'Make the requested functional change, or if no change is needed, answer with the existing validation evidence instead of editing project files.'
     ].join('\n'),
     meta: { presentation: 'notice' }
   };
@@ -1268,19 +1790,19 @@ function duplicateSuccessfulValidationCommandResult(action: ToolCall, turns: Age
   if (!looksLikeValidationCommand(command)) {
     return undefined;
   }
-  const lastMutationIndex = findLastToolTurnIndex(turns, (turn) => isFileMutationTool(turn.toolCall?.tool));
+  const lastMutationIndex = findLastToolTurnIndex(turns, isWorkspaceMutationTurn);
   const normalizedCommand = normalizeCommandForEvidence(command);
   const cwd = normalizeExecCwd(action.args.cwd);
   const previous = turns
     .slice(lastMutationIndex + 1)
-    .find((turn) =>
-      turn.kind === 'tool'
-      && turn.toolCall?.tool === 'exec_command'
-      && turn.toolResult?.ok === true
-      && typeof turn.toolCall.args.command === 'string'
-      && normalizeCommandForEvidence(turn.toolCall.args.command) === normalizedCommand
-      && normalizeExecCwd(turn.toolCall.args.cwd) === cwd
-    );
+    .find((turn) => {
+      const evidence = successfulCommandEvidenceFromTurn(turn);
+      return Boolean(
+        evidence
+        && normalizeCommandForEvidence(evidence.command) === normalizedCommand
+        && evidence.cwd === cwd
+      );
+    });
   if (!previous?.toolResult) {
     return undefined;
   }
@@ -1325,11 +1847,105 @@ function claimedPassedValidationCommands(validation: unknown): string[] {
     .map((entry) => String(entry.command).trim());
 }
 
+interface CommandEvidence {
+  command: string;
+  cwd: string;
+  output: string;
+  commandId?: string;
+}
+
 function successfulExecCommands(turns: AgentTurn[]): string[] {
   return turns
-    .filter((turn) => turn.kind === 'tool' && turn.toolCall?.tool === 'exec_command' && turn.toolResult?.ok === true)
-    .map((turn) => typeof turn.toolCall?.args.command === 'string' ? turn.toolCall.args.command.trim() : '')
-    .filter((command) => command.length > 0);
+    .map(successfulCommandEvidenceFromTurn)
+    .filter((evidence): evidence is CommandEvidence => Boolean(evidence))
+    .map((evidence) => evidence.command);
+}
+
+function hasSuccessfulValidationCommand(turns: AgentTurn[]): boolean {
+  return turns
+    .map(successfulCommandEvidenceFromTurn)
+    .some((evidence) => Boolean(evidence && looksLikeValidationCommand(evidence.command)));
+}
+
+function successfulCommandEvidenceFromTurn(turn: AgentTurn): CommandEvidence | undefined {
+  if (turn.kind !== 'tool' || turn.toolResult?.ok !== true) {
+    return undefined;
+  }
+  const runningCommand = turn.toolResult.meta?.runningCommand;
+  if (turn.toolCall?.tool === 'wait_command') {
+    if (!runningCommand || !runningCommandExitedSuccessfully(runningCommand)) {
+      return undefined;
+    }
+    return commandEvidenceFromRunningMeta(runningCommand, turn.toolResult.output);
+  }
+  if (turn.toolCall?.tool !== 'exec_command') {
+    return undefined;
+  }
+  if (runningCommand) {
+    if (!runningCommandExitedSuccessfully(runningCommand)) {
+      return undefined;
+    }
+    return commandEvidenceFromRunningMeta(runningCommand, turn.toolResult.output);
+  }
+  const command = typeof turn.toolCall.args.command === 'string' ? turn.toolCall.args.command.trim() : '';
+  if (!command) {
+    return undefined;
+  }
+  return {
+    command,
+    cwd: normalizeExecCwd(turn.toolCall.args.cwd),
+    output: turn.toolResult.output
+  };
+}
+
+function pendingRunningValidationCommand(turns: AgentTurn[]): CommandEvidence | undefined {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const pending = runningCommandEvidenceFromTurn(turns[index]);
+    if (!pending || !looksLikeValidationCommand(pending.command)) {
+      continue;
+    }
+    const laterTurns = turns.slice(index + 1);
+    const laterCompletion = laterTurns.some((turn) => {
+      const runningCommand = turn.toolResult?.meta?.runningCommand;
+      return runningCommand?.status === 'exited' && commandsMatch(pending.command, runningCommand.command);
+    });
+    if (!laterCompletion) {
+      return pending;
+    }
+  }
+  return undefined;
+}
+
+function runningCommandEvidenceFromTurn(turn: AgentTurn): CommandEvidence | undefined {
+  if (turn.kind !== 'tool' || turn.toolResult?.ok !== true) {
+    return undefined;
+  }
+  if (turn.toolCall?.tool !== 'exec_command' && turn.toolCall?.tool !== 'wait_command') {
+    return undefined;
+  }
+  const runningCommand = turn.toolResult.meta?.runningCommand;
+  if (!runningCommand || runningCommand.status !== 'running') {
+    return undefined;
+  }
+  return commandEvidenceFromRunningMeta(runningCommand, turn.toolResult.output);
+}
+
+function runningCommandExitedSuccessfully(runningCommand: RunningCommandMeta): boolean {
+  return runningCommand.status === 'exited'
+    && runningCommand.exitCode === 0;
+}
+
+function commandEvidenceFromRunningMeta(runningCommand: RunningCommandMeta, output: string): CommandEvidence | undefined {
+  const command = runningCommand.command.trim();
+  if (!command) {
+    return undefined;
+  }
+  return {
+    command,
+    cwd: normalizeExecCwd(runningCommand.cwd),
+    output,
+    commandId: runningCommand.id
+  };
 }
 
 type NpmValidationTask = 'test' | 'build';
@@ -1365,13 +1981,62 @@ function claimsValidationPassed(answer: string): boolean {
 function commandsMatch(claimed: string, actual: string): boolean {
   const normalizedClaim = normalizeCommandForEvidence(claimed);
   const normalizedActual = normalizeCommandForEvidence(actual);
-  return normalizedActual === normalizedClaim
+  if (
+    normalizedActual === normalizedClaim
     || normalizedActual.endsWith(`&& ${normalizedClaim}`)
-    || normalizedActual.endsWith(`; ${normalizedClaim}`);
+    || normalizedActual.endsWith(`; ${normalizedClaim}`)
+  ) {
+    return true;
+  }
+
+  const actualParts = splitCommandForEvidence(normalizedActual);
+  const claimedParts = splitCommandForEvidence(normalizedClaim);
+  return claimedParts.length > 0
+    && claimedParts.every((claimedPart) => actualParts.some((actualPart) => commandPartMatches(claimedPart, actualPart)));
 }
 
 function normalizeCommandForEvidence(command: string): string {
-  return command.replace(/\s+/g, ' ').trim();
+  return command
+    .replace(/\s+/g, ' ')
+    .replace(/\s+\d?>&\d+\b/g, '')
+    .replace(/\s+\([^)]*(?:static|browser|smoke|validation|tests?|checks?|syntax)[^)]*\)\s*$/i, '')
+    .trim();
+}
+
+function splitCommandForEvidence(command: string): string[] {
+  return normalizeCommandForEvidence(command)
+    .split(/\s*(?:&&|;)\s*/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function commandPartMatches(claimed: string, actual: string): boolean {
+  if (claimed === actual || actual.endsWith(` ${claimed}`)) {
+    return true;
+  }
+  const claimedTokens = claimed.split(/\s+/u);
+  const actualTokens = actual.split(/\s+/u);
+  if (claimedTokens.length !== actualTokens.length || claimedTokens.length === 0) {
+    return false;
+  }
+  return claimedTokens.every((token, index) => evidenceTokenMatches(token, actualTokens[index]!));
+}
+
+function evidenceTokenMatches(claimed: string, actual: string): boolean {
+  if (claimed === actual) {
+    return true;
+  }
+  const claimedHasPath = claimed.includes('/') || claimed.includes('\\');
+  const actualHasPath = actual.includes('/') || actual.includes('\\');
+  if (!claimedHasPath && !actualHasPath) {
+    return false;
+  }
+  return basenameForEvidence(actual) === basenameForEvidence(claimed);
+}
+
+function basenameForEvidence(value: string): string {
+  const cleaned = value.replace(/\\/g, '/').replace(/^['"]|['"]$/g, '');
+  return cleaned.slice(cleaned.lastIndexOf('/') + 1);
 }
 
 function validationWasRequested(prompt: string): boolean {
@@ -2027,15 +2692,28 @@ function parseToolCallOnly(text: string): ToolCall | undefined {
 }
 
 function parseJsonWithRepair(text: string): { ok: true; value: unknown } | { ok: false } {
-  try {
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch {
+  for (const candidate of jsonRepairCandidates(text)) {
     try {
-      return { ok: true, value: JSON.parse(repairInvalidJsonEscapes(text)) as unknown };
+      return { ok: true, value: JSON.parse(candidate) as unknown };
     } catch {
-      return { ok: false };
+      // Try the next local repair candidate.
     }
   }
+  return { ok: false };
+}
+
+function jsonRepairCandidates(text: string): string[] {
+  const candidates = [
+    text,
+    repairInvalidJsonEscapes(text),
+    repairJsonSmartQuotes(text),
+    repairInvalidJsonEscapes(repairJsonSmartQuotes(text))
+  ];
+  return [...new Set(candidates)];
+}
+
+function repairJsonSmartQuotes(text: string): string {
+  return text.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 }
 
 function repairInvalidJsonEscapes(text: string): string {
@@ -2189,7 +2867,8 @@ function decodeLooseJsonString(text: string): string {
 }
 
 function looksLikeToolCallJson(text: string): boolean {
-  return /"tool"\s*:\s*"[^"]+"/.test(text) && /"args"\s*:/.test(text);
+  const normalized = repairJsonSmartQuotes(text);
+  return /["']tool["']\s*:\s*["'][^"']+["']/.test(normalized) && /["']args["']\s*:/.test(normalized);
 }
 
 function completeToolCallWithNoisyTransportSuffix(text: string): string | undefined {

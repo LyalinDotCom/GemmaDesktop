@@ -5,7 +5,7 @@ import { findScenario, listLmStudioModels, listOllamaModels, scenarios } from '@
 import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from '@gemma-sdk/agent';
 import { runAcp } from './acp.js';
 import { parseArgs } from './args.js';
-import { appendEvent, createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, sessionMessages, type DiagnosticContext } from './diagnostics.js';
+import { appendEvent, createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, sessionMessagesWithMetadata, type DiagnosticContext } from './diagnostics.js';
 import { createRuntime, formatRunResult, resolveRuntimeSkills } from './runtime.js';
 import { runTui } from './tui.js';
 import { cliVersionText } from './version.js';
@@ -43,7 +43,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
 
     diagnostics = await createDiagnosticContext(options);
-    options.history = sessionMessages(diagnostics.session);
+    const promptHistory = sessionMessagesWithMetadata(diagnostics.session);
+    options.history = promptHistory.messages;
 
     if (options.tui || shouldStartTuiByDefault(options)) {
       await runTui(options, undefined, undefined, diagnostics);
@@ -64,7 +65,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const runSkills = resolveRuntimeSkills(runtime.skills, prompt);
     const explicitSkillPaths = new Set(runtime.skills.map((skill) => skill.path));
     const detectedSkills = runSkills.filter((skill) => !explicitSkillPaths.has(skill.path));
-    const runId = await recordRunStart(diagnostics, prompt);
+    const runId = await recordRunStart(diagnostics, prompt, promptHistory.metadata);
     const resultBase = {
       sessionId: diagnostics.session.id,
       provider: runtime.provider.name,
@@ -124,6 +125,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           loadedTokens: runtime.loadedContextTokens,
           tokens: runtime.contextTokens
         },
+        promptHistory: promptHistory.metadata,
         skills: runSkills.map((skill) => skill.name),
         detectedSkills: detectedSkills.map((skill) => skill.name)
       });

@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FileChange, FileChangeMeta, Tool, ToolResult } from '../types.js';
-import { applyPatch, normalizePatchText } from './applyPatch.js';
+import { applyPatch, normalizePatchText, parsePatch, type PatchFile } from './applyPatch.js';
 import { buildRunnerCommand, detectRunner, parseRunnerOutput } from './runTests.js';
 import { detectLanguage, findDefinitions, listSymbols, type SymbolDef } from './symbols.js';
 
@@ -35,6 +35,8 @@ const defaultReadBytes = 96_000;
 const defaultCommandOutputBytes = 96_000;
 const defaultShellIdleTimeoutMs = 300_000;
 const defaultShellHandoffTimeoutMs = 15_000;
+const largeExistingFileOverwriteBytes = 12_000;
+const largeExistingFileOverwriteLines = 200;
 
 function asString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -382,23 +384,192 @@ function lineCount(text: string): number {
   return text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length;
 }
 
+function requiresLargeOverwriteConfirmation(priorContent: string, nextContent: string): boolean {
+  const priorBytes = Buffer.byteLength(priorContent, 'utf8');
+  const nextBytes = Buffer.byteLength(nextContent, 'utf8');
+  const priorLines = lineCount(priorContent);
+  const nextLines = lineCount(nextContent);
+  return (
+    (priorBytes >= largeExistingFileOverwriteBytes || priorLines >= largeExistingFileOverwriteLines) &&
+    (nextBytes >= largeExistingFileOverwriteBytes || nextLines >= largeExistingFileOverwriteLines)
+  );
+}
+
+function largeOverwriteRefusal(relPath: string): string {
+  return [
+    `Refusing large write_file overwrite for existing file ${relPath} without overwriteExisting: true.`,
+    'For existing large files, use apply_patch with exact current context for scoped edits.',
+    'Only retry write_file with overwriteExisting: true after re-reading enough of the file to intentionally replace the whole file.'
+  ].join('\n');
+}
+
+function stalePatchWriteRefusal(relPath: string): string {
+  return [
+    `Refusing write_file overwrite for existing file ${relPath} immediately after a stale apply_patch failure for the same file.`,
+    'Re-read the exact current hunk location and retry one focused apply_patch hunk at a time.',
+    'If repeated patching is blocked, only use the write_file tool with overwriteExisting: true when intentionally replacing the whole file after re-reading it.'
+  ].join('\n');
+}
+
+function stalePatchLargeOverwriteRefusal(relPath: string): string {
+  return [
+    `Refusing large write_file replacement for existing file ${relPath} after stale apply_patch failures for the same file.`,
+    'A full-file rewrite at this point is likely to drop unrelated existing behavior.',
+    'Use smaller apply_patch hunks with exact current context, or report the concrete blocker instead of replacing the whole file.'
+  ].join('\n');
+}
+
+function stalePatchCommandMutationRefusal(relPath: string): string {
+  return [
+    `Refusing exec_command because it appears to mutate ${relPath} immediately after a stale apply_patch failure for the same file.`,
+    'Re-read the exact current hunk location and retry one focused apply_patch hunk at a time.',
+    'Use exec_command for validation and read-only inspection, not for hand-editing source after a stale patch.',
+    'If repeated patching is blocked, read the full current file and use the write_file tool with overwriteExisting: true only when full replacement is appropriate.'
+  ].join('\n');
+}
+
+function stalePatchCommandMutationTarget(command: string, workspaceRoot: string, commandCwd: string, stalePatchPaths: Set<string>): string | undefined {
+  if (!looksLikeShellFileMutation(command)) {
+    return undefined;
+  }
+  for (const relPath of stalePatchPaths) {
+    if (commandMentionsStalePatchPath(command, workspaceRoot, commandCwd, relPath)) {
+      return relPath;
+    }
+  }
+  return undefined;
+}
+
+function looksLikeShellFileMutation(command: string): boolean {
+  return [
+    /\b(?:sed|gsed)\b[\s\S]*\s-i(?:\s|$|['"])/i,
+    /\bperl\b[\s\S]*\s-pi(?:\s|$|['"])/i,
+    /\bnode\b[\s\S]*(?:writeFileSync|appendFileSync|copyFileSync|renameSync|rmSync|fs\.promises\.writeFile|fs\.writeFile\s*\()/i,
+    /\bpython3?\b[\s\S]*(?:write_text\s*\(|write_bytes\s*\(|open\s*\([^)]*,\s*['"](?:w|a|x)|shutil\.|os\.(?:remove|rename|replace|unlink)\s*\()/i,
+    /(?:^|[;&|]\s*)(?:mv|cp|rm|truncate)\b/i,
+    /(?:^|[;&|]\s*)tee(?:\s+-a)?\s+/i
+  ].some((pattern) => pattern.test(command)) || hasFileOutputRedirection(command);
+}
+
+function hasFileOutputRedirection(command: string): boolean {
+  let singleQuoted = false;
+  let doubleQuoted = false;
+  let escaped = false;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && !singleQuoted) {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" && !doubleQuoted) {
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+    if (char === '"' && !singleQuoted) {
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+    if (singleQuoted || doubleQuoted || char !== '>') {
+      continue;
+    }
+
+    const previous = command[index - 1] ?? '';
+    const next = command[index + 1] ?? '';
+    if (previous === '<' || previous === '=' || next === '=' || next === '&') {
+      continue;
+    }
+
+    let targetStart = next === '>' ? index + 2 : index + 1;
+    while (targetStart < command.length && /\s/.test(command[targetStart] ?? '')) {
+      targetStart += 1;
+    }
+    if (targetStart >= command.length || command[targetStart] === '&') {
+      continue;
+    }
+
+    let targetEnd = targetStart;
+    while (targetEnd < command.length && !/[\s;&|(){}]/.test(command[targetEnd] ?? '')) {
+      targetEnd += 1;
+    }
+    const target = command.slice(targetStart, targetEnd).replace(/^['"]|['"]$/g, '');
+    if (target === '/dev/null') {
+      continue;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function commandMentionsStalePatchPath(command: string, workspaceRoot: string, commandCwd: string, relPath: string): boolean {
+  const normalizedCommand = command.replace(/\\/g, '/');
+  const normalizedRelPath = normalizeRelativePath(relPath);
+  const absolutePath = resolve(workspaceRoot, normalizedRelPath);
+  const relFromCommandCwd = normalizeRelativePath(relative(commandCwd, absolutePath));
+  const parent = dirname(normalizedRelPath);
+  const file = basename(normalizedRelPath);
+  const pathCandidates = [
+    normalizedRelPath,
+    `./${normalizedRelPath}`,
+    normalizeRelativePath(absolutePath),
+    relFromCommandCwd
+  ].filter((candidate) => candidate !== '' && !candidate.startsWith('..'));
+
+  if (pathCandidates.some((candidate) => normalizedCommand.includes(candidate))) {
+    return true;
+  }
+
+  return parent !== '.'
+    && normalizedCommand.includes(parent)
+    && new RegExp(`(?:^|[\\s'"(=:/])${escapeRegExp(file)}(?:$|[\\s'")])`).test(normalizedCommand);
+}
+
 function fail(error: unknown): ToolResult {
   return { ok: false, output: error instanceof Error ? error.message : String(error) };
 }
 
-function applyPatchFailure(error: unknown): ToolResult {
+function applyPatchFailure(error: unknown, stalePatchPaths: string[] = [], recordStalePatchPaths?: (paths: string[]) => void): ToolResult {
   const message = error instanceof Error ? error.message : String(error);
   if (!/apply_patch: hunk .* did not match/i.test(message)) {
     return { ok: false, output: message };
   }
+  recordStalePatchPaths?.(stalePatchPaths);
   return {
     ok: false,
     output: [
       message,
       'Patch context is stale or inaccurate. Before another file mutation, re-read the current target file or nearby region with read_file, read_files, search_text, list_tree, or a targeted read-only exec_command.',
-      'Then send a smaller patch with exact current surrounding lines. Use write_file only after re-reading the file and only when replacing the whole file is appropriate. Do not retry the same patch unchanged.'
+      'Then send a smaller patch with exact current surrounding lines. If a multi-hunk patch failed, retry one focused hunk at a time after reading that hunk location.',
+      'Do not switch to exec_command, sed, awk, or helper scripts for hand-edited source changes after a stale patch.',
+      'Use the write_file tool with overwriteExisting: true only after re-reading the file and only when replacing the whole file is appropriate. Do not retry the same patch unchanged.'
     ].join('\n')
   };
+}
+
+function extractPatchTargetPaths(patch: string): string[] {
+  const paths = new Set<string>();
+  for (const line of patch.split(/\r?\n/)) {
+    const updateMatch = line.match(/^\*\*\* (?:Update|Delete) File:\s+(.+)$/);
+    if (updateMatch) {
+      paths.add(normalizeRelativePath(updateMatch[1].trim()));
+      continue;
+    }
+    const addMatch = line.match(/^\*\*\* Add File:\s+(.+)$/);
+    if (addMatch) {
+      paths.add(normalizeRelativePath(addMatch[1].trim()));
+      continue;
+    }
+    const unifiedMatch = line.match(/^\+\+\+\s+(?:b\/)?(.+)$/);
+    if (unifiedMatch && unifiedMatch[1] !== '/dev/null') {
+      paths.add(normalizeRelativePath(unifiedMatch[1].trim()));
+    }
+  }
+  return [...paths];
 }
 
 function isPermissionRequiredError(error: unknown): boolean {
@@ -442,6 +613,9 @@ function suspiciousContentWarning(content: string, pathLabel: string): string | 
     /\bplaceholder\s+(?:implementation|stub|value|logic|data|text|code)\b/i,
     /\bplaceholder\s+for\s+(?:the\s+)?(?:implementation|stub|logic|parser|loader|inference|forward pass|tokenization)\b/i,
     /\b(?:todo|fixme):?.*\bplaceholder\b/i,
+    /\bversion\s+\d+(?:\.\d+)*\s*-\s*(?:all\s+)?(?:features?\s+)?validated\b/i,
+    /\b(?:all\s+)?features?\s+validated\b/i,
+    /\bfully\s+validated\b/i,
     /typo in my thought/i,
     /\b(?:i\s+will|i'll)\s+fix\b/i,
     /correction:\s*(?:i'll|i will|let'?s|just)\b/i,
@@ -670,6 +844,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
   const yolo = options.yolo === true;
   const outsideWorkspacePermission = options.outsideWorkspacePermission;
   const runningCommands = new Map<string, ManagedShellCommand>();
+  const stalePatchFailurePaths = new Set<string>();
   const pathPermission = (tool: string, action: string): WorkspacePathPermissionOptions => ({
     tool,
     action,
@@ -996,6 +1171,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
       parameters: {
         path: 'Workspace-relative destination path. Parent directories are created automatically.',
         content: 'Complete final file contents. Do not include scratch notes or commentary.',
+        overwriteExisting: 'Required as true only when intentionally replacing an existing large file after re-reading enough current file content. Prefer apply_patch for scoped edits.',
         createDirectories: 'Accepted for Gemma Desktop compatibility. Parent directories are always created.'
       },
       requiredParameters: ['path', 'content'],
@@ -1005,7 +1181,9 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
       examples: [{ path: 'test-project/index.html', content: '<!doctype html>...' }],
       async run(args) {
         try {
-          const file = await resolveWritableInside(cwd, firstString(args, ['path', 'name', 'file', 'target']), pathPermission('write_file', 'write file'));
+          const requestedPath = firstString(args, ['path', 'name', 'file', 'target']);
+          const requestedRelPath = normalizeRelativePath(requestedPath);
+          const file = await resolveWritableInside(cwd, requestedPath, pathPermission('write_file', 'write file'));
           const content = asString(args.content, 'content');
           const relPath = displayPath(cwd, file);
           const suspiciousWarning = suspiciousContentWarning(content, relPath);
@@ -1018,12 +1196,29 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
           } catch {
             priorContent = undefined;
           }
+          const hasStalePatchFailureForPath = stalePatchFailurePaths.has(normalizeRelativePath(relPath))
+            || stalePatchFailurePaths.has(requestedRelPath);
+          if (
+            priorContent !== undefined &&
+            hasStalePatchFailureForPath &&
+            requiresLargeOverwriteConfirmation(priorContent, content)
+          ) {
+            return fail(new Error(stalePatchLargeOverwriteRefusal(relPath)));
+          }
+          if (priorContent !== undefined && args.overwriteExisting !== true && hasStalePatchFailureForPath) {
+            return fail(new Error(stalePatchWriteRefusal(relPath)));
+          }
+          if (priorContent !== undefined && args.overwriteExisting !== true && requiresLargeOverwriteConfirmation(priorContent, content)) {
+            return fail(new Error(largeOverwriteRefusal(relPath)));
+          }
           await assertNotProtectedBenchmarkTestMutation(file, relPath, content);
           await writeFile(file, content, 'utf8');
           const verified = await readFile(file, 'utf8');
           if (verified !== content) {
             throw new Error(`Failed to verify write for ${displayPath(cwd, file)}.`);
           }
+          stalePatchFailurePaths.delete(normalizeRelativePath(relPath));
+          stalePatchFailurePaths.delete(requestedRelPath);
           const entrypointWarnings = await frontendEntrypointMismatchWarnings(file, relPath);
           const bytesAfter = Buffer.byteLength(content, 'utf8');
           const isOverwrite = priorContent !== undefined;
@@ -1063,14 +1258,22 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
         { patch: '--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n' }
       ],
       async run(args) {
+        let patchTargetPaths: string[] = [];
         try {
           const patch = asString(args.patch, 'patch');
           const normalizedPatch = normalizePatchText(patch);
+          patchTargetPaths = extractPatchTargetPaths(normalizedPatch.text);
           const summaries: string[] = [];
           const warnings: string[] = [];
           const changes: FileChange[] = [];
           if (normalizedPatch.normalized) {
             warnings.push('notice: normalized escaped patch newlines/quotes before applying');
+          }
+          const parsedPatchFiles = parsePatch(normalizedPatch.text);
+          const parsedPatchByPath = new Map<string, PatchFile>();
+          for (const file of parsedPatchFiles) {
+            const path = file.isDelete ? file.oldPath : file.newPath;
+            parsedPatchByPath.set(normalizeRelativePath(path), file);
           }
           const results = await applyPatch(normalizedPatch.text, {
             readFile: async (path) => {
@@ -1101,24 +1304,34 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
             }
           });
           for (const result of results) {
+            stalePatchFailurePaths.delete(normalizeRelativePath(result.path));
             summaries.push(`${result.status} ${result.path} (${result.hunksApplied} hunk${result.hunksApplied === 1 ? '' : 's'})`);
             const status: FileChange['status'] = result.status === 'created' ? 'created'
               : result.status === 'deleted' ? 'deleted'
                 : result.status === 'renamed' ? 'renamed'
                   : 'updated';
+            const parsedPatchFile = parsedPatchByPath.get(normalizeRelativePath(result.path));
+            const patchSummary = parsedPatchFile ? summarizePatchFile(parsedPatchFile) : undefined;
             changes.push({
               path: result.path,
               oldPath: result.oldPath,
               status,
               preview: status === 'created' ? result.contents : undefined,
               bytesAfter: result.contents !== undefined ? Buffer.byteLength(result.contents, 'utf8') : undefined,
+              linesAdded: patchSummary?.linesAdded,
+              linesRemoved: patchSummary?.linesRemoved,
+              hunks: patchSummary?.hunks,
               language: detectFileLanguage(result.path)
             });
           }
           const meta: { fileChange: FileChangeMeta } = { fileChange: { tool: 'apply_patch', changes } };
           return ok([...summaries, ...warnings].join('\n'), meta);
         } catch (error) {
-          return applyPatchFailure(error);
+          return applyPatchFailure(error, patchTargetPaths, (paths) => {
+            for (const path of paths) {
+              stalePatchFailurePaths.add(normalizeRelativePath(path));
+            }
+          });
         }
       }
     },
@@ -1145,6 +1358,10 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
           const command = firstString(args, ['command', 'name']);
           const commandCwd = typeof args.cwd === 'string' ? resolveWorkspacePath(cwd, args.cwd) : cwd;
           await stat(commandCwd);
+          const staleMutationTarget = stalePatchCommandMutationTarget(command, cwd, commandCwd, stalePatchFailurePaths);
+          if (staleMutationTarget) {
+            return fail(new Error(stalePatchCommandMutationRefusal(staleMutationTarget)));
+          }
           await assertShellCommandWorkspacePermission(command, cwd, commandCwd, {
             yolo,
             outsideWorkspacePermission
@@ -1427,6 +1644,28 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
       }
     }
   ];
+}
+
+function summarizePatchFile(file: PatchFile): Pick<FileChange, 'linesAdded' | 'linesRemoved' | 'hunks'> {
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  const hunks = file.hunks.map((hunk) => {
+    const oldLines = hunk.lines
+      .filter((line) => line.startsWith('-'))
+      .map((line) => line.slice(1));
+    const newLines = hunk.lines
+      .filter((line) => line.startsWith('+'))
+      .map((line) => line.slice(1));
+    linesRemoved += oldLines.length;
+    linesAdded += newLines.length;
+    return {
+      oldStart: hunk.oldStart,
+      newStart: hunk.newStart,
+      oldLines,
+      newLines
+    };
+  });
+  return { linesAdded, linesRemoved, hunks };
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -2490,6 +2729,7 @@ function managedCommandSnapshotResult(command: ManagedShellCommand, outputLimit:
   const latestOutput = truncateManagedOutput(command.output, outputLimit).trimEnd();
   command.outputCursor = command.output.length;
   const exited = command.status === 'exited';
+  const runningNotice = exited ? '' : stillRunningNotice(command.command);
   const exitSummary = exited
     ? command.exitCode === 0
       ? 'Command exited with 0.'
@@ -2505,11 +2745,13 @@ function managedCommandSnapshotResult(command: ManagedShellCommand, outputLimit:
       `elapsed: ${formatDuration(elapsedMs)}`,
       `command: ${command.command}`,
       '',
+      runningNotice,
       exited
         ? 'This command has completed. Use the output below to answer the user.'
         : 'Use this progress output to update the user when useful. If more updates or completion are needed, call wait_command again with this commandId. Use cancel_command only if the command should stop.',
       newOutput ? `\nNew output:\n${newOutput}` : '\nNew output:\n(no new output)',
-      latestOutput && latestOutput !== newOutput ? `\nLatest output:\n${latestOutput}` : ''
+      latestOutput && latestOutput !== newOutput ? `\nLatest output:\n${latestOutput}` : '',
+      runningNotice ? `\n${runningNotice}` : ''
     ].filter(Boolean).join('\n'),
     meta: {
       runningCommand: {
@@ -2540,16 +2782,20 @@ function looksLikeLongRunningCommand(command: string): boolean {
 function runningCommandResult(command: ManagedShellCommand, reason: string, outputLimit: number): ToolResult {
   const elapsedMs = Date.now() - command.startedAt;
   const output = truncateManagedOutput(command.output, outputLimit).trimEnd();
+  const runningNotice = stillRunningNotice(command.command);
   return ok([
     `Command is still running (${reason}).`,
     `commandId: ${command.id}`,
     `elapsed: ${formatDuration(elapsedMs)}`,
     `command: ${command.command}`,
     '',
+    runningNotice,
+    '',
     looksLikeLongRunningCommand(command.command)
       ? 'This may be expected for a dev server, watcher, or service. If the user asked for this running state, treat it as success. If you need to verify it, run a separate finite command such as curl. Do not start the same server again. Use wait_command for more logs or cancel_command only if this command is wrong or no longer needed.'
       : 'This command is still producing progress. Use this output to update the user when useful. If more updates or completion are needed, call wait_command with this commandId. Use cancel_command only if the command should stop.',
-    output ? `\nLatest output:\n${output}` : '\nLatest output:\n(no output yet)'
+    output ? `\nLatest output:\n${output}` : '\nLatest output:\n(no output yet)',
+    `\n${runningNotice}`
   ].join('\n'), {
     runningCommand: {
       id: command.id,
@@ -2560,6 +2806,13 @@ function runningCommandResult(command: ManagedShellCommand, reason: string, outp
       outputChars: command.output.length
     }
   });
+}
+
+function stillRunningNotice(command: string): string {
+  if (looksLikeLongRunningCommand(command)) {
+    return 'STATUS: STILL RUNNING. This running service may be the requested result, but it is not completed test/build/validation evidence. Use a separate finite check for validation, or wait/cancel this command intentionally.';
+  }
+  return 'STATUS: STILL RUNNING. This is progress only, not completed test/build/validation evidence. Do not claim tests passed or call finalize_build for this command until wait_command reports "Command exited with 0." or a nonzero exit.';
 }
 
 function formatDuration(ms: number): string {
@@ -2728,6 +2981,9 @@ function extractAbsolutePathReferences(command: string): string[] {
     if (command[index] !== '/') {
       continue;
     }
+    if (isWithinQuotedSubstitutionExpression(command, index)) {
+      continue;
+    }
     const previous = index > 0 ? command[index - 1] : '';
     if (previous === ':' || previous === '/') {
       continue;
@@ -2751,10 +3007,82 @@ function extractAbsolutePathReferences(command: string): string[] {
       end += 1;
     }
     const candidate = command.slice(index, end).replace(/[,.]+$/, '');
+    if (candidate === '/dev/null') {
+      continue;
+    }
     if (candidate.length > 1) {
       paths.push(candidate);
     }
     index = end;
   }
   return paths;
+}
+
+function isWithinQuotedSubstitutionExpression(command: string, index: number): boolean {
+  const quoted = quotedArgumentAt(command, index);
+  if (!quoted) {
+    return false;
+  }
+
+  const content = command.slice(quoted.start + 1, quoted.end);
+  const contentIndex = index - quoted.start - 1;
+  if (contentIndex < 2 || content[0] !== 's') {
+    return false;
+  }
+
+  const delimiter = content[1];
+  if (!delimiter || /\w|\s|\\/.test(delimiter)) {
+    return false;
+  }
+
+  return contentIndex > 1 && content.includes(delimiter, contentIndex);
+}
+
+function quotedArgumentAt(command: string, index: number): { start: number; end: number } | undefined {
+  let quote: '"' | "'" | undefined;
+  let start = -1;
+  let escaped = false;
+
+  for (let cursor = 0; cursor <= index; cursor += 1) {
+    const char = command[cursor];
+    if (!quote) {
+      if (char === '"' || char === "'") {
+        quote = char;
+        start = cursor;
+      }
+      continue;
+    }
+
+    if (quote === '"' && char === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (char === quote && !escaped) {
+      if (cursor > index) {
+        break;
+      }
+      quote = undefined;
+      start = -1;
+    }
+    escaped = false;
+  }
+
+  if (!quote || start < 0) {
+    return undefined;
+  }
+
+  escaped = false;
+  for (let cursor = index + 1; cursor < command.length; cursor += 1) {
+    const char = command[cursor];
+    if (quote === '"' && char === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (char === quote && !escaped) {
+      return { start, end: cursor };
+    }
+    escaped = false;
+  }
+
+  return undefined;
 }

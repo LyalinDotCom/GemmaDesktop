@@ -140,6 +140,55 @@ describe('applyHunks', () => {
     expect(applyHunks(file, 'a\nb\nc\nd\n')).toBe('a\nb\nC\nd\n');
   });
 
+  it('applies insertion-only hunks when a trailing context line has whitespace drift', () => {
+    const file = parsePatch(`--- a/game.js
++++ b/game.js
+@@ -160,6 +160,7 @@ const driftComboEl = document.getElementById('drift-combo-display');
+ const driftComboEl = document.getElementById('drift-combo-display');
+ const distanceEl = document.getElementById('distance-display');
+ const rpmEl = document.getElementById('rpm-display');
++const tireEl = document.getElementById('tire-wear-display');
+ const tachometerBarEl = document.getElementById('tachometer-bar');
+ const inputTelemetryIndicators = [
+      { label: 'throttle', el: document.getElementById('telem-throttle') },
+`)[0]!;
+
+    expect(applyHunks(file, [
+      "const rainEl = document.getElementById('rain-display');",
+      "const driftScoreEl = document.getElementById('drift-score-display');",
+      "const driftComboEl = document.getElementById('drift-combo-display');",
+      "const distanceEl = document.getElementById('distance-display');",
+      "const rpmEl = document.getElementById('rpm-display');",
+      "const tachometerBarEl = document.getElementById('tachometer-bar');",
+      'const inputTelemetryIndicators = [',
+      "    { label: 'throttle', el: document.getElementById('telem-throttle') },",
+      ''
+    ].join('\n'))).toBe([
+      "const rainEl = document.getElementById('rain-display');",
+      "const driftScoreEl = document.getElementById('drift-score-display');",
+      "const driftComboEl = document.getElementById('drift-combo-display');",
+      "const distanceEl = document.getElementById('distance-display');",
+      "const rpmEl = document.getElementById('rpm-display');",
+      "const tireEl = document.getElementById('tire-wear-display');",
+      "const tachometerBarEl = document.getElementById('tachometer-bar');",
+      'const inputTelemetryIndicators = [',
+      "    { label: 'throttle', el: document.getElementById('telem-throttle') },",
+      ''
+    ].join('\n'));
+  });
+
+  it('does not apply insertion-only hunks without a strong context anchor', () => {
+    const file = parsePatch(`--- a/x
++++ b/x
+@@ -50,2 +50,3 @@
+ b
++B2
+      c
+`)[0]!;
+
+    expect(() => applyHunks(file, 'a\nb\nc\n')).toThrow(/did not match/);
+  });
+
   it('creates a new file from a /dev/null patch', () => {
     const file = parsePatch(`--- /dev/null
 +++ b/new

@@ -81,6 +81,27 @@ export interface RunCompletionEvidence {
   modelOutputs?: RunModelOutputEvidence[];
 }
 
+export interface PromptHistoryMetadata {
+  storedMessages: number;
+  promptMessages: number;
+  maxPromptMessages: number;
+  compacted: boolean;
+  omittedMessages: number;
+  firstUserPreserved: boolean;
+  storedToolMessages: number;
+  promptToolMessages: number;
+  omittedToolMessages: number;
+  compactionNoticeInserted: boolean;
+  storedMalformedAssistantMessages: number;
+  promptMalformedAssistantMessages: number;
+  omittedMalformedAssistantMessages: number;
+}
+
+export interface PromptHistoryPreparation {
+  messages: ChatMessage[];
+  metadata: PromptHistoryMetadata;
+}
+
 export async function createDiagnosticContext(options: CliOptions): Promise<DiagnosticContext> {
   const cwd = resolve(options.cwd);
   const root = diagnosticRoot(cwd);
@@ -134,7 +155,7 @@ function diagnosticRoot(cwd: string): string {
   return override ? resolve(override) : join(resolve(cwd), '.gemmacli');
 }
 
-export async function recordRunStart(context: DiagnosticContext, prompt: string): Promise<string> {
+export async function recordRunStart(context: DiagnosticContext, prompt: string, promptHistory?: PromptHistoryMetadata): Promise<string> {
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   context.session.updatedAt = startedAt;
@@ -148,7 +169,8 @@ export async function recordRunStart(context: DiagnosticContext, prompt: string)
     runId,
     data: {
       promptLength: prompt.length,
-      promptPreview: truncateForPrompt(prompt, maxEventPromptPreviewChars)
+      promptPreview: truncateForPrompt(prompt, maxEventPromptPreviewChars),
+      ...(promptHistory ? { promptHistory } : {})
     }
   });
   return runId;
@@ -366,12 +388,38 @@ export function createRunModelActivityRecorder(context?: DiagnosticContext, runI
 }
 
 export function sessionMessages(session: StoredSession): ChatMessage[] {
-  return compactStoredHistoryForPrompt(session.history).map((message) => ({
+  return sessionMessagesWithMetadata(session).messages;
+}
+
+export function sessionMessagesWithMetadata(session: StoredSession): PromptHistoryPreparation {
+  const compacted = compactStoredHistoryForPrompt(session.history);
+  let metadata = compacted.metadata;
+  const messages = compacted.messages.map((message) => ({
     role: message.role === 'tool' ? 'user' : message.role,
     content: message.role === 'tool'
       ? formatStoredToolMessageForPrompt(message)
       : truncateForPrompt(message.content, maxPromptMessageChars)
   }));
+  if (compacted.metadata.compactionNoticeInserted) {
+    messages.splice(compacted.metadata.firstUserPreserved ? 1 : 0, 0, {
+      role: 'user',
+      content: formatPromptHistoryCompactionNotice(compacted.metadata)
+    });
+    metadata = { ...metadata, promptMessages: messages.length };
+  }
+  return {
+    messages,
+    metadata
+  };
+}
+
+function formatPromptHistoryCompactionNotice(metadata: PromptHistoryMetadata): string {
+  return [
+    'Gemma CLI compacted the earlier resumed session history before this turn.',
+    'The original user request and recent user instructions are preserved. Assistant summaries and tool output were omitted as non-authoritative history.',
+    `Omitted stored messages: ${metadata.omittedMessages}; omitted tool result messages: ${metadata.omittedToolMessages}.`,
+    'Treat omitted tool output as unavailable evidence. Inspect current files or rerun validation before claiming current artifact state or changes.'
+  ].join('\n');
 }
 
 function formatStoredToolMessageForPrompt(message: StoredSessionMessage): string {
@@ -386,16 +434,82 @@ function formatStoredToolMessageForPrompt(message: StoredSessionMessage): string
   ].join('\n');
 }
 
-function compactStoredHistoryForPrompt(history: StoredSessionMessage[]): StoredSessionMessage[] {
+function compactStoredHistoryForPrompt(history: StoredSessionMessage[]): { messages: StoredSessionMessage[]; metadata: PromptHistoryMetadata } {
+  const storedToolMessages = countToolMessages(history);
+  const storedMalformedAssistantMessages = countMalformedAssistantMessages(history);
   if (history.length <= maxPromptHistoryMessages) {
-    return history;
+    return {
+      messages: history,
+      metadata: {
+        storedMessages: history.length,
+        promptMessages: history.length,
+        maxPromptMessages: maxPromptHistoryMessages,
+        compacted: false,
+        omittedMessages: 0,
+        firstUserPreserved: history.some((message) => message.role === 'user'),
+        storedToolMessages,
+        promptToolMessages: storedToolMessages,
+        omittedToolMessages: 0,
+        compactionNoticeInserted: false,
+        storedMalformedAssistantMessages,
+        promptMalformedAssistantMessages: storedMalformedAssistantMessages,
+        omittedMalformedAssistantMessages: 0
+      }
+    };
   }
+
   const firstUser = history.find((message) => message.role === 'user');
-  const recent = history.slice(-maxPromptHistoryMessages);
-  if (!firstUser || recent.includes(firstUser)) {
-    return recent;
+  const intentHistory = history.filter((message) => message.role === 'user');
+  const anchoredIntentHistory = firstUser
+    ? intentHistory.filter((message) => message !== firstUser)
+    : intentHistory;
+  const availableRecentSlots = maxPromptHistoryMessages - (firstUser ? 2 : 1);
+  const recentIntent = anchoredIntentHistory.slice(-availableRecentSlots);
+  const messages = firstUser
+    ? [firstUser, ...recentIntent]
+    : recentIntent.length > 0
+      ? recentIntent
+      : history.slice(-(maxPromptHistoryMessages - 1));
+  const promptToolMessages = countToolMessages(messages);
+
+  return {
+    messages,
+    metadata: {
+      storedMessages: history.length,
+      promptMessages: messages.length,
+      maxPromptMessages: maxPromptHistoryMessages,
+      compacted: true,
+      omittedMessages: history.length - messages.length,
+      firstUserPreserved: Boolean(firstUser && messages.includes(firstUser)),
+      storedToolMessages,
+      promptToolMessages,
+      omittedToolMessages: storedToolMessages - promptToolMessages,
+      compactionNoticeInserted: true,
+      storedMalformedAssistantMessages,
+      promptMalformedAssistantMessages: countMalformedAssistantMessages(messages),
+      omittedMalformedAssistantMessages: storedMalformedAssistantMessages - countMalformedAssistantMessages(messages)
+    }
+  };
+}
+
+function countToolMessages(messages: StoredSessionMessage[]): number {
+  return messages.filter((message) => message.role === 'tool').length;
+}
+
+function countMalformedAssistantMessages(messages: StoredSessionMessage[]): number {
+  return messages.filter(isMalformedAssistantToolCallMessage).length;
+}
+
+function isMalformedAssistantToolCallMessage(message: StoredSessionMessage): boolean {
+  if (message.role !== 'assistant') {
+    return false;
   }
-  return [firstUser, ...recent.slice(1)];
+  const content = repairJsonSmartQuotes(message.content.trim());
+  return /^\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:/u.test(content);
+}
+
+function repairJsonSmartQuotes(text: string): string {
+  return text.replace(/[“”]/g, '"');
 }
 
 function truncateForPrompt(content: string, maxChars: number): string {

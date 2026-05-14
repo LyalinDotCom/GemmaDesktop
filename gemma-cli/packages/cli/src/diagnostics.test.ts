@@ -9,7 +9,8 @@ import {
   recordRunError,
   recordRunResult,
   recordRunStart,
-  sessionMessages
+  sessionMessages,
+  sessionMessagesWithMetadata
 } from './diagnostics.js';
 import type { CliOptions } from './args.js';
 
@@ -109,6 +110,143 @@ describe('diagnostics', () => {
       },
       { role: 'assistant', content: 'done' }
     ]);
+  });
+
+  it('reports prompt history compaction metadata for long resumed sessions', async () => {
+    const cwd = await tempWorkspace();
+    const context = await createDiagnosticContext(options(cwd));
+    const timestamp = new Date().toISOString();
+    context.session.history.push(
+      { role: 'user', content: 'original build request', timestamp },
+      ...Array.from({ length: 58 }, (_, index) => ({
+        role: 'assistant' as const,
+        content: `older turn ${index}`,
+        timestamp
+      }))
+    );
+
+    const prepared = sessionMessagesWithMetadata(context.session);
+    const runId = await recordRunStart(context, 'continue', prepared.metadata);
+
+    expect(prepared.metadata).toEqual({
+      storedMessages: 59,
+      promptMessages: 2,
+      maxPromptMessages: 24,
+      compacted: true,
+      omittedMessages: 58,
+      firstUserPreserved: true,
+      storedToolMessages: 0,
+      promptToolMessages: 0,
+      omittedToolMessages: 0,
+      compactionNoticeInserted: true,
+      storedMalformedAssistantMessages: 0,
+      promptMalformedAssistantMessages: 0,
+      omittedMalformedAssistantMessages: 0
+    });
+    expect(prepared.messages).toHaveLength(2);
+    expect(prepared.messages[0]).toEqual({ role: 'user', content: 'original build request' });
+    expect(prepared.messages[1]?.content).toContain('Gemma CLI compacted the earlier resumed session history');
+    expect(prepared.messages[1]?.content).toContain('Inspect current files or rerun validation before claiming current artifact state or changes.');
+    expect(prepared.messages.map((message) => message.role)).toEqual(['user', 'user']);
+
+    const events = await readFile(context.eventLogPath, 'utf8');
+    const runStarted = events
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; runId?: string; data?: { promptHistory?: unknown } })
+      .find((event) => event.type === 'run_started' && event.runId === runId);
+    expect(runStarted?.data?.promptHistory).toEqual(prepared.metadata);
+  });
+
+  it('compacts resumed history around intent instead of successful tool noise', async () => {
+    const cwd = await tempWorkspace();
+    const context = await createDiagnosticContext(options(cwd));
+    const timestamp = new Date().toISOString();
+    context.session.history.push(
+      { role: 'user', content: 'build the web racing game and keep iterating', timestamp },
+      ...Array.from({ length: 30 }, (_, index) => ({
+        role: 'tool' as const,
+        content: `large file read ${index}`,
+        timestamp,
+        toolCall: { tool: 'read_file', args: { path: `game-${index}.js` } },
+        toolResult: { ok: true, output: `file contents ${index}` }
+      })),
+      { role: 'assistant', content: 'created the first playable game', timestamp },
+      { role: 'user', content: 'iteration 2: fix the broken road', timestamp },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        role: 'tool' as const,
+        content: `validation output ${index}`,
+        timestamp,
+        toolCall: { tool: 'exec_command', args: { command: 'node validate.js' } },
+        toolResult: { ok: true, output: `ok ${index}` }
+      })),
+      { role: 'assistant', content: 'fixed the road and validation passed', timestamp },
+      { role: 'user', content: 'iteration 3: keep the intent after compression', timestamp },
+      { role: 'assistant', content: 'continued the game after compression', timestamp }
+    );
+
+    const prepared = sessionMessagesWithMetadata(context.session);
+
+    expect(prepared.metadata).toMatchObject({
+      storedMessages: 56,
+      promptMessages: 4,
+      maxPromptMessages: 24,
+      compacted: true,
+      omittedMessages: 53,
+      firstUserPreserved: true,
+      storedToolMessages: 50,
+      promptToolMessages: 0,
+      omittedToolMessages: 50,
+      compactionNoticeInserted: true,
+      storedMalformedAssistantMessages: 0,
+      promptMalformedAssistantMessages: 0,
+      omittedMalformedAssistantMessages: 0
+    });
+    expect(prepared.messages).toEqual([
+      { role: 'user', content: 'build the web racing game and keep iterating' },
+      {
+        role: 'user',
+        content: [
+          'Gemma CLI compacted the earlier resumed session history before this turn.',
+          'The original user request and recent user instructions are preserved. Assistant summaries and tool output were omitted as non-authoritative history.',
+          'Omitted stored messages: 53; omitted tool result messages: 50.',
+          'Treat omitted tool output as unavailable evidence. Inspect current files or rerun validation before claiming current artifact state or changes.'
+        ].join('\n')
+      },
+      { role: 'user', content: 'iteration 2: fix the broken road' },
+      { role: 'user', content: 'iteration 3: keep the intent after compression' }
+    ]);
+  });
+
+  it('drops malformed assistant tool-call text from compacted resume intent', async () => {
+    const cwd = await tempWorkspace();
+    const context = await createDiagnosticContext(options(cwd));
+    const timestamp = new Date().toISOString();
+    context.session.history.push(
+      { role: 'user', content: 'build the web racing game', timestamp },
+      ...Array.from({ length: 30 }, (_, index) => ({
+        role: 'tool' as const,
+        content: `tool output ${index}`,
+        timestamp,
+        toolCall: { tool: 'read_file', args: { path: 'game.js' } },
+        toolResult: { ok: true, output: `output ${index}` }
+      })),
+      { role: 'assistant', content: '{“tool”:“search_text”,“args”:{“query”:“center dashes”,“path”:“game.js”}}', timestamp },
+      { role: 'user', content: 'continue after malformed tool text', timestamp },
+      { role: 'assistant', content: 'recovered and continued', timestamp }
+    );
+
+    const prepared = sessionMessagesWithMetadata(context.session);
+
+    expect(prepared.metadata).toMatchObject({
+      compacted: true,
+      storedMalformedAssistantMessages: 1,
+      promptMalformedAssistantMessages: 0,
+      omittedMalformedAssistantMessages: 1
+    });
+    expect(prepared.messages.map((message) => message.content)).not.toContain('{“tool”:“search_text”,“args”:{“query”:“center dashes”,“path”:“game.js”}}');
+    expect(prepared.messages).toContainEqual({ role: 'user', content: 'continue after malformed tool text' });
+    expect(prepared.messages).not.toContainEqual({ role: 'assistant', content: 'recovered and continued' });
   });
 
   it('records failed runs with error details', async () => {
