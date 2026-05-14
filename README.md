@@ -1,13 +1,15 @@
 # Open Gemma Project
 
-**Open Gemma Project** is a local-first monorepo for building developer tools on top of open models, with Gemma as the guided first-class path.
+**Open Gemma Project** is a local-first monorepo for two maintained developer products on top of open models, with Gemma as the guided first-class path.
 
-The repo has two runnable products:
+The active repo is intentionally centered on two runnable projects:
 
-- **`gemma-cli`** - a terminal coding agent optimized for local Gemma models.
 - **`gemma-desktop`** - an Electron desktop workbench for local model chat, coding, browsing, research, voice, and multimodal workflows.
+- **`gemma-cli`** - a terminal coding agent optimized for local Gemma models.
 
-Both products are built on the shared **`@gemma-sdk/*`** packages in `gemma-sdk/`. The SDK is the foundation: runtime adapters, session orchestration, tool execution, prompt policy, tracing, attachment handling, and validation behavior should live there when they matter across products.
+Both products are built on the common **`@gemma-sdk/*`** packages in `gemma-sdk/`. The SDK is the foundation: runtime adapters, session orchestration, tool execution, prompt policy, tracing, attachment handling, and validation behavior should live there when they matter across products.
+
+Legacy or paused experiments are not active products. In particular, **`archive/gemmadesktop-cli/` is archived and not maintained**; new command-line work belongs in `gemma-cli`, and shared behavior belongs in `gemma-sdk/`.
 
 Gemma 4 is the primary target path. Other open models can work through Ollama, LM Studio, llama.cpp-compatible servers, and OpenAI-compatible runtimes when their capabilities are exposed clearly enough.
 
@@ -19,7 +21,7 @@ Open models are getting useful fast, but shipping real software with them still 
 
 Open Gemma Project is where those edges get made visible and testable. The goal is not to hide local inference behind a pleasant chat abstraction. The goal is to make model behavior, runtime behavior, tool behavior, and failure modes legible enough that developers can build durable products on top.
 
-## Products
+## Active Products
 
 ### Gemma CLI
 
@@ -89,6 +91,7 @@ gemma-cli/        Terminal coding-agent product and CLI-specific tests/docs.
 gemma-desktop/    Electron + React desktop product.
 gemma-sdk/        Shared SDK packages consumed by both products.
 docs/             Root-level product screenshots and shared docs.
+archive/          Archived or paused project snapshots, not active products.
 ```
 
 The long-term shape is:
@@ -97,6 +100,12 @@ The long-term shape is:
 - `gemma-sdk` remains the shared foundation.
 - SDK-backed behavior should have CLI/headless coverage when practical.
 - Product-specific UI and packaging should stay in the owning product folder.
+
+## Archived Projects
+
+`archive/gemmadesktop-cli/` is a legacy Gemma Desktop CLI experiment retained only as historical reference. It is not maintained, not part of the active npm workspace, not part of the release path, and should not be used as the source of truth for current command-line behavior.
+
+For current terminal work, use `gemma-cli/`. For behavior shared between the desktop app and CLI, use `gemma-sdk/`.
 
 ## Getting Started
 
