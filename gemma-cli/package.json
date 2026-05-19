@@ -13,6 +13,8 @@
   "scripts": {
     "build": "npm --prefix .. run build:gemma-cli",
     "test": "npm --prefix .. run test:gemma-cli",
+    "test:live": "npm run test:web-live --",
+    "test:web-live": "npm run build && node scripts/live-web-build-suite.mjs",
     "typecheck": "npm --prefix .. run typecheck:gemma-cli",
     "start": "npm --prefix .. --workspace gemma-cli run start --",
     "dev": "npm run build && npm run start --",

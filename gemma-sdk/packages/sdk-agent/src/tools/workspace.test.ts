@@ -665,6 +665,39 @@ describe('workspace tools', () => {
     await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
   });
 
+  it('accepts string true overwrite confirmation after stale apply_patch context for small files', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    await writeFile(join(cwd, 'package.json'), '{\n  "scripts": {\n    "build": "vite build"\n  }\n}\n', 'utf8');
+    const tools = createWorkspaceTools({ cwd });
+    const patch = tools.find((item) => item.name === 'apply_patch');
+    const read = tools.find((item) => item.name === 'read_file');
+    const write = tools.find((item) => item.name === 'write_file');
+    if (!patch || !read || !write) {
+      throw new Error('missing workspace tools');
+    }
+
+    await expect(patch.run({
+      patch: [
+        '--- a/package.json',
+        '+++ b/package.json',
+        '@@ -99 +99 @@',
+        '-    "preview": "vite preview"',
+        '+    "preview": "vite preview",',
+        ''
+      ].join('\n')
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('Patch context is stale')
+    });
+    await expect(read.run({ path: 'package.json' })).resolves.toMatchObject({ ok: true });
+
+    const replacement = '{\n  "scripts": {\n    "build": "vite build",\n    "validate": "npm run build"\n  }\n}\n';
+    await expect(write.run({ path: 'package.json', content: replacement, overwriteExisting: 'true' })).resolves.toMatchObject({
+      ok: true
+    });
+    await expect(readFile(join(cwd, 'package.json'), 'utf8')).resolves.toBe(replacement);
+  });
+
   it('refuses large same-file write_file replacement after stale apply_patch context even when confirmed', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
     const original = Array.from({ length: 260 }, (_, index) => `const before${index} = ${index};`).join('\n') + '\n';
@@ -750,7 +783,7 @@ describe('workspace tools', () => {
       output: expect.stringContaining('Refusing exec_command because it appears to mutate style.css')
     });
     await expect(readFile(join(cwd, 'style.css'), 'utf8')).resolves.toBe('.current { color: green; }\n');
-  });
+  }, 15000);
 
   it('normalizes model-escaped apply_patch hunk lines before applying', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
@@ -997,6 +1030,21 @@ describe('workspace tools', () => {
     })).resolves.toMatchObject({
       ok: false,
       output: expect.stringContaining('frontend completion checks failed')
+    });
+  });
+
+  it('rejects finalize_build without validation evidence records', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    const finalize = tool('finalize_build', cwd);
+
+    await expect(finalize.run({
+      summary: 'Built app.',
+      artifacts: ['src/App.jsx'],
+      validation: [],
+      instructionChecklist: ['generated app']
+    })).resolves.toMatchObject({
+      ok: false,
+      output: expect.stringContaining('validation must include at least one {command, status} record')
     });
   });
 

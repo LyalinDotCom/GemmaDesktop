@@ -38,6 +38,7 @@ interface OpenAICompatibleModelsResponse {
 const defaultGenerationStartTimeoutMs = 120_000;
 const defaultStreamInactivityTimeoutMs = 30_000;
 const whitespaceOnlyContentStallLimitChars = 4096;
+const streamCancelTimeoutMs = 250;
 
 type LocalProviderOptions = Record<string, Record<string, JSONValue | undefined>>;
 type UserModelContent = Extract<ModelMessage, { role: 'user' }>['content'];
@@ -238,8 +239,15 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
     let whitespaceOnlyContentChars = 0;
     const nativeToolCalls = new OpenAICompatibleToolCallAccumulator();
     let cancelAfterDone = false;
+    const stream = result.fullStream;
+    const iterator = stream[Symbol.asyncIterator]();
     try {
-      for await (const part of result.fullStream) {
+      while (true) {
+        const next = await iterator.next();
+        if (next.done === true) {
+          break;
+        }
+        const part = next.value;
         if (part.type === 'raw') {
           nativeToolCalls.observe(part.rawValue);
         }
@@ -274,11 +282,11 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
       }
     } finally {
       upstreamSignal?.removeEventListener('abort', abortFromUpstream);
-      if (!emittedDone && !streamAbortController.signal.aborted) {
+      if ((cancelAfterDone || !emittedDone) && !streamAbortController.signal.aborted) {
         streamAbortController.abort();
       }
       if (cancelAfterDone || !emittedDone) {
-        await cancelReadableStream(result.fullStream);
+        await cancelStreamIterator(iterator, stream);
       }
     }
     if (!emittedDone) {
@@ -575,13 +583,39 @@ function outputLimitError(label: string, doneReason: string | undefined): Error 
   return new Error(`${label} reached the output token limit before a complete text response was received${doneReasonLabel(doneReason)}.`);
 }
 
-async function cancelReadableStream(stream: ReadableStream<unknown>): Promise<void> {
+async function cancelStreamIterator(
+  iterator: AsyncIterator<LocalTextStreamPart>,
+  stream: ReadableStream<unknown>
+): Promise<void> {
   try {
-    await stream.cancel();
+    const cleanups: Array<Promise<unknown>> = [];
+    const returned = iterator.return?.();
+    if (returned) {
+      cleanups.push(Promise.resolve(returned).catch(() => undefined));
+    }
+    try {
+      cleanups.push(stream.cancel().catch(() => undefined));
+    } catch {
+      // The stream may already be locked by the async iterator.
+    }
+    await Promise.race([
+      Promise.all(cleanups),
+      delay(streamCancelTimeoutMs)
+    ]);
   } catch {
-    // Breaking a for-await loop normally cancels the stream already. This is
-    // a defensive cleanup for provider streams that keep sockets open after done.
+    // Some local OpenAI-compatible streams do not settle cleanly after finish.
+    // This cleanup is best-effort; the request signal has already been aborted.
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const unref = typeof timer === 'object' ? (timer as { unref?: () => void }).unref : undefined;
+    if (typeof unref === 'function') {
+      unref.call(timer);
+    }
+  });
 }
 
 function isHttpUrl(value: string): boolean {

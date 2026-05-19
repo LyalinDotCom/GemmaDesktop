@@ -130,36 +130,34 @@ export function normalizePatchText(text: string): NormalizedPatchText {
 
 export async function applyPatch(text: string, options: ApplyPatchOptions): Promise<ApplyResult[]> {
   const files = parsePatch(normalizePatchText(text).text);
-  const rename = files.find((file) => file.isRename);
-  if (rename) {
-    if (!options.allowRenames) {
-      throw makeError([
-        `apply_patch: refusing implicit rename from ${rename.oldPath} to ${rename.newPath}.`,
-        'For normal edits, the "---" and "+++" paths must match exactly.',
-        'Re-read the target file and resend the patch with matching file headers. Use explicit file creation/deletion only if a rename was intentional.'
-      ].join('\n'));
-    }
-    if (!options.deleteFile) {
-      throw makeError(`apply_patch: cannot rename ${rename.oldPath} to ${rename.newPath} without delete support.`);
-    }
+  for (const rename of files.filter((file) => file.isRename)) {
+    validateRename(rename, options);
   }
+
+  const staged = new Map<string, string | undefined>();
   const results: ApplyResult[] = [];
+  const operations: Array<
+    | { kind: 'write'; path: string; contents: string }
+    | { kind: 'delete'; path: string }
+  > = [];
+
   for (const file of files) {
     if (file.isDelete) {
-      if (options.deleteFile) {
-        await options.deleteFile(file.oldPath);
-      }
+      staged.set(file.oldPath, undefined);
+      operations.push({ kind: 'delete', path: file.oldPath });
       results.push({ path: file.oldPath, status: 'deleted', contents: undefined, hunksApplied: file.hunks.length });
       continue;
     }
-    const original = file.isNew ? '' : (await options.readFile(file.oldPath));
+    const original = file.isNew ? '' : await readStagedFile(file.oldPath, staged, options);
     if (original === undefined && !file.isNew) {
       throw makeError(`apply_patch: file not found for hunk: ${file.oldPath}`);
     }
     const next = applyHunks(file, original ?? '');
-    await options.writeFile(file.newPath, next);
+    staged.set(file.newPath, next);
+    operations.push({ kind: 'write', path: file.newPath, contents: next });
     if (file.isRename) {
-      await options.deleteFile?.(file.oldPath);
+      staged.set(file.oldPath, undefined);
+      operations.push({ kind: 'delete', path: file.oldPath });
     }
     results.push({
       path: file.newPath,
@@ -169,7 +167,40 @@ export async function applyPatch(text: string, options: ApplyPatchOptions): Prom
       hunksApplied: file.hunks.length
     });
   }
+
+  for (const operation of operations) {
+    if (operation.kind === 'write') {
+      await options.writeFile(operation.path, operation.contents);
+    } else {
+      await options.deleteFile?.(operation.path);
+    }
+  }
+
   return results;
+}
+
+function validateRename(file: PatchFile, options: ApplyPatchOptions): void {
+  if (!options.allowRenames) {
+    throw makeError([
+      `apply_patch: refusing implicit rename from ${file.oldPath} to ${file.newPath}.`,
+      'For normal edits, the "---" and "+++" paths must match exactly.',
+      'Re-read the target file and resend the patch with matching file headers. Use explicit file creation/deletion only if a rename was intentional.'
+    ].join('\n'));
+  }
+  if (!options.deleteFile) {
+    throw makeError(`apply_patch: cannot rename ${file.oldPath} to ${file.newPath} without delete support.`);
+  }
+}
+
+async function readStagedFile(
+  path: string,
+  staged: Map<string, string | undefined>,
+  options: ApplyPatchOptions
+): Promise<string | undefined> {
+  if (staged.has(path)) {
+    return staged.get(path);
+  }
+  return await options.readFile(path);
 }
 
 export function applyHunks(file: PatchFile, original: string): string {

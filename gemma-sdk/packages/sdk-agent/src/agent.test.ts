@@ -39,6 +39,28 @@ class ActivityDriftProvider implements ModelProvider {
   }
 }
 
+class TrailingProseAfterToolJsonProvider implements ModelProvider {
+  readonly name = 'trailing-prose-after-tool-json';
+  private index = 0;
+  messages: ChatMessage[][] = [];
+  options: GenerateOptions[] = [];
+
+  async generate(messages: ChatMessage[], options?: GenerateOptions): Promise<string> {
+    this.messages.push(messages.map((message) => ({ ...message })));
+    this.options.push({ ...options });
+    this.index += 1;
+    if (this.index === 1) {
+      await options?.onActivity?.({ content: '{"tool":"echo","args":{"message":"bad"}}<tool_call|>' });
+      await options?.onActivity?.({ content: '\n---\nWait, I forgot the right tool arguments.' });
+      return 'not reached';
+    }
+    if (this.index === 2) {
+      return '{"tool":"echo","args":{"message":"ok"}}';
+    }
+    return '{"answer":"done"}';
+  }
+}
+
 class ThoughtTagDriftProvider implements ModelProvider {
   readonly name = 'thought-tag-drift';
   private index = 0;
@@ -51,6 +73,77 @@ class ThoughtTagDriftProvider implements ModelProvider {
     this.index += 1;
     if (this.index === 1) {
       await options?.onActivity?.({ content: '<thought>\nThinking Process:\nI should inspect the workspace before acting.' });
+      return 'not reached';
+    }
+    if (this.index === 2) {
+      return '{"tool":"echo","args":{"message":"ok"}}';
+    }
+    return '{"answer":"done"}';
+  }
+}
+
+class RepeatedVisiblePhraseProvider implements ModelProvider {
+  readonly name = 'repeated-visible-phrase';
+  private index = 0;
+  messages: ChatMessage[][] = [];
+  options: GenerateOptions[] = [];
+
+  async generate(messages: ChatMessage[], options?: GenerateOptions): Promise<string> {
+    this.messages.push(messages.map((message) => ({ ...message })));
+    this.options.push({ ...options });
+    this.index += 1;
+    if (this.index === 1) {
+      for (let index = 0; index < 8; index += 1) {
+        await options?.onActivity?.({ content: "-<<<<< Let's do that.\n" });
+      }
+      return 'not reached';
+    }
+    if (this.index === 2) {
+      return '{"tool":"echo","args":{"message":"ok"}}';
+    }
+    return '{"answer":"done"}';
+  }
+}
+
+class RepeatedToolPayloadFragmentProvider implements ModelProvider {
+  readonly name = 'repeated-tool-payload-fragment';
+  private index = 0;
+  messages: ChatMessage[][] = [];
+  options: GenerateOptions[] = [];
+
+  async generate(messages: ChatMessage[], options?: GenerateOptions): Promise<string> {
+    this.messages.push(messages.map((message) => ({ ...message })));
+    this.options.push({ ...options });
+    this.index += 1;
+    if (this.index === 1) {
+      await options?.onActivity?.({ content: '{"tool":"echo","args":{"message":"draft\\n' });
+      for (let index = 0; index < 12; index += 1) {
+        await options?.onActivity?.({ content: '\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n' });
+      }
+      return 'not reached';
+    }
+    if (this.index === 2) {
+      return '{"tool":"echo","args":{"message":"ok"}}';
+    }
+    return '{"answer":"done"}';
+  }
+}
+
+class RepeatedResponseContractProvider implements ModelProvider {
+  readonly name = 'repeated-response-contract';
+  private index = 0;
+  messages: ChatMessage[][] = [];
+  options: GenerateOptions[] = [];
+
+  async generate(messages: ChatMessage[], options?: GenerateOptions): Promise<string> {
+    this.messages.push(messages.map((message) => ({ ...message })));
+    this.options.push({ ...options });
+    this.index += 1;
+    if (this.index === 1) {
+      await options?.onActivity?.({ content: '{"tool":"echo","args":{"message":"bad"}}' });
+      for (let index = 0; index < 3; index += 1) {
+        await options?.onActivity?.({ content: '\n</response_contract>' });
+      }
       return 'not reached';
     }
     if (this.index === 2) {
@@ -531,6 +624,35 @@ describe('Agent', () => {
     });
   });
 
+  it('accepts loose content-first write_file JSON with overwrite confirmation before path', async () => {
+    const calls: unknown[] = [];
+    const agent = new Agent({
+      provider: new ScriptedProvider([
+        '{"tool":"write_file","args":{"content":"const label = "Archive";\\nexport default label;","overwriteExisting":true,"path":"src/App.jsx"}}<tool_call|>',
+        '{"answer":"updated file"}'
+      ]),
+      tools: [
+        {
+          name: 'write_file',
+          description: 'write a file',
+          async run(args) {
+            calls.push(args);
+            return { ok: true, output: 'wrote src/App.jsx' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('update a file');
+
+    expect(result.answer).toBe('updated file');
+    expect(calls).toEqual([{
+      path: 'src/App.jsx',
+      content: 'const label = "Archive";\nexport default label;',
+      overwriteExisting: true
+    }]);
+  });
+
   it('accepts loose write_file JSON with a stray brace before path and repeated markers', async () => {
     const calls: unknown[] = [];
     const agent = new Agent({
@@ -829,7 +951,7 @@ describe('Agent', () => {
       toolResult: {
         ok: false,
         meta: { presentation: 'notice' },
-        output: expect.stringContaining('Before another file mutation')
+        output: expect.stringContaining('reads from before that failed patch do not count')
       }
     });
     expect(result.turns[2]).toMatchObject({ toolCall: { tool: 'read_file' }, toolResult: { ok: true } });
@@ -1184,6 +1306,36 @@ describe('Agent', () => {
     });
   });
 
+  it('stops after repeated malformed protocol responses', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"write_file","args":{"path":"test/index.html","content":"unterminated}}',
+      '{"tool":"write_file","args":{"path":"test/index.html","content":"still unterminated}}',
+      '{"tool":"write_file","args":{"path":"test/index.html","content":"still broken}}',
+      '{"answer":"should not be used"}'
+    ]);
+    const agent = new Agent({
+      provider,
+      maxTurns: 10,
+      tools: [
+        {
+          name: 'write_file',
+          description: 'write a file',
+          async run() {
+            return { ok: true, output: 'should not run' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('write file');
+
+    expect(provider.messages).toHaveLength(3);
+    expect(result.completionStatus).toBe('incomplete');
+    expect(result.completionReason).toBe('model_response_malformed');
+    expect(result.answer).toContain('malformed Gemma CLI protocol responses');
+    expect(result.stats.toolCalls).toBe(0);
+  });
+
   it('retries prose after fenced tool JSON instead of executing the first embedded tool call', async () => {
     const provider = new ScriptedProvider([
       '```json\n{"tool":"echo","args":{"message":"bad"}}\n```\n\nWait, I made a mistake and should use a different path.',
@@ -1210,7 +1362,7 @@ describe('Agent', () => {
     expect(seen).toEqual(['ok']);
     expect(result.answer).toBe('done');
     expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'final']);
-    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('closing Markdown fence'))).toBe(true);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Visible text appeared after a JSON tool action'))).toBe(true);
   });
 
   it('cuts off streamed visible scratch after a fenced tool JSON block and retries', async () => {
@@ -1239,11 +1391,46 @@ describe('Agent', () => {
       }
     });
 
-    expect(activity.join('')).toContain('Wait, I made a mistake');
+    expect(activity.join('')).toContain('{"tool":"echo","args":{"message":"bad"}}');
+    expect(activity.join('')).not.toContain('Wait, I made a mistake');
     expect(seen).toEqual(['ok']);
     expect(result.answer).toBe('done');
     expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'final']);
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('drifted outside the Gemma CLI JSON protocol'))).toBe(true);
+    expect(provider.options[1]?.reasoningMode).toBe('off');
+  });
+
+  it('cuts off streamed prose after raw JSON tool action and retries', async () => {
+    const provider = new TrailingProseAfterToolJsonProvider();
+    const seen: string[] = [];
+    const activity: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo',
+          async run(args) {
+            seen.push(String(args.message));
+            return { ok: true, output: String(args.message) };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('use tool', {
+      onModelActivity(event) {
+        if (event.chunk.content) {
+          activity.push(event.chunk.content);
+        }
+      }
+    });
+
+    expect(activity.join('')).toContain('{"tool":"echo","args":{"message":"bad"}}');
+    expect(activity.join('')).not.toContain('I forgot the right tool arguments');
+    expect(seen).toEqual(['ok']);
+    expect(result.answer).toBe('done');
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Visible text appeared after a JSON tool action'))).toBe(true);
     expect(provider.options[1]?.reasoningMode).toBe('off');
   });
 
@@ -1273,10 +1460,113 @@ describe('Agent', () => {
       }
     });
 
-    expect(activity.join('')).toContain('<thought>');
+    expect(activity.join('')).toBe('');
     expect(seen).toEqual(['ok']);
     expect(result.answer).toBe('done');
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Visible <thought> scratch text'))).toBe(true);
+    expect(provider.options[1]?.reasoningMode).toBe('off');
+  });
+
+  it('cuts off repeated visible filler and retries with reasoning disabled', async () => {
+    const provider = new RepeatedVisiblePhraseProvider();
+    const seen: string[] = [];
+    const activity: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo',
+          async run(args) {
+            seen.push(String(args.message));
+            return { ok: true, output: String(args.message) };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('use tool', {
+      onModelActivity(event) {
+        if (event.chunk.content) {
+          activity.push(event.chunk.content);
+        }
+      }
+    });
+
+    expect(activity.join('')).toContain("Let's do that");
+    expect(seen).toEqual(['ok']);
+    expect(result.answer).toBe('done');
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Visible generated phrase repeated'))).toBe(true);
+    expect(provider.options[1]?.reasoningMode).toBe('off');
+  });
+
+  it('cuts off repeated stream fragments inside an unfinished tool payload', async () => {
+    const provider = new RepeatedToolPayloadFragmentProvider();
+    const seen: string[] = [];
+    const activity: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo',
+          async run(args) {
+            seen.push(String(args.message));
+            return { ok: true, output: String(args.message) };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('use tool', {
+      onModelActivity(event) {
+        if (event.chunk.content) {
+          activity.push(event.chunk.content);
+        }
+      }
+    });
+
+    expect(activity.join('')).toContain('{"tool":"echo"');
+    expect(activity.filter((chunk) => chunk === '\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n')).toHaveLength(11);
+    expect(seen).toEqual(['ok']);
+    expect(result.answer).toBe('done');
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Model stream fragment repeated'))).toBe(true);
+    expect(provider.options[1]?.reasoningMode).toBe('off');
+  });
+
+  it('cuts off repeated response contract markers and retries with reasoning disabled', async () => {
+    const provider = new RepeatedResponseContractProvider();
+    const seen: string[] = [];
+    const activity: string[] = [];
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'echo',
+          description: 'echo',
+          async run(args) {
+            seen.push(String(args.message));
+            return { ok: true, output: String(args.message) };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('use tool', {
+      onModelActivity(event) {
+        if (event.chunk.content) {
+          activity.push(event.chunk.content);
+        }
+      }
+    });
+
+    expect(activity.join('')).not.toContain('</response_contract>');
+    expect(seen).toEqual(['ok']);
+    expect(result.answer).toBe('done');
+    expect(result.turns.map((turn) => turn.kind)).toEqual(['tool', 'final']);
+    expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Visible text appeared after a JSON tool action'))).toBe(true);
     expect(provider.options[1]?.reasoningMode).toBe('off');
   });
 
@@ -1306,7 +1596,8 @@ describe('Agent', () => {
       }
     });
 
-    expect(activity.join('')).toContain('<tool_call|>}<tool_call|>}');
+    expect(activity.join('')).toContain('{"tool":"echo","args":{"message":"bad"}}');
+    expect(activity.join('')).not.toContain('<tool_call|>}<tool_call|>}');
     expect(seen).toEqual(['bad']);
     expect(result.answer).toBe('done');
     expect(provider.messages.some((messages) => String(messages.at(-1)?.content).includes('Raw tool-call transport markers repeated'))).toBe(false);
@@ -1484,6 +1775,64 @@ describe('Agent', () => {
     expect(provider.messages[1]?.at(-1)?.content).toContain('final no-tools response pass');
     expect(String(provider.messages[1]?.[0]?.content)).not.toContain('Thinking mode is enabled');
     expect(provider.options[1]).toMatchObject({ maxTokens: 1024, reasoningMode: 'off' });
+  });
+
+  it('stops deterministically when max turns end after rejected finalize_build', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"finalize_build","args":{"artifacts":["app.js"],"validation":[],"instructionChecklist":["created app"]}}'
+    ]);
+    const agent = new Agent({
+      provider,
+      maxTurns: 1,
+      tools: [
+        {
+          name: 'finalize_build',
+          description: 'record final evidence',
+          async run() {
+            return { ok: false, output: 'summary must be a non-empty string.' };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Record completion evidence for the current verification run.');
+
+    expect(result).toMatchObject({
+      completionStatus: 'incomplete',
+      completionReason: 'finalize_build_failed_at_max_turns'
+    });
+    expect(result.answer).toContain('rejected finalize_build');
+    expect(result.answer).toContain('summary must be a non-empty string');
+    expect(provider.messages).toHaveLength(1);
+  });
+
+  it('treats successful finalize_build as terminal completion', async () => {
+    const provider = new ScriptedProvider([
+      '{"tool":"finalize_build","args":{"summary":"done","artifacts":["app.js"],"validation":[],"instructionChecklist":["created app"]}}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [
+        {
+          name: 'finalize_build',
+          description: 'record final evidence',
+          async run() {
+            return { ok: true, output: 'Recorded finalize_build.\nSummary: done', meta: { terminal: true } };
+          }
+        }
+      ]
+    });
+
+    const result = await agent.run('Verification-only. Record completion evidence.');
+
+    expect(result).toMatchObject({
+      completionStatus: 'completed',
+      answer: 'Recorded finalize_build.\nSummary: done'
+    });
+    expect(result.turns).toHaveLength(2);
+    expect(result.turns[0]).toMatchObject({ kind: 'tool', toolCall: { tool: 'finalize_build' }, toolResult: { ok: true } });
+    expect(result.turns[1]).toMatchObject({ kind: 'final' });
+    expect(provider.messages).toHaveLength(1);
   });
 
   it('runs a tool call nested inside an answer string when it is the whole answer', async () => {

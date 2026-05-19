@@ -395,6 +395,10 @@ function requiresLargeOverwriteConfirmation(priorContent: string, nextContent: s
   );
 }
 
+function isExplicitTrue(value: unknown): boolean {
+  return value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true');
+}
+
 function largeOverwriteRefusal(relPath: string): string {
   return [
     `Refusing large write_file overwrite for existing file ${relPath} without overwriteExisting: true.`,
@@ -1171,7 +1175,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
       parameters: {
         path: 'Workspace-relative destination path. Parent directories are created automatically.',
         content: 'Complete final file contents. Do not include scratch notes or commentary.',
-        overwriteExisting: 'Required as true only when intentionally replacing an existing large file after re-reading enough current file content. Prefer apply_patch for scoped edits.',
+        overwriteExisting: 'Required as JSON boolean true only when intentionally replacing an existing large file after re-reading enough current file content. Prefer apply_patch for scoped edits.',
         createDirectories: 'Accepted for Gemma Desktop compatibility. Parent directories are always created.'
       },
       requiredParameters: ['path', 'content'],
@@ -1198,6 +1202,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
           }
           const hasStalePatchFailureForPath = stalePatchFailurePaths.has(normalizeRelativePath(relPath))
             || stalePatchFailurePaths.has(requestedRelPath);
+          const overwriteExisting = isExplicitTrue(args.overwriteExisting);
           if (
             priorContent !== undefined &&
             hasStalePatchFailureForPath &&
@@ -1205,10 +1210,10 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
           ) {
             return fail(new Error(stalePatchLargeOverwriteRefusal(relPath)));
           }
-          if (priorContent !== undefined && args.overwriteExisting !== true && hasStalePatchFailureForPath) {
+          if (priorContent !== undefined && !overwriteExisting && hasStalePatchFailureForPath) {
             return fail(new Error(stalePatchWriteRefusal(relPath)));
           }
-          if (priorContent !== undefined && args.overwriteExisting !== true && requiresLargeOverwriteConfirmation(priorContent, content)) {
+          if (priorContent !== undefined && !overwriteExisting && requiresLargeOverwriteConfirmation(priorContent, content)) {
             return fail(new Error(largeOverwriteRefusal(relPath)));
           }
           await assertNotProtectedBenchmarkTestMutation(file, relPath, content);
@@ -1248,10 +1253,10 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
     },
     {
       name: 'apply_patch',
-      description: 'Apply a unified-diff patch (one or more files). Use for existing-file diffs only when you have current file contents or exact surrounding context from a recent read. The patch value must decode to real newline-separated diff lines; do not put literal "\\n" text inside hunk lines. If a hunk does not match, re-read the target before any further file mutation.',
+      description: 'Apply a unified-diff patch. Prefer one file per call and one focused hunk when possible. Use for existing-file diffs only when you have current file contents or exact surrounding context from a recent read. The patch value must decode to real newline-separated diff lines; do not put literal "\\n" text inside hunk lines. If a hunk does not match, re-read the target before any further file mutation.',
       capability: 'write',
       parameters: {
-        patch: 'Unified diff text. Each file starts with "--- a/path" and "+++ b/path" headers, then one or more "@@ -L,N +L,N @@" hunks with context (space-prefixed), removed (-) and added (+) lines. Correct JSON shape: {"tool":"apply_patch","args":{"patch":"--- a/src/app.js\\n+++ b/src/app.js\\n@@ -1,3 +1,3 @@\\n const title = \\"old\\";\\n-old();\\n+new();\\n"}}'
+        patch: 'Unified diff text. Prefer one target file per tool call. Each file starts with "--- a/path" and "+++ b/path" headers, then one or more "@@ -L,N +L,N @@" hunks with context (space-prefixed), removed (-) and added (+) lines. Correct JSON shape: {"tool":"apply_patch","args":{"patch":"--- a/src/app.js\\n+++ b/src/app.js\\n@@ -1,3 +1,3 @@\\n const title = \\"old\\";\\n-old();\\n+new();\\n"}}'
       },
       requiredParameters: ['patch'],
       examples: [
@@ -1605,7 +1610,10 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
           const artifacts = normalizeStringList(args.artifacts);
           const checklist = normalizeStringList(args.instructionChecklist);
           const blockers = normalizeStringList(args.blockers);
-          const validation = Array.isArray(args.validation) ? args.validation : [];
+          if (!Array.isArray(args.validation) || args.validation.length === 0) {
+            throw new Error('validation must include at least one {command, status} record. Use status "blocked" with a concrete reason if validation could not run.');
+          }
+          const validation = args.validation;
           const validationLines = validation.map((entry, index) => {
             if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
               throw new Error('validation entries must be objects.');
@@ -1630,14 +1638,18 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
               ].join('\n')
             };
           }
-          return ok([
+          return {
+            ok: true,
+            output: [
             'Recorded finalize_build.',
             `Summary: ${summary}`,
             artifacts.length > 0 ? `Artifacts:\n${artifacts.map((artifact) => `- ${artifact}`).join('\n')}` : 'Artifacts: none',
             validationLines.length > 0 ? `Validation:\n${validationLines.join('\n')}` : 'Validation: none',
             checklist.length > 0 ? `Checklist:\n${checklist.map((item) => `- ${item}`).join('\n')}` : 'Checklist: none',
             blockers.length > 0 ? `Blockers:\n${blockers.map((blocker) => `- ${blocker}`).join('\n')}` : 'Blockers: none'
-          ].join('\n'));
+            ].join('\n'),
+            meta: { terminal: true }
+          };
         } catch (error) {
           return fail(error);
         }

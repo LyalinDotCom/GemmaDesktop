@@ -72,6 +72,34 @@ describe('OllamaProvider', () => {
     });
   });
 
+  it('retries thinking-only streams with a corrective prompt', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const activity: StreamChunk[] = [];
+    const provider = new OllamaProvider({
+      fetchImpl: openAiChatFetch(calls, [
+        chatCompletionStream([
+          { delta: { reasoning_content: 'plan' } },
+          { delta: {}, finish_reason: 'stop' }
+        ]),
+        chatCompletionStream([
+          { delta: { content: '{"answer":"recovered"}' } },
+          { delta: {}, finish_reason: 'stop' }
+        ])
+      ])
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hello' }], {
+      onActivity: async (chunk) => {
+        activity.push(chunk);
+      }
+    })).resolves.toBe('{"answer":"recovered"}');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body).toMatchObject({ reasoning_effort: 'none' });
+    expect(activity).toContainEqual({ thinking: 'plan', done: false });
+    expect(activity).toContainEqual({ done: true, doneReason: 'stop' });
+  });
+
   it('fails output-token-limit streams instead of retrying them as ordinary empty responses', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new OllamaProvider({

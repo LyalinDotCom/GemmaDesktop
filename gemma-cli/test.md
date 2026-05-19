@@ -2,6 +2,28 @@
 
 This is a living smoke-test plan for validating that Gemma CLI can survive a multi-turn coding session against a simple project. The plan is allowed to change as we learn what guidance the model needs. Keep the final prompts focused on the path that actually reaches green without turning them into narrow implementation instructions.
 
+## Official Web-App Live Suite
+
+Use this automated suite for the basic web-app health lane that exercises Gemma CLI, the shared SDK agent loop, and generated app validation without relying on Gemma Desktop UI flows.
+
+```bash
+npm --prefix gemma-cli run test:web-live
+```
+
+The suite runs two clean multi-turn scenarios through the built `gemma-cli` package:
+
+- a Vite React note-taking app with three follow-up edits for tags, archive/restore, and JSON import/export
+- a Vite Three.js black hole simulation with three follow-up edits for presets/metrics, lensing/quality controls, and screenshot/reset behavior
+
+Each scenario uses one Gemma CLI session, one prompt per turn, and independent validation after every turn. Validation checks package scripts, build output, generated source health, Vite/React entrypoints, requested feature evidence, stale starter text, placeholder/scratch text, and generated `dist` artifacts. The runner copies the repository's `React App Builder` skill into an isolated `GEMMA_CLI_HOME` so the test does not depend on the user's installed skills, and it unloads the Ollama model at the end unless `--keep-model-loaded` is passed. If a run is manually interrupted, still verify `ollama ps` and unload the model if needed.
+
+Useful focused forms:
+
+```bash
+npm --prefix gemma-cli run test:web-live -- --scenario notes-app
+npm --prefix gemma-cli run test:web-live -- --scenario black-hole-threejs
+```
+
 ## Official Live Suite Workflow
 
 Use this file as the repeatable live test suite for clean sessions. The suite is intentionally manual at the prompt level: run one Gemma CLI command per change, validate with local shell commands, and update the run log as evidence changes.
@@ -196,6 +218,163 @@ In RUN_TARGET, add a helpful README with examples and do a cleanup pass on the p
 ```
 
 ## Run Log
+
+### Gemma CLI Web Live Suite Run 04 - 2026-05-14
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run04 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: failed and manually interrupted during `black-hole-threejs/presets`; do not count as a full green suite.
+- Logs: `test-projects/gemma-cli-web-live-run04/_suite-results/logs`
+- Summary: no `summary.json` was written because the run was interrupted with `Ctrl-C` while the child `gemma-cli` process was still streaming.
+- Notes app:
+  - `create`, `tags`, and `archive` passed the suite validators.
+  - `import-export` built and linted in the generated app, but the suite rejected the hidden JSON import file input because `commonWebApp` incorrectly forbade all `display: none` usage. The harness was fixed afterward to stop treating hidden file inputs as a failure by default.
+- Black-hole app:
+  - `create` passed the suite validators after the model recovered from lint setup mistakes, a package conflict, stale patches, and a missing `finalize_build` argument. The generated app reran `npm run build`, `npm run validate`, and `npm run lint` after the final changes.
+  - `presets` added the state-level preset data, then entered a repeated stream loop while trying to decide whether to patch or rewrite `index.html`, repeatedly emitting `Let's do that` and never issuing the next file-write tool.
+- Harness follow-up:
+  - The stream watchdog missed the repeated short-phrase loop, so it was tightened to detect repeated generated phrases, not only exact stream fragments, adjacent lines, or single-word runs.
+  - Signal cleanup was added so a manually interrupted run asks Ollama to unload the configured model.
+- Cleanup: `gemma4:31b` was explicitly unloaded after the interrupted run; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 06 - 2026-05-14
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --scenario black-hole-threejs --target-root test-projects/gemma-cli-web-live-run06`
+- Model: `gemma4:31b`
+- Status: passed for the focused black-hole scenario.
+- Summary: `test-projects/gemma-cli-web-live-run06/_suite-results/summary.json`
+- Turns:
+  - `create` passed after the generated app installed, built, validated, linted, and satisfied the Three.js evidence checks.
+  - `presets` passed with named presets and live metrics evidence.
+  - `lensing-quality` passed after the model recovered from a malformed patch attempt and applied a smaller focused patch.
+  - `export-reset` passed after the model recovered from a stale patch failure, fixed a generated syntax error in `ui.js`, and reran build/validate.
+- Cleanup: `gemma4:31b` was explicitly unloaded after the run; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 07 - 2026-05-14
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run07 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: failed; do not count as a full green suite.
+- Logs: `test-projects/gemma-cli-web-live-run07/_suite-results/logs`
+- Summary: no `summary.json` was written because the run was manually terminated during a nonproductive stale-patch recovery loop in `black-hole-threejs/create`.
+- Notes app:
+  - `create` passed after the generated app fixed lint failures and reran build, lint, and validate.
+  - `tags` failed. The model successfully patched `App.jsx`, then drifted while trying to patch `NoteEditor.jsx` and `NoteList.jsx`, including a corrupted path fragment and repeated generated scratch text: `s a mistake in the previous hunk com`. The stream repetition watchdog stopped the child CLI process after about 303 seconds.
+- Black-hole app:
+  - `create` installed, built, validated, and eventually made `npm run lint` exit 0 after adding ESLint config and ignoring `dist`.
+  - The run was stopped after the model entered a stale-patch recovery loop while trying to remove lint warnings from `controls.js` and `scene.js`. It repeatedly reasoned that an earlier read should satisfy the guard instead of issuing a fresh read after the latest failed patch.
+- Cleanup: the suite process group was terminated and `gemma4:31b` was explicitly unloaded; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 10 - 2026-05-14
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run10 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: failed, but the full run completed and wrote a summary. Do not count as a full green suite.
+- Summary: `test-projects/gemma-cli-web-live-run10/_suite-results/summary.json`
+- Logs: `test-projects/gemma-cli-web-live-run10/_suite-results/logs`
+- Notes app:
+  - `create` passed the suite validators.
+  - `tags` passed after the model recovered from stale patch context and eventually used a safer full-file rewrite path.
+  - `archive` failed. The stream repetition watchdog stopped the child CLI after about 256 seconds because the generated stream repeated `I'll just add the toggle button` eight times while trying to patch `NoteList.jsx`.
+  - `import-export` did not run because the notes scenario stopped after the archive failure.
+- Black-hole app:
+  - `create`, `presets`, `lensing-quality`, and `export-reset` all passed the suite validators.
+  - `lensing-quality` recovered from several stale `main.js` patch attempts, reran the generated app's build/validate/lint commands, and then passed `threeLensingQuality`.
+  - `export-reset` added screenshot and reset-view controls, recovered after one malformed validation tool-call fragment, reran validation in the generated project directory, and passed `threeExportReset`.
+- Harness/product finding:
+  - The stream watchdog is now catching some visible repetition loops quickly enough for `--continue-on-failure` to preserve the rest of the suite evidence.
+  - The archive failure still shows a product gap: after a successful first patch, Gemma can drift into long visible self-correction while constructing the next patch instead of issuing a focused read or file rewrite.
+- Cleanup: the suite unloaded `gemma4:31b`; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 14 - 2026-05-15
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --scenario notes-app --target-root test-projects/gemma-cli-web-live-run14-notes`
+- Model: `gemma4:31b`
+- Status: passed for the focused notes scenario.
+- Summary: `test-projects/gemma-cli-web-live-run14-notes/_suite-results/summary.json`
+- Timing: started `2026-05-15T01:02:12.508Z`, completed `2026-05-15T01:40:40.367Z`.
+- Turns:
+  - `create` passed the suite validators.
+  - `tags` passed after stale-patch recovery.
+  - `archive` passed after the agent avoided the earlier repeated visible-promise loop.
+  - `import-export` passed with build, validate, and lint evidence.
+- Cleanup: `gemma4:31b` was explicitly unloaded after the run; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 17 - 2026-05-15
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run17 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: process passed for the full two-scenario suite, but artifact review found quality gaps. Count this as useful green process evidence, not final quality evidence.
+- Summary: `test-projects/gemma-cli-web-live-run17/_suite-results/summary.json`
+- Notes app:
+  - `create`, `tags`, `archive`, and `import-export` passed.
+  - `import-export` first ran root `npm run build && npm run lint`, noticed the wrong cwd, reran validation in the generated app, fixed a lint failure, and finalized.
+- Black-hole app:
+  - `create`, `presets`, `lensing-quality`, and `export-reset` passed.
+  - `export-reset` first ran root validation, noticed it, reran in the generated app, and finalized with valid evidence.
+- Artifact review finding after the green process exit:
+  - `black-hole-threejs/src/main.js` contained self-correction comments such as `Wait, the current scene.js update loop doesn't actually call renderer.render().`
+  - `black-hole-threejs/src/counter.js` from the Vite starter remained in the project.
+- Harness follow-up:
+  - The web suite now rejects stale Vite starter content and generated self-correction comments such as `Wait,`, `Let's fix`, `For now, let's`, and `the current ... doesn't actually`.
+- Cleanup: the suite unloaded `gemma4:31b`; `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 18 - 2026-05-15
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run18 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: stopped manually during `notes-app/archive`; do not count as a full green suite.
+- Summary: no `summary.json` was written because the run was terminated before suite completion.
+- Evidence: diagnostics under `test-projects/gemma-cli-web-live-run18/_suite-results/diagnostics/notes-app`.
+- Notes app:
+  - `create` passed under the stricter stale-starter and self-correction validators.
+  - `tags` passed under the stricter validators after recovering from a bad patch path, stale patch context, and a malformed `finalize_build` call.
+  - `archive` implemented archive/restore behavior and ran app-local build and lint, then ended a provider turn with thinking-only output and `done_reason=stop` without a visible JSON action. The CLI stayed in heartbeat activity and was stopped.
+- Product fixes added after this run:
+  - `apply_patch` now validates all hunks and plans all file changes before writing, so a later failed hunk cannot partially mutate earlier files.
+  - OpenAI-compatible stream cleanup now uses manual iteration and bounded cancellation after a done chunk, so a thinking-only completion can move into the existing empty-response retry path instead of hanging.
+  - `finalize_build` now requires at least one concrete validation record.
+- Cleanup: the process group was terminated, `gemma4:31b` was explicitly unloaded, and `ollama ps` was empty afterward.
+
+### Gemma CLI Web Live Suite Run 19 - 2026-05-15
+
+- Command: `npm --prefix gemma-cli run test:web-live -- --target-root test-projects/gemma-cli-web-live-run19 --continue-on-failure`
+- Model: `gemma4:31b`
+- Status: passed the full two-scenario suite. Count as green live-suite evidence with artifact review notes below.
+- Summary: `test-projects/gemma-cli-web-live-run19/_suite-results/summary.json`
+- Timing: started `2026-05-15T04:53:00.987Z`, completed `2026-05-15T06:34:28.282Z`.
+- Preflight validation before the live run:
+  - Targeted SDK agent tests passed for Ollama streaming, workspace tools, apply-patch behavior, and agent recovery coverage.
+  - `npm --prefix gemma-cli run test:web-live -- --help` passed after building SDK agent and CLI packages.
+  - `npm run check` passed across SDK, Gemma CLI, and Gemma Desktop after rerunning one transient workspace-tools test that had first hit a suite-load timeout.
+- Notes app:
+  - `create`, `tags`, `archive`, and `import-export` all passed.
+  - `archive` passed the previous Run 18 failure point; the thinking-only/no-content provider completion moved forward instead of hanging.
+  - The app-local build, validate, and lint evidence was present across turns, and validators covered core notes behavior, tags, archive/restore, and import/export.
+- Black-hole app:
+  - `create`, `presets`, `lensing-quality`, and `export-reset` all passed.
+  - The run exercised stale-patch recovery, atomic patch rejection, and implicit rename rejection multiple times, including `run19` to `run9` path drift. The model recovered by rereading and retrying with correct paths.
+  - The generated app includes a functional Three.js scene, controls, presets, metrics, quality/lensing controls, screenshot export, and reset view. Human review found it practically useful but visually basic, with one harmless duplicate Schwarzschild metric assignment in `src/controls.js`.
+- Artifact review:
+  - Source-only grep found no stale Vite starter text or generated self-correction markers in `notes-app` or `black-hole-threejs` outside diagnostics/results.
+  - Summary and saved logs show every turn status as `passed`.
+- Product fixes validated by this run:
+  - OpenAI-compatible stream cleanup no longer hangs after a thinking-only done chunk.
+  - `apply_patch` rejects implicit renames and plans changes before writing, so failed later hunks do not partially mutate earlier files.
+  - `finalize_build` requires concrete validation evidence before a turn can finalize.
+- Cleanup: `ollama ps` was empty after the suite exit; no live model unload was needed.
+
+### Ledger 10-Change Live Suite Run 12 - 2026-05-14
+
+- Target: `test-projects/ledger10-run12`
+- Session: `0f1815f4` with diagnostics in `/tmp/gemma-cli-live-ledger10-run12-diagnostics`
+- Model: `gemma4:31b`
+- Status: failed at Change 2 correction; do not count as a full green suite.
+- Preflight: repo `npm run build` passed, and repo `npm test` passed before the live prompts.
+- Change 1: completed and independently validated with `npm test --prefix test-projects/ledger10-run12`, `npm run build --prefix test-projects/ledger10-run12`, direct `node --check` on generated JS files, direct CLI add/summary/list execution from the target directory, and scratch-text search. Finding: the generated build script only echoes success, so direct `node --check` is the meaningful build validation.
+- Change 2: Gemma added category support to `src/ledger.js`, `src/cli.js`, and `test/ledger.test.js`. It recovered from two missing-path `write_file` calls and ran `npm test` successfully, but independent validation found `src/cli.js` did not syntax-check because the generated file contained `console.log('\nCategory Summaries:');n      categories.forEach(...)`.
+- Change 2 correction: a normal user-like correction prompt reproduced the syntax error with `node --check`, but the model repeatedly failed to apply the one-line fix after stale `apply_patch` contexts and entered a low-value loop identifying the same extra `n`. The run was stopped rather than manually patched.
+- Cleanup: `gemma4:31b` was explicitly unloaded with `ollama stop gemma4:31b`; `ollama ps` was empty afterward.
 
 ### Terminal-Bench v2 Harbor Smoke - 2026-05-04
 

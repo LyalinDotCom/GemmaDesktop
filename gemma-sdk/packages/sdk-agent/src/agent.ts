@@ -97,6 +97,7 @@ export class Agent {
     let emptyResponseRetryCount = 0;
     let outputLimitRetryCount = 0;
     let transientTransportRetryCount = 0;
+    let malformedResponseRetryCount = 0;
     let forceReasoningOffNextTurn = false;
 
     const maxTurns = this.maxTurns;
@@ -112,9 +113,9 @@ export class Agent {
           ...this.generation,
           ...(forceReasoningOffNextTurn ? { reasoningMode: 'off' as const } : {}),
           onActivity: async (chunk) => {
+            protocolMonitor.observe(chunk);
             await this.generation.onActivity?.(chunk);
             await options.onModelActivity?.({ index: turn, chunk });
-            protocolMonitor.observe(chunk);
           }
         });
         forceReasoningOffNextTurn = false;
@@ -147,9 +148,27 @@ export class Agent {
       }
       const action = parseActionOrRecoveryInstruction(raw);
       if ('retryInstruction' in action) {
+        malformedResponseRetryCount += 1;
+        if (malformedResponseRetryCount > 2) {
+          const answer = [
+            'Stopped because the model repeatedly produced malformed Gemma CLI protocol responses.',
+            'The last parser recovery instruction could not get the model back to a valid JSON action.'
+          ].join(' ');
+          const finalTurn = { kind: 'final' as const, content: answer };
+          const nextTurns = [...turns, finalTurn];
+          await options.onTurn?.({ index: nextTurns.length - 1, turn: finalTurn });
+          return {
+            answer,
+            turns: nextTurns,
+            stats: this.stats(startedAt, nextTurns),
+            completionStatus: 'incomplete',
+            completionReason: 'model_response_malformed'
+          };
+        }
         messages.push({ role: 'user', content: action.retryInstruction });
         continue;
       }
+      malformedResponseRetryCount = 0;
 
       if ('answer' in action) {
         const noToolActionRetry = buildNoToolActionRetryInstruction(prompt, action.answer, turns, [...this.tools.values()]);
@@ -235,6 +254,17 @@ export class Agent {
       } as const;
       turns.push(toolTurn);
       await options.onTurn?.({ index: turnIndex, turn: toolTurn });
+      if (action.tool === 'finalize_build' && result.ok && result.meta?.terminal === true) {
+        const finalTurn = { kind: 'final' as const, content: result.output };
+        turns.push(finalTurn);
+        await options.onTurn?.({ index: turns.length - 1, turn: finalTurn });
+        return {
+          answer: result.output,
+          turns,
+          stats: this.stats(startedAt, turns),
+          completionStatus: 'completed'
+        };
+      }
       messages.push({ role: 'assistant', content: raw });
       messages.push({
         role: 'user',
@@ -247,6 +277,14 @@ export class Agent {
     }
 
     if (turns.at(-1)?.kind === 'tool') {
+      const failedFinalizeResult = failedFinalizeBuildAtMaxTurns(maxTurns, turns);
+      if (failedFinalizeResult) {
+        await options.onTurn?.({ index: failedFinalizeResult.turns.length - 1, turn: failedFinalizeResult.turns.at(-1)! });
+        return {
+          ...failedFinalizeResult,
+          stats: this.stats(startedAt, failedFinalizeResult.turns)
+        };
+      }
       return await this.runFinalResponsePass(prompt, messages, options, startedAt, turns, maxTurns);
     }
 
@@ -349,6 +387,30 @@ export class Agent {
       ...(completionReason ? { completionReason } : {})
     };
   }
+}
+
+function failedFinalizeBuildAtMaxTurns(
+  maxTurns: number,
+  turns: AgentTurn[]
+): Omit<AgentRunResult, 'stats'> | undefined {
+  const lastTurn = turns.at(-1);
+  if (lastTurn?.kind !== 'tool' || lastTurn.toolCall?.tool !== 'finalize_build' || lastTurn.toolResult?.ok !== false) {
+    return undefined;
+  }
+
+  const output = firstSentenceLikeLine(lastTurn.toolResult.output) || 'The finalize_build tool rejected the completion evidence.';
+  const answer = [
+    `Stopped after ${maxTurns} turns immediately after a rejected finalize_build call.`,
+    output,
+    'Resume the session or increase --max-turns so the agent can correct the final completion evidence.'
+  ].join(' ');
+  const finalTurn = { kind: 'final' as const, content: answer };
+  return {
+    answer,
+    turns: [...turns, finalTurn],
+    completionStatus: 'incomplete',
+    completionReason: 'finalize_build_failed_at_max_turns'
+  };
 }
 
 function buildFinalResponseEvidenceBlocker(prompt: string, answer: string, turns: AgentTurn[], tools: Tool[]): string | undefined {
@@ -1499,7 +1561,8 @@ function duplicateFailedPatchRetryResult(action: ToolCall, turns: AgentTurn[]): 
         output: [
           'The exact same apply_patch hunk already failed because the patch context did not match.',
           'Do not retry that patch unchanged.',
-          'Re-read the exact target lines and issue a smaller patch with current surrounding context, or use write_file only after reading the full current file and confirming full replacement is appropriate.'
+          'The next action should be read_file, read_files, search_text, list_tree, or a read-only exec_command for the target file.',
+          'After that fresh read, issue one smaller patch with current surrounding context, or use write_file only after reading the full current file and confirming full replacement is appropriate.'
         ].join('\n'),
         meta: { presentation: 'notice' }
       };
@@ -1613,6 +1676,7 @@ function patchContextRecoveryRequiredResult(action: ToolCall, turns: AgentTurn[]
     ok: false,
     output: [
       `Previous apply_patch failed because the patch context did not match${failure.path ? ` in ${failure.path}` : ''}.`,
+      'This guard applies to the latest failed patch attempt; reads from before that failed patch do not count as refreshed context.',
       'Before another file mutation, inspect the current file contents or nearby target region with read_file, read_files, search_text, list_tree, or a targeted read-only exec_command.',
       'Then issue a smaller patch with exact current context. Use write_file only after re-reading the current file and only when full replacement is appropriate. Do not retry stale patch context.'
     ].join('\n'),
@@ -2145,6 +2209,8 @@ class CompleteToolCallStreamError extends Error {
 
 class ModelProtocolMonitor {
   private content = '';
+  private repeatedFragmentKey = '';
+  private repeatedFragmentCount = 0;
 
   observe(chunk: StreamChunk): void {
     if (!chunk.content) {
@@ -2155,23 +2221,63 @@ class ModelProtocolMonitor {
     if (completeToolCall) {
       throw new CompleteToolCallStreamError(completeToolCall);
     }
+    const streamRepetitionReason = this.repeatedStreamFragmentReason(chunk.content);
+    if (streamRepetitionReason) {
+      throw new ProtocolRetryError(buildProtocolDriftRetryInstruction(streamRepetitionReason));
+    }
     const reason = visibleProtocolDriftReason(this.content);
     if (!reason) {
-      return;
+      const repetitionReason = visibleRepetitionDriftReason(this.content);
+      if (!repetitionReason) {
+        return;
+      }
+      throw new ProtocolRetryError(buildProtocolDriftRetryInstruction(repetitionReason));
     }
     throw new ProtocolRetryError(buildProtocolDriftRetryInstruction(reason));
+  }
+
+  private repeatedStreamFragmentReason(fragment: string): string | undefined {
+    const key = repeatedStreamFragmentKey(fragment);
+    if (!key) {
+      this.repeatedFragmentKey = '';
+      this.repeatedFragmentCount = 0;
+      return undefined;
+    }
+    if (key === this.repeatedFragmentKey) {
+      this.repeatedFragmentCount += 1;
+    } else {
+      this.repeatedFragmentKey = key;
+      this.repeatedFragmentCount = 1;
+    }
+    if (this.repeatedFragmentCount < 12) {
+      return undefined;
+    }
+    return `Model stream fragment repeated ${this.repeatedFragmentCount} times before a JSON action completed: ${streamFragmentPreview(fragment)}.`;
   }
 }
 
 function buildProtocolDriftRetryInstruction(reason: string): string {
   return [
-    'Your previous visible response drifted outside the Gemma CLI JSON protocol before it completed.',
+    'Your previous response drifted outside the Gemma CLI JSON protocol before it completed.',
     `Reason: ${reason}`,
     'Do not continue that draft and do not include scratch text, Markdown fences, or multiple attempted tool calls.',
     'Return exactly one valid JSON object and nothing else.',
     'To use a tool, use {"tool":"tool_name","args":{...}}.',
     'If you need to correct a tool call, send only the corrected single JSON object now.'
   ].join('\n');
+}
+
+function repeatedStreamFragmentKey(fragment: string): string | undefined {
+  const normalized = fragment.replace(/\r\n/g, '\n');
+  if (normalized.length < 8) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function streamFragmentPreview(fragment: string): string {
+  const preview = fragment.length > 120 ? `${fragment.slice(0, 120)}...` : fragment;
+  return JSON.stringify(preview);
 }
 
 export function buildAgentSystemPrompt(options: AgentSystemPromptOptions = {}): string {
@@ -2556,17 +2662,17 @@ function parseAction(text: string): { answer: string } | ToolCall {
   if (nativeToolCall) {
     return normalizeToolCall(nativeToolCall);
   }
+  const trimmed = stripCodeFence(rawTrimmed);
+  const recoverableLooseWriteFile = parseLooseWriteFileToolCall(trimmed);
+  if (recoverableLooseWriteFile) {
+    return recoverableLooseWriteFile;
+  }
   const envelopeDrift = visibleProtocolDriftReason(rawTrimmed);
   if (envelopeDrift) {
     throw new Error(envelopeDrift);
   }
-  const trimmed = stripCodeFence(rawTrimmed);
   const jsonSpan = firstJsonObjectSpan(trimmed);
   if (!jsonSpan) {
-    const looseWriteFile = parseLooseWriteFileToolCall(trimmed);
-    if (looseWriteFile) {
-      return looseWriteFile;
-    }
     const looseSingleStringArg = parseLooseSingleStringArgToolCall(trimmed);
     if (looseSingleStringArg) {
       return looseSingleStringArg;
@@ -2583,10 +2689,6 @@ function parseAction(text: string): { answer: string } | ToolCall {
 
   const parsed = parseJsonWithRepair(jsonText);
   if (!parsed.ok) {
-    const looseWriteFile = parseLooseWriteFileToolCall(trimmed);
-    if (looseWriteFile) {
-      return looseWriteFile;
-    }
     const looseSingleStringArg = parseLooseSingleStringArgToolCall(trimmed);
     if (looseSingleStringArg) {
       return looseSingleStringArg;
@@ -2728,13 +2830,14 @@ function parseLooseWriteFileToolCall(text: string): ToolCall | undefined {
 
   const contentFirstPrefix = cleaned.match(/^\s*\{\s*"tool"\s*:\s*"write_file"\s*,\s*"args"\s*:\s*\{\s*"content"\s*:\s*"/);
   if (contentFirstPrefix) {
-    const suffix = /"\s*\}?\s*,\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}\s*\}?\s*$/.exec(cleaned);
+    const suffix = /"\s*\}?\s*(?:,\s*"overwriteExisting"\s*:\s*(true|false|"true"|"false"))?\s*,\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}\s*\}?\s*$/.exec(cleaned);
     if (suffix?.index !== undefined && suffix.index >= contentFirstPrefix[0].length) {
       return {
         tool: 'write_file',
         args: {
           content: decodeLooseJsonString(cleaned.slice(contentFirstPrefix[0].length, suffix.index)),
-          path: decodeLooseJsonString(suffix[1])
+          ...(suffix[1] !== undefined ? { overwriteExisting: decodeLooseBoolean(suffix[1]) } : {}),
+          path: decodeLooseJsonString(suffix[2])
         }
       };
     }
@@ -2742,19 +2845,24 @@ function parseLooseWriteFileToolCall(text: string): ToolCall | undefined {
 
   const pathFirstPrefix = cleaned.match(/^\s*\{\s*"tool"\s*:\s*"write_file"\s*,\s*"args"\s*:\s*\{\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"content"\s*:\s*"/);
   if (pathFirstPrefix) {
-    const suffix = /"\s*\}\s*\}?\s*$/.exec(cleaned);
+    const suffix = /"\s*(?:,\s*"overwriteExisting"\s*:\s*(true|false|"true"|"false"))?\s*\}\s*\}?\s*$/.exec(cleaned);
     if (suffix?.index !== undefined && suffix.index >= pathFirstPrefix[0].length) {
       return {
         tool: 'write_file',
         args: {
           path: decodeLooseJsonString(pathFirstPrefix[1]),
-          content: decodeLooseJsonString(cleaned.slice(pathFirstPrefix[0].length, suffix.index))
+          content: decodeLooseJsonString(cleaned.slice(pathFirstPrefix[0].length, suffix.index)),
+          ...(suffix[1] !== undefined ? { overwriteExisting: decodeLooseBoolean(suffix[1]) } : {})
         }
       };
     }
   }
 
   return undefined;
+}
+
+function decodeLooseBoolean(text: string): boolean {
+  return text.replace(/^"|"$/g, '').trim().toLowerCase() === 'true';
 }
 
 function parseLooseSingleStringArgToolCall(text: string): ToolCall | undefined {
@@ -2893,6 +3001,7 @@ function visibleProtocolDriftReason(text: string): string | undefined {
     if (!suffix) {
       return undefined;
     }
+    return 'Visible text appeared after a JSON tool action.';
   }
 
   const rawToolCallMarkers = (text.match(/<\|?tool_call\|?>/g) ?? []).length;
@@ -2922,6 +3031,44 @@ function visibleProtocolDriftReason(text: string): string | undefined {
     return undefined;
   }
   return 'Tool-call JSON was followed by extra visible text after the closing Markdown fence.';
+}
+
+function visibleRepetitionDriftReason(text: string): string | undefined {
+  const responseContractMarkers = (text.match(/<\/?\s*response[_\s-]*contract\s*>/gi) ?? []).length;
+  if (responseContractMarkers >= 3) {
+    return `Visible response_contract marker repeated ${responseContractMarkers} times before a JSON action completed.`;
+  }
+
+  const normalized = text
+    .replace(/\\n/g, ' ')
+    .replace(/[^a-zA-Z0-9']+/g, ' ')
+    .toLowerCase()
+    .trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  for (let phraseLength = 2; phraseLength <= 8; phraseLength += 1) {
+    for (let offset = 0; offset < phraseLength; offset += 1) {
+      let previous = '';
+      let count = 0;
+      for (let index = offset; index <= words.length - phraseLength; index += phraseLength) {
+        const phrase = words.slice(index, index + phraseLength).join(' ');
+        if (phrase === previous) {
+          count += 1;
+        } else {
+          previous = phrase;
+          count = 1;
+        }
+        if (count >= 8) {
+          return `Visible generated phrase repeated ${count} times before a JSON action: ${JSON.stringify(phrase.slice(0, 120))}.`;
+        }
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function firstJsonObject(text: string): string | undefined {

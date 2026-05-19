@@ -78,6 +78,7 @@ export interface ToolResult {
 export interface ToolResultMeta {
   fileChange?: FileChangeMeta;
   presentation?: 'notice';
+  terminal?: boolean;
   runningCommand?: RunningCommandMeta;
 }
 

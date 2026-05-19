@@ -304,6 +304,36 @@ describe('applyPatch', () => {
     expect(files.has('n/src/main.js')).toBe(false);
   });
 
+  it('does not write earlier file edits when a later file hunk fails', async () => {
+    const files = new Map<string, string>([
+      ['one.ts', 'a\n'],
+      ['two.ts', 'c\n']
+    ]);
+    const writes: string[] = [];
+
+    await expect(applyPatch(`--- a/one.ts
++++ b/one.ts
+@@ -1 +1 @@
+-a
++b
+--- a/two.ts
++++ b/two.ts
+@@ -1 +1 @@
+-missing
++d
+`, {
+      readFile: async (path) => files.get(path),
+      writeFile: async (path, contents) => {
+        writes.push(path);
+        files.set(path, contents);
+      }
+    })).rejects.toThrow(/did not match in two\.ts/);
+
+    expect(writes).toEqual([]);
+    expect(files.get('one.ts')).toBe('a\n');
+    expect(files.get('two.ts')).toBe('c\n');
+  });
+
   it('supports explicit renames only when delete support is available', async () => {
     const files = new Map<string, string>([['old.js', 'export const value = 1;\n']]);
     const results = await applyPatch(`--- a/old.js
