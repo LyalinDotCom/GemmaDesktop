@@ -1,11 +1,12 @@
 {
   "name": "@gemma-sdk/agent",
   "version": "0.1.0",
-  "description": "Gemma-optimized agent loop, model providers, and workspace tools for Gemma products.",
+  "private": true,
+  "description": "Gemma-optimized agent loop, model providers, and workspace tools for Gemma products. Workspace-only library — never published; consumed in-source by gemma-cli (bundled) and gemma-desktop.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run --root ../.. src/*.test.ts src/providers/*.test.ts src/tools/*.test.ts",

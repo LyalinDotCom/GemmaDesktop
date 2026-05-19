@@ -4,11 +4,10 @@
   "description": "Unofficial local-first coding agent optimized for Gemma models.",
   "type": "module",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "bin": {
     "gemma": "dist/index.js"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "keywords": [
     "gemma",
     "ollama",
@@ -18,20 +17,23 @@
     "local-ai"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "node build.mjs",
     "start": "node dist/index.js",
     "snapshot:tui": "node dist/tuiSnapshot.js",
     "test": "vitest run",
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@gemma-sdk/agent": "0.1.0",
+    "@ai-sdk/openai-compatible": "^2.0.45",
+    "ai": "^6.0.174",
     "ansi-escapes": "^7.3.0",
     "ink": "npm:@jrichman/ink@^6.6.9",
     "react": "^19.2.5"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14"
+    "@gemma-sdk/agent": "0.1.0",
+    "@types/react": "^19.2.14",
+    "esbuild": "^0.25.0"
   },
   "files": [
     "dist",

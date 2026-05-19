@@ -192,3 +192,9 @@ Use version control, inspect diffs, and run validation before trusting generated
 Open Gemma Project is an independent fan project. It is not built by, endorsed by, sponsored by, or affiliated with Google, Google DeepMind, the Gemma team, Ollama, LM Studio, or any other vendor mentioned in this repository.
 
 "Gemma" is a trademark of its respective owner. This project uses the name to describe the model family it is primarily built around.
+
+## License
+
+This repository is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for the full text and [`NOTICE`](NOTICE) for attribution.
+
+The published `gemma-cli` package on npm carries the same license. The shared `@gemma-sdk/agent` workspace package is intentionally not published — its code is bundled into the products that consume it (currently `gemma-cli`, eventually `gemma-desktop`), so consumers only ever install the product packages.
