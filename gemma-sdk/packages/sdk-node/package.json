@@ -16,6 +16,7 @@
     "@gemma-sdk/runtime-llamacpp": "0.1.0",
     "@gemma-sdk/runtime-lmstudio": "0.1.0",
     "@gemma-sdk/runtime-omlx": "0.1.0",
+    "@gemma-sdk/runtime-gemini": "0.1.0",
     "@gemma-sdk/runtime-ollama": "0.1.0",
     "@gemma-sdk/tools": "0.1.0",
     "pdfjs-dist": "~5.4.0",

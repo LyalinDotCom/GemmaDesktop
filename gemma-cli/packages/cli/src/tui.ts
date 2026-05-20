@@ -1,6 +1,6 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin as defaultInput, stdout as defaultOutput } from 'node:process';
-import { ensureOllamaRunning, inferAttachmentCapabilities, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
+import { ensureOllamaRunning, inferAttachmentCapabilities, listGeminiModelInfos, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type GeminiModelInfo, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 import { createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, recordSessionModelSelection, sessionMessages, type DiagnosticContext, type StoredSession, type StoredSessionMessage } from './diagnostics.js';
 import { isLocalProvider, readModelPreference, writeModelPreference, type ModelPreference } from './modelPreferences.js';
@@ -24,6 +24,8 @@ export interface TuiSession {
   provider: CliOptions['provider'];
   ollamaUrl?: string;
   lmStudioUrl?: string;
+  geminiApiKey?: string;
+  geminiApiBaseUrl?: string;
   contextTokens?: number;
   maxTokens?: number;
   temperature?: number;
@@ -72,7 +74,7 @@ export interface ToolProgressState {
   seenTurnIndexes: Set<number>;
 }
 
-export type SessionModelInfo = OllamaModelInfo | LmStudioModelInfo;
+export type SessionModelInfo = OllamaModelInfo | LmStudioModelInfo | GeminiModelInfo;
 
 export interface SessionModelSelection {
   provider: SessionModelInfo['provider'];
@@ -115,6 +117,8 @@ export async function runTui(options: CliOptions, input = defaultInput, output =
     provider: startupOptions.provider,
     ollamaUrl: options.ollamaUrl,
     lmStudioUrl: options.lmStudioUrl,
+    geminiApiKey: options.geminiApiKey,
+    geminiApiBaseUrl: options.geminiApiBaseUrl,
     contextTokens: options.contextTokens,
     maxTokens: options.maxTokens,
     temperature: options.temperature,
@@ -228,6 +232,8 @@ function cliOptionsFromSession(session: TuiSession, overrides: Partial<CliOption
     model: overrides.model ?? session.runtime.selectedModel ?? session.runtime.model,
     ollamaUrl: overrides.ollamaUrl ?? session.ollamaUrl,
     lmStudioUrl: overrides.lmStudioUrl ?? session.lmStudioUrl,
+    geminiApiKey: overrides.geminiApiKey ?? session.geminiApiKey,
+    geminiApiBaseUrl: overrides.geminiApiBaseUrl ?? session.geminiApiBaseUrl,
     prompt: undefined,
     scenario: undefined,
     skills: overrides.skills ?? session.runtime.skills.map((skill) => skill.name),
@@ -572,7 +578,8 @@ export async function listSessionModels(session: TuiSession): Promise<string[]> 
 export async function listSessionModelInfos(session: TuiSession): Promise<SessionModelInfo[]> {
   const providers: Array<Promise<SessionModelInfo[]>> = [
     listOllamaModelInfosWithAutostart(session),
-    listLmStudioModelInfos(session.lmStudioUrl)
+    listLmStudioModelInfos(session.lmStudioUrl),
+    listGeminiModelInfos(session.geminiApiKey, session.geminiApiBaseUrl)
   ];
   const results = await Promise.allSettled(providers);
   const models = results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
@@ -582,7 +589,7 @@ export async function listSessionModelInfos(session: TuiSession): Promise<Sessio
   const errors = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
-  throw new Error(errors.join('\n') || 'No local model providers are available.');
+  throw new Error(errors.join('\n') || 'No model providers are available.');
 }
 
 async function listOllamaModelInfosWithAutostart(session: TuiSession): Promise<OllamaModelInfo[]> {
@@ -611,6 +618,8 @@ export async function selectSessionModel(session: TuiSession, model: string, pro
     model,
     ollamaUrl: session.ollamaUrl,
     lmStudioUrl: session.lmStudioUrl,
+    geminiApiKey: session.geminiApiKey,
+    geminiApiBaseUrl: session.geminiApiBaseUrl,
     prompt: undefined,
     scenario: undefined,
     skills: session.runtime.skills.map((skill) => skill.name),
@@ -690,6 +699,8 @@ async function resumeStoredSession(session: TuiSession, selector: string): Promi
     model: diagnostics.session.model,
     ollamaUrl: diagnostics.session.ollamaUrl ?? session.ollamaUrl,
     lmStudioUrl: diagnostics.session.lmStudioUrl ?? session.lmStudioUrl,
+    geminiApiBaseUrl: diagnostics.session.geminiApiBaseUrl ?? session.geminiApiBaseUrl,
+    geminiApiKey: session.geminiApiKey,
     history: sessionMessages(diagnostics.session)
   });
   const runtime = await createRuntime(runtimeOptions, session.runtimeHostOptions);
@@ -699,6 +710,8 @@ async function resumeStoredSession(session: TuiSession, selector: string): Promi
   session.provider = runtimeOptions.provider;
   session.ollamaUrl = runtimeOptions.ollamaUrl;
   session.lmStudioUrl = runtimeOptions.lmStudioUrl;
+  session.geminiApiKey = runtimeOptions.geminiApiKey;
+  session.geminiApiBaseUrl = runtimeOptions.geminiApiBaseUrl;
   session.history = storedSessionHistoryToTuiEntries(diagnostics.session.history);
   session.scrollOffset = 0;
   session.autoFollow = true;
@@ -1048,6 +1061,7 @@ function formatStatus(session: TuiSession): string {
     `  directory: ${session.runtime.cwd}`,
     `  ollamaUrl: ${session.ollamaUrl ?? 'http://127.0.0.1:11434'}`,
     `  lmStudioUrl: ${session.lmStudioUrl ?? 'http://127.0.0.1:1234'}`,
+    `  geminiApiBaseUrl: ${session.geminiApiBaseUrl ?? 'https://generativelanguage.googleapis.com/v1beta'}`,
     '',
     'Generation',
     `  maxTurns: ${formatMaxTurns(session.runtime.maxTurns)}`,
@@ -1448,6 +1462,8 @@ function runtimeOptionsForSession(session: TuiSession, overrides: Partial<Pick<C
     model: session.runtime.selectedModel ?? session.runtime.model,
     ollamaUrl: session.ollamaUrl,
     lmStudioUrl: session.lmStudioUrl,
+    geminiApiKey: session.geminiApiKey,
+    geminiApiBaseUrl: session.geminiApiBaseUrl,
     prompt: undefined,
     scenario: undefined,
     skills: session.runtime.skills.map((skill) => skill.name),

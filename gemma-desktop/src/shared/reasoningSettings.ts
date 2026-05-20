@@ -46,6 +46,10 @@ export function supportsReasoningControlForModel(
   modelId: string,
   runtimeId: string,
 ): boolean {
+  if (runtimeId === 'gemini-api') {
+    return /^gemini-(?:3\.5|3\.1|3|2\.5|2)/i.test(modelId)
+  }
+
   return (
     (runtimeId === 'ollama-openai' || runtimeId === 'ollama-native')
     && Boolean(resolveGemmaCatalogEntryForModel(modelId))

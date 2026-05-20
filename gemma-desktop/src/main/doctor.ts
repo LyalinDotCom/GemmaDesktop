@@ -49,7 +49,7 @@ export interface DoctorModelSummary {
   quantization?: string
   contextLength?: number
   runtimeConfig?: {
-    provider: 'ollama' | 'lmstudio' | 'omlx'
+    provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
     baseParameters?: Record<string, unknown>
     baseParametersText?: string
     requestedOptions?: Record<string, number>
@@ -309,6 +309,7 @@ function normalizeRuntimeFamilyId(runtimeId: string): string {
   if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
   if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
   if (runtimeId.startsWith('omlx')) return 'omlx'
+  if (runtimeId === 'gemini-api') return 'gemini'
   return runtimeId
 }
 
@@ -322,6 +323,8 @@ function runtimeFamilyLabel(familyId: string, fallback: string): string {
       return 'llama.cpp Server'
     case 'omlx':
       return 'oMLX'
+    case 'gemini':
+      return 'Gemini API'
     default:
       return fallback
   }
@@ -548,8 +551,20 @@ function mapDoctorModel(
                   (loadedConfig as Record<string, unknown>).maxTokens,
                   (loadedConfig as Record<string, unknown>).max_tokens,
                 ),
-              }
-      : undefined
+            }
+            : runtime.runtime.id === 'gemini-api'
+              ? {
+                  provider: 'gemini' as const,
+                  nominalContextLength: coerceNumber(
+                    meta.contextLength,
+                    meta.contextWindow,
+                    meta.inputTokenLimit,
+                    meta.maxContextLength,
+                    meta.max_context_length,
+                  ),
+                  loadedContextLength: undefined,
+                }
+              : undefined
 
   return {
     id: model.id,

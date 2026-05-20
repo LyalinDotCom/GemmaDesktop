@@ -89,6 +89,8 @@ export function describeMemoryModelStack(
       return 'LM Studio OpenAI-compatible'
     case 'omlx-openai':
       return 'oMLX OpenAI-compatible'
+    case 'gemini-api':
+      return 'Gemini API hosted'
     default:
       return model.runtimeName
   }

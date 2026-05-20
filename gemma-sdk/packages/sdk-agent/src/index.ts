@@ -4,6 +4,7 @@ export { assertContentSupported, buildPromptContentWithMedia, contentToText, inf
 export { buildGemma4Prompt, buildGemmaThinkingInstructions, modelProfileFor, normalizeGemmaModelOutput, parseGemmaNativeToolCall, renderGemmaNativeToolDeclarations, shouldEnableProviderReasoning } from './modelProfiles.js';
 export type { ModelProfile, ModelProfileFamily } from './modelProfiles.js';
 export { listLmStudioModelInfos, listLmStudioModels, LmStudioProvider } from './providers/lmStudioProvider.js';
+export { GeminiProvider, listGeminiModelInfos, listGeminiModels } from './providers/geminiProvider.js';
 export { ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, OllamaProvider, prepareOllama } from './providers/ollamaProvider.js';
 export { createWorkspaceTools } from './tools/workspace.js';
 export { findScenario, scenarios } from './scenarios.js';
@@ -34,5 +35,6 @@ export type {
 export type { AttachmentCapabilities, PromptAttachmentResult, ResolvedImageAsset } from './content.js';
 export type { LoadSkillsOptions, Skill } from './skills.js';
 export type { LmStudioModelInfo } from './providers/lmStudioProvider.js';
+export type { GeminiModelInfo } from './providers/geminiProvider.js';
 export type { OllamaModelCapabilities, OllamaModelInfo } from './providers/ollamaProvider.js';
 export type { WorkspacePermissionHandler, WorkspacePermissionRequest } from './tools/workspace.js';

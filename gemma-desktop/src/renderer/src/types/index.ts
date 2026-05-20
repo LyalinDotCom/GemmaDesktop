@@ -381,7 +381,7 @@ export interface ModelSummary {
   status: 'loaded' | 'available' | 'loading'
   attachmentSupport?: AttachmentSupport
   runtimeConfig?: {
-    provider: 'ollama' | 'lmstudio' | 'omlx'
+    provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
     baseParameters?: Record<string, unknown>
     baseParametersText?: string
     requestedOptions?: Record<string, number>

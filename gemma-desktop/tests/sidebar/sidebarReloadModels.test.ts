@@ -248,6 +248,7 @@ describe('Sidebar reload models control', () => {
     expect(getButtonByLabel(container, 'Secondary model').textContent).toContain('gemma4:e2b')
 
     await click(getButtonByLabel(container, 'Primary model'))
+    await click(getButtonByText(container, 'LM Studio'))
     await click(getButtonByText(container, 'Qwen3 8B'))
 
     expect(onUpdateModelSelection).toHaveBeenCalledWith({

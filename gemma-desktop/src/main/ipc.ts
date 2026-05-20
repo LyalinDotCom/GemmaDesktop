@@ -760,7 +760,11 @@ function isOmlxModelRuntime(runtimeId: string): boolean {
   return runtimeId === 'omlx-openai'
 }
 
-function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx' | 'other' {
+function isGeminiModelRuntime(runtimeId: string): boolean {
+  return runtimeId === 'gemini-api'
+}
+
+function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx' | 'gemini' | 'other' {
   if (isOllamaModelRuntime(runtimeId)) {
     return 'ollama'
   }
@@ -769,6 +773,9 @@ function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx
   }
   if (isOmlxModelRuntime(runtimeId)) {
     return 'omlx'
+  }
+  if (isGeminiModelRuntime(runtimeId)) {
+    return 'gemini'
   }
   return 'other'
 }
@@ -785,6 +792,9 @@ function getEndpointForModelTarget(
   }
   if (isOmlxModelRuntime(target.runtimeId)) {
     return currentSettings.runtimes.omlx.endpoint
+  }
+  if (isGeminiModelRuntime(target.runtimeId)) {
+    return 'https://generativelanguage.googleapis.com/v1beta'
   }
   if (target.runtimeId === 'llamacpp-server') {
     return currentSettings.runtimes.llamacpp.endpoint
@@ -6987,6 +6997,9 @@ function runtimeFamilyFromRuntimeId(runtimeId: string): string {
   }
   if (runtimeId.startsWith('omlx')) {
     return 'omlx'
+  }
+  if (runtimeId === 'gemini-api') {
+    return 'gemini'
   }
   return runtimeId
 }

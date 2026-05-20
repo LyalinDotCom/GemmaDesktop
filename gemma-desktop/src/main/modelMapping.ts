@@ -11,6 +11,9 @@ import {
   createOmlxOpenAICompatibleAdapter,
 } from '@gemma-sdk/runtime-omlx'
 import {
+  createGeminiApiAdapter,
+} from '@gemma-sdk/runtime-gemini'
+import {
   createOllamaNativeAdapter,
   createOllamaOpenAICompatibleAdapter,
   createOllamaOpenAICompatibleModelDiscoveryProvider,
@@ -39,6 +42,9 @@ export interface RuntimeAdapterSettings {
     llamacpp: { endpoint: string }
     omlx: { endpoint: string; apiKey: string }
   }
+  integrations?: {
+    geminiApi: { apiKey: string }
+  }
 }
 
 export interface ModelMappingSettings {
@@ -60,7 +66,7 @@ export type MappedRuntimeSummary = {
 }
 
 export type MappedModelRuntimeConfig = {
-  provider: 'ollama' | 'lmstudio' | 'omlx'
+  provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
   baseParameters?: Record<string, unknown>
   baseParametersText?: string
   requestedOptions?: Record<string, number>
@@ -233,6 +239,9 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
     baseUrl: currentSettings.runtimes.omlx.endpoint,
     apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
   })
+  const geminiApi = createGeminiApiAdapter({
+    apiKey: currentSettings.integrations?.geminiApi.apiKey.trim() || undefined,
+  })
 
   return {
     inferenceAdapters: [
@@ -246,6 +255,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
       }),
       llamaCppServer,
       omlxOpenAI,
+      geminiApi,
     ],
     modelDiscoveryProviders: [
       createOllamaOpenAICompatibleModelDiscoveryProvider({
@@ -254,6 +264,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
       lmStudioOpenAI,
       llamaCppServer,
       omlxOpenAI,
+      geminiApi,
     ],
   }
 }
@@ -435,7 +446,13 @@ export function mapModels(
                   nominalContextLength,
                   loadedContextLength,
                 }
-              : undefined
+              : m.runtimeId === 'gemini-api'
+                ? {
+                    provider: 'gemini' as const,
+                    nominalContextLength,
+                    loadedContextLength,
+                  }
+                : undefined
       const optimizationTags = deriveOptimizationTags({
         runtimeId: m.runtimeId,
         modelId: m.id,

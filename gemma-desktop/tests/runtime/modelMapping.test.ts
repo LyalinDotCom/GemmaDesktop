@@ -27,6 +27,7 @@ describe('desktop runtime provider mapping', () => {
       'lmstudio-native',
       'llamacpp-server',
       'omlx-openai',
+      'gemini-api',
     ])
     expect(adapters.map((adapter) => adapter.identity.endpoint)).toEqual([
       'http://localhost:11435/v1',
@@ -35,6 +36,7 @@ describe('desktop runtime provider mapping', () => {
       'http://localhost:1235',
       'http://localhost:8081',
       'http://localhost:8001/v1',
+      'https://generativelanguage.googleapis.com/v1beta',
     ])
   })
 
@@ -48,12 +50,14 @@ describe('desktop runtime provider mapping', () => {
       'lmstudio-native',
       'llamacpp-server',
       'omlx-openai',
+      'gemini-api',
     ])
     expect(providers.modelDiscoveryProviders.map((provider) => provider.identity.id)).toEqual([
       'ollama-openai',
       'lmstudio-openai',
       'llamacpp-server',
       'omlx-openai',
+      'gemini-api',
     ])
   })
 })

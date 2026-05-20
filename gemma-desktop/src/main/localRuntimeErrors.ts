@@ -37,6 +37,9 @@ export function getLocalRuntimeDisplayName(runtimeId: string): string {
   if (runtimeId === 'omlx-openai') {
     return 'oMLX'
   }
+  if (runtimeId === 'gemini-api') {
+    return 'Gemini API'
+  }
   return 'The selected local runtime'
 }
 
@@ -52,6 +55,9 @@ function getLocalRuntimeRecoveryHint(runtimeId: string): string {
   }
   if (runtimeId === 'omlx-openai') {
     return 'Start oMLX, load the model there, then retry or switch this session to another runtime.'
+  }
+  if (runtimeId === 'gemini-api') {
+    return 'Check the Gemini API key in Settings, then retry or switch this session to another runtime.'
   }
   return 'Start that runtime, then retry or switch this session to another runtime.'
 }

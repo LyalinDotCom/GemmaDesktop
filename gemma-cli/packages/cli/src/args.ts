@@ -1,10 +1,12 @@
 import type { ChatMessage } from '@gemma-sdk/agent';
 
 export interface CliOptions {
-  provider: 'ollama' | 'lmstudio';
+  provider: 'ollama' | 'lmstudio' | 'gemini';
   model?: string;
   ollamaUrl?: string;
   lmStudioUrl?: string;
+  geminiApiKey?: string;
+  geminiApiBaseUrl?: string;
   prompt?: string;
   scenario?: string;
   skills: string[];
@@ -33,10 +35,12 @@ export interface CliOptions {
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
   const options: CliOptions = {
-    provider: env.GEMMA_PROVIDER === 'lmstudio' ? 'lmstudio' : 'ollama',
+    provider: readEnvProvider(env.GEMMA_PROVIDER),
     model: env.GEMMA_MODEL,
     ollamaUrl: env.OLLAMA_URL,
     lmStudioUrl: env.LMSTUDIO_URL ?? env.LM_STUDIO_URL,
+    geminiApiKey: env.GEMINI_API_KEY,
+    geminiApiBaseUrl: env.GEMINI_API_BASE_URL,
     skills: [],
     cwd: env.GEMMA_CWD ?? env.INIT_CWD ?? process.cwd(),
     contextTokens: 262_144,
@@ -72,6 +76,12 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       case '--lmstudio-url':
       case '--lm-studio-url':
         options.lmStudioUrl = readValue(argv, ++i, arg);
+        break;
+      case '--gemini-api-key':
+        options.geminiApiKey = readValue(argv, ++i, arg);
+        break;
+      case '--gemini-api-base-url':
+        options.geminiApiBaseUrl = readValue(argv, ++i, arg);
         break;
       case '--prompt':
       case '-p':
@@ -175,10 +185,17 @@ function readOptionalValue(argv: string[], index: number): string | undefined {
 }
 
 function readProvider(value: string): CliOptions['provider'] {
-  if (value === 'ollama' || value === 'lmstudio') {
+  if (value === 'ollama' || value === 'lmstudio' || value === 'gemini') {
     return value;
   }
-  throw new Error('--provider must be ollama or lmstudio.');
+  throw new Error('--provider must be ollama, lmstudio, or gemini.');
+}
+
+function readEnvProvider(value: string | undefined): CliOptions['provider'] {
+  if (value === 'lmstudio' || value === 'gemini') {
+    return value;
+  }
+  return 'ollama';
 }
 
 function readReasoningMode(value: string, flag: string): CliOptions['reasoningMode'] {

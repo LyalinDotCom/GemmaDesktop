@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { findScenario, listLmStudioModels, listOllamaModels, scenarios } from '@gemma-sdk/agent';
+import { findScenario, listGeminiModels, listLmStudioModels, listOllamaModels, scenarios } from '@gemma-sdk/agent';
 import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from '@gemma-sdk/agent';
 import { runAcp } from './acp.js';
 import { parseArgs } from './args.js';
@@ -201,10 +201,12 @@ Options:
   -p, --prompt <text>       Prompt to run.
   -s, --scenario <id>       Fixed harmless scenario to run.
   --skill <name>            Load a skill from ~/.gemmacli/skills or .gemma/skills. Repeatable.
-  --provider <name>         ollama or lmstudio. Defaults to ollama.
-  --model <name>            Model name. Ollama defaults to gemma4:26b; LM Studio defaults to gemma-3-27b-it.
+  --provider <name>         ollama, lmstudio, or gemini. Defaults to ollama.
+  --model <name>            Model name. Ollama defaults to gemma4:26b; Gemini defaults to gemini-3.5-flash.
   --ollama-url <url>        Ollama base URL. Defaults to http://127.0.0.1:11434.
   --lmstudio-url <url>      LM Studio base URL. Defaults to http://127.0.0.1:1234.
+  --gemini-api-key <key>    Gemini API key. Defaults to GEMINI_API_KEY.
+  --gemini-api-base-url <url> Gemini API base URL. Defaults to https://generativelanguage.googleapis.com/v1beta.
   --cwd <path>              Workspace root for tools. Defaults to current directory.
   --max-turns <n>           Maximum model/tool turns. Defaults to unlimited.
   --max-tokens <n>          Maximum model tokens per turn. Defaults to provider settings.
@@ -222,7 +224,7 @@ Options:
   --json-stream             Print JSONL progress events and final result for headless runs.
   --resume [session-id]     Resume latest session or an ID prefix from .gemmacli/sessions.
   --list-sessions           List resumable sessions for this workspace.
-  --list-models             List local models for the selected Ollama or LM Studio provider.
+  --list-models             List models for the selected Ollama, LM Studio, or Gemini provider.
   -v, --version             Print the Gemma CLI version.
   -h, --help                Show help.
 
@@ -253,7 +255,10 @@ async function listModels(options: ReturnType<typeof parseArgs>): Promise<string
   if (options.provider === 'ollama') {
     return listOllamaModels(options.ollamaUrl);
   }
-  throw new Error('--list-models is only available for ollama and lmstudio providers.');
+  if (options.provider === 'gemini') {
+    return listGeminiModels(options.geminiApiKey, options.geminiApiBaseUrl);
+  }
+  throw new Error('--list-models is only available for ollama, lmstudio, and gemini providers.');
 }
 
 function formatError(error: unknown): Record<string, unknown> {

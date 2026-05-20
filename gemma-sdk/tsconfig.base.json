@@ -23,6 +23,7 @@
       "@gemma-sdk/runtime-lmstudio": ["./packages/sdk-runtime-lmstudio/src/index.ts"],
       "@gemma-sdk/runtime-llamacpp": ["./packages/sdk-runtime-llamacpp/src/index.ts"],
       "@gemma-sdk/runtime-omlx": ["./packages/sdk-runtime-omlx/src/index.ts"],
+      "@gemma-sdk/runtime-gemini": ["./packages/sdk-runtime-gemini/src/index.ts"],
       "@gemma-sdk/node": ["./packages/sdk-node/src/index.ts"]
     }
   }

@@ -254,8 +254,8 @@ export interface EmbeddingResult {
 
 export interface RuntimeIdentity {
   id: string;
-  family: "ollama" | "lmstudio" | "llamacpp" | "omlx" | "unknown";
-  kind: "native" | "openai-compatible" | "server";
+  family: "ollama" | "lmstudio" | "llamacpp" | "omlx" | "gemini" | "unknown";
+  kind: "native" | "openai-compatible" | "server" | "hosted";
   displayName: string;
   endpoint: string;
 }

@@ -33,10 +33,12 @@ export function providerLabelForRuntime(
   if (runtimeId.startsWith('lmstudio')) return 'LM Studio'
   if (runtimeId.startsWith('llamacpp')) return 'llama.cpp'
   if (runtimeId.startsWith('omlx')) return 'oMLX'
+  if (runtimeId === 'gemini-api') return 'Gemini API'
   return runtimeName?.trim() || runtimeId
 }
 
 export function inferenceTypeLabelForRuntime(runtimeId: string): string {
+  if (runtimeId === 'gemini-api') return 'Hosted inference'
   if (runtimeId.endsWith('-openai')) return 'OpenAI-compatible inference'
   if (runtimeId.endsWith('-native')) return 'Provider-native inference'
   if (runtimeId.endsWith('-server')) return 'Server inference'
@@ -197,22 +199,28 @@ export function ModelTargetPicker({
 }) {
   const [open, setOpen] = useState(initialOpen)
   const [query, setQuery] = useState('')
+  const [activeProvider, setActiveProvider] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const selectedOption = groups
     .flatMap((group) => group.options)
     .find((option) => sameModelTarget(option, value))
   const normalizedQuery = query.trim().toLowerCase()
-  const visibleGroups = normalizedQuery
-    ? groups
-      .map((group) => ({
-        ...group,
-        options: group.options.filter((option) =>
-          optionSearchText(option).includes(normalizedQuery),
-        ),
-      }))
-      .filter((group) => group.options.length > 0)
+  const providerLabels = groups.map((group) => group.providerLabel)
+  const selectedProvider = activeProvider && providerLabels.includes(activeProvider)
+    ? activeProvider
+    : selectedOption?.providerLabel ?? providerLabels[0] ?? null
+  const providerGroups = selectedProvider
+    ? groups.filter((group) => group.providerLabel === selectedProvider)
     : groups
+  const visibleGroups = (normalizedQuery ? groups : providerGroups)
+    .map((group) => ({
+      ...group,
+      options: group.options.filter((option) =>
+        !normalizedQuery || optionSearchText(option).includes(normalizedQuery),
+      ),
+    }))
+    .filter((group) => group.options.length > 0)
 
   useEffect(() => {
     if (disabled) {
@@ -233,6 +241,7 @@ export function ModelTargetPicker({
   useEffect(() => {
     if (!open || disabled) {
       setQuery('')
+      setActiveProvider(null)
       return
     }
     requestAnimationFrame(() => inputRef.current?.focus())
@@ -282,6 +291,27 @@ export function ModelTargetPicker({
       {open && (
         <div className="absolute left-0 right-0 top-full z-40 mt-1.5 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
           <div className="border-b border-zinc-100 p-2 dark:border-zinc-800">
+            {providerLabels.length > 1 && (
+              <div className="mb-2 flex gap-1 overflow-x-auto pb-0.5">
+                {providerLabels.map((providerLabel) => {
+                  const selected = providerLabel === selectedProvider
+                  return (
+                    <button
+                      key={providerLabel}
+                      type="button"
+                      onClick={() => setActiveProvider(providerLabel)}
+                      className={`shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        selected
+                          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+                      }`}
+                    >
+                      {providerLabel}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-950">
               <Search size={13} className="shrink-0 text-zinc-400" />
               <input

@@ -52,6 +52,19 @@ describe('model profiles', () => {
     expect(shouldEnableProviderReasoning('google/gemma-4-26b-a4b', {}, false)).toBe(false);
   });
 
+  it('recognizes hosted Gemini profiles without using Gemma 4 prompt formatting', () => {
+    expect(modelProfileFor('gemini-3.5-flash')).toMatchObject({
+      family: 'gemini',
+      name: 'gemini_flash_profile',
+      promptFormat: 'generic',
+    });
+    expect(modelProfileFor('gemini-3.1-pro-preview-customtools')).toMatchObject({
+      family: 'gemini',
+      name: 'gemini_custom_tools_profile',
+      promptFormat: 'generic',
+    });
+  });
+
   it('builds Gemma 4 control-token prompts for LM Studio text requests', () => {
     const prompt = buildGemma4Prompt([
       { role: 'system', content: '<|think|>\nYou are helpful.' },

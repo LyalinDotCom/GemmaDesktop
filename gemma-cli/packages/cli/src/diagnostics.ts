@@ -39,6 +39,7 @@ export interface StoredSession {
   model?: string;
   ollamaUrl?: string;
   lmStudioUrl?: string;
+  geminiApiBaseUrl?: string;
   history: StoredSessionMessage[];
   runs: Array<{
     id: string;
@@ -588,6 +589,7 @@ function newSession(cwd: string, options: CliOptions): StoredSession {
     model: options.model,
     ollamaUrl: options.ollamaUrl,
     lmStudioUrl: options.lmStudioUrl,
+    geminiApiBaseUrl: options.geminiApiBaseUrl,
     history: [],
     runs: []
   };
@@ -655,6 +657,7 @@ function diagnosticOptions(options: CliOptions): Record<string, unknown> {
     model: options.model,
     ollamaUrl: options.ollamaUrl,
     lmStudioUrl: options.lmStudioUrl,
+    geminiApiBaseUrl: options.geminiApiBaseUrl,
     maxTurns: options.maxTurns,
     maxTokens: options.maxTokens,
     reasoningMode: options.reasoningMode,

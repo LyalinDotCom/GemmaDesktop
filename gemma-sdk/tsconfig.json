@@ -8,6 +8,7 @@
     { "path": "./packages/sdk-runtime-lmstudio" },
     { "path": "./packages/sdk-runtime-llamacpp" },
     { "path": "./packages/sdk-runtime-omlx" },
+    { "path": "./packages/sdk-runtime-gemini" },
     { "path": "./packages/sdk-node" }
   ]
 }

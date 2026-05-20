@@ -229,6 +229,7 @@ describe('SettingsModal layout', () => {
     const groups = groupModelTargetOptions([
       modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference', ['MLX']),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Provider-native inference'),
+      modelOption('gemini-3.5-flash', 'Gemini 3.5 Flash', 'gemini-api', 'Gemini API', 'Hosted inference'),
     ])
     const markup = renderToStaticMarkup(
       createElement(ModelTargetPicker, {
@@ -247,8 +248,10 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('role="listbox"')
     expect(markup).toContain('max-h-64 overflow-y-auto overscroll-contain')
     expect(markup).toContain('LM Studio')
-    expect(markup).toContain('Alpha 7B')
-    expect(markup).toContain('MLX optimized')
+    expect(markup).toContain('Gemini API')
+    expect(markup).toContain('Gemma 4 26B')
+    expect(markup).not.toContain('Alpha 7B')
+    expect(markup).not.toContain('MLX optimized')
   })
 
   it('does not expose reasoning-off controls on Ollama model cards', () => {
@@ -291,10 +294,11 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('Keep Ollama models warm')
   })
 
-  it('surfaces Gemini API settings for grounded web search', () => {
+  it('surfaces Gemini API settings for hosted models and grounded web search', () => {
     const markup = renderSettingsModal('integrations')
 
-    expect(markup).toContain('Gemini API (web search)')
+    expect(markup).toContain('Gemini API')
+    expect(markup).toContain('Hosted Gemini models')
     expect(markup).toContain('Gemini CLI (Ask Gemini)')
     expect(markup).toContain(ASK_GEMINI_DEFAULT_MODEL)
     expect(markup).toContain('aistudio.google.com/app/apikey')

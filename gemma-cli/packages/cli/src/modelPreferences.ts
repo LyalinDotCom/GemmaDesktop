@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { CliOptions } from './args.js';
 
-export type LocalModelProvider = Extract<CliOptions['provider'], 'ollama' | 'lmstudio'>;
+export type LocalModelProvider = CliOptions['provider'];
 
 export interface ModelPreference {
   version: 1;
@@ -54,7 +54,7 @@ export async function writeModelPreference(cwd: string, provider: LocalModelProv
 }
 
 export function isLocalProvider(provider: unknown): provider is LocalModelProvider {
-  return provider === 'ollama' || provider === 'lmstudio';
+  return provider === 'ollama' || provider === 'lmstudio' || provider === 'gemini';
 }
 
 function preferencePath(cwd: string): string {

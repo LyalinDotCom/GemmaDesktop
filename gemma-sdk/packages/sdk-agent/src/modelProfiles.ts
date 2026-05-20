@@ -1,7 +1,7 @@
 import { contentToText } from './content.js';
 import type { ChatMessage, GenerateOptions, Tool, ToolCall } from './types.js';
 
-export type ModelProfileFamily = 'gemma4' | 'generic';
+export type ModelProfileFamily = 'gemma4' | 'gemini' | 'generic';
 
 export interface ModelProfile {
   family: ModelProfileFamily;
@@ -29,12 +29,33 @@ export function modelProfileFor(model: string | undefined): ModelProfile {
     };
   }
 
+  if (isGeminiModelId(model)) {
+    return {
+      family: 'gemini',
+      name: geminiProfileName(model),
+      model,
+      promptFormat: 'generic',
+      isLargeGemmaReasoningModel: false
+    };
+  }
+
   return {
     family: 'generic',
     model,
     promptFormat: 'generic',
     isLargeGemmaReasoningModel: false
   };
+}
+
+function isGeminiModelId(model: string | undefined): boolean {
+  return Boolean(model && /^gemini[-_/]/i.test(model));
+}
+
+function geminiProfileName(model: string | undefined): string {
+  if (/customtools/i.test(model ?? '')) return 'gemini_custom_tools_profile';
+  if (/pro/i.test(model ?? '')) return 'gemini_pro_profile';
+  if (/flash/i.test(model ?? '')) return 'gemini_flash_profile';
+  return 'gemini_profile';
 }
 
 export function isGemma4ModelId(model: string | undefined): boolean {

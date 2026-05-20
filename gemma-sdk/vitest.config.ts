@@ -15,6 +15,7 @@ export default defineConfig({
       "@gemma-sdk/runtime-lmstudio": local("./packages/sdk-runtime-lmstudio/src/index.ts"),
       "@gemma-sdk/runtime-llamacpp": local("./packages/sdk-runtime-llamacpp/src/index.ts"),
       "@gemma-sdk/runtime-omlx": local("./packages/sdk-runtime-omlx/src/index.ts"),
+      "@gemma-sdk/runtime-gemini": local("./packages/sdk-runtime-gemini/src/index.ts"),
       "@gemma-sdk/node": local("./packages/sdk-node/src/index.ts"),
       "@gemma-sdk/agent": local("./packages/sdk-agent/src/index.ts")
     }

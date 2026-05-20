@@ -26,6 +26,25 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses Gemini provider and API settings', () => {
+    expect(parseArgs([
+      '--provider',
+      'gemini',
+      '--gemini-api-key',
+      'test-key',
+      '--gemini-api-base-url',
+      'http://gemini.local/v1beta'
+    ], {})).toMatchObject({
+      provider: 'gemini',
+      geminiApiKey: 'test-key',
+      geminiApiBaseUrl: 'http://gemini.local/v1beta'
+    });
+    expect(parseArgs([], { GEMMA_PROVIDER: 'gemini', GEMINI_API_KEY: 'env-key' })).toMatchObject({
+      provider: 'gemini',
+      geminiApiKey: 'env-key'
+    });
+  });
+
   it('parses reasoning mode', () => {
     expect(parseArgs(['--think', 'off'], {})).toMatchObject({
       reasoningMode: 'off'
@@ -56,8 +75,8 @@ describe('parseArgs', () => {
   });
 
   it('rejects unknown providers', () => {
-    expect(() => parseArgs(['--provider', 'other'], {})).toThrow('--provider must be ollama or lmstudio');
-    expect(() => parseArgs(['--provider', 'remote-ai'], {})).toThrow('--provider must be ollama or lmstudio');
+    expect(() => parseArgs(['--provider', 'other'], {})).toThrow('--provider must be ollama, lmstudio, or gemini');
+    expect(() => parseArgs(['--provider', 'remote-ai'], {})).toThrow('--provider must be ollama, lmstudio, or gemini');
   });
 
   it('parses LM Studio provider and endpoint', () => {

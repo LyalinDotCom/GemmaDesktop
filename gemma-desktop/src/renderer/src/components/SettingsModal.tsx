@@ -1467,10 +1467,10 @@ export function SettingsModal({
                   </SettingsSection>
 
                   <SettingsSection
-                    title="Gemini API (web search)"
+                    title="Gemini API"
                     description={
                       <>
-                        The <code>search_web</code> tool grounds Gemini search through the official Gemini API. Paste an API key from{' '}
+                        Hosted Gemini models and the <code>search_web</code> grounding tool use the official Gemini API. Paste an API key from{' '}
                         <a
                           href="https://aistudio.google.com/app/apikey"
                           target="_blank"
@@ -1479,7 +1479,7 @@ export function SettingsModal({
                         >
                           aistudio.google.com/app/apikey
                         </a>
-                        . Without a key, web search returns a clear failure to the agent.
+                        . Without a key, Gemini hosted models and grounded web search stay unavailable.
                       </>
                     }
                   >
@@ -1516,7 +1516,7 @@ export function SettingsModal({
                       label="Model"
                       hint={
                         <>
-                          Defaults to <code>gemini-3-flash-preview</code>. Any Gemini model that supports the <code>googleSearch</code> tool will work.
+                          Search grounding model. Defaults to <code>gemini-3-flash-preview</code>. Any Gemini model that supports the <code>googleSearch</code> tool will work.
                         </>
                       }
                     >
