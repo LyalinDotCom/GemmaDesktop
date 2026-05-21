@@ -36,6 +36,8 @@ describe('ProjectBrowserPanel', () => {
     expect(markup).toContain('Failed to fetch /api/health')
     expect(markup).toContain('aria-label="Back"')
     expect(markup).toContain('aria-label="Forward"')
+    expect(markup).toContain('aria-label="Open in default browser"')
+    expect(markup).toContain('Open current page in the default browser')
     expect(markup).toContain('aria-label="Reload"')
     expect(markup).toContain('aria-label="Project Browser URL"')
     expect(markup).toContain('value="http://localhost:3000/"')
@@ -69,6 +71,35 @@ describe('ProjectBrowserPanel', () => {
 
     expect(markup).toContain('aria-label="Stop loading"')
     expect(markup).not.toContain('aria-label="Reload"')
+  })
+
+  it('disables the external browser button when no page is loaded', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProjectBrowserPanel, {
+        state: {
+          open: true,
+          sessionId: null,
+          coBrowseActive: false,
+          controlOwner: 'agent',
+          controlReason: null,
+          mounted: false,
+          loading: false,
+          url: null,
+          canGoBack: false,
+          canGoForward: false,
+          title: 'Browser',
+          consoleErrorCount: 0,
+          recentConsoleErrors: [],
+          lastError: null,
+          lastUpdatedAt: 1,
+        },
+        onClose: () => {},
+      }),
+    )
+
+    expect(markup.match(/<button[^>]*aria-label="Open in default browser"[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+    expect(markup).toContain('No page loaded')
   })
 
   it('renders read-only CoBrowse while the agent owns browser control', () => {

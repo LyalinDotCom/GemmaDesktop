@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, ArrowRight, MousePointer2, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ExternalLink, MousePointer2, RefreshCw, X } from 'lucide-react'
 import { RightDockShell } from '@/components/RightDockShell'
 import type { ProjectBrowserPanelBounds, ProjectBrowserState } from '@/types'
 
@@ -149,6 +149,23 @@ export function ProjectBrowserPanel({
         : window.gemmaDesktopBridge.browser.reload(),
     )
   }
+  const handleOpenExternal = async () => {
+    const targetUrl = state.url?.trim()
+    if (!targetUrl) {
+      setNavigationError('No page is loaded.')
+      return
+    }
+
+    setNavigationError(null)
+    try {
+      const opened = await window.gemmaDesktopBridge.links.openTarget(targetUrl)
+      if (!opened) {
+        setNavigationError('This page cannot be opened in the system browser.')
+      }
+    } catch (error) {
+      setNavigationError(formatNavigationError(error))
+    }
+  }
   const controlLabel = userHasControl ? 'Release control' : 'Take over'
   const controlTitle = userHasControl
     ? 'Release browser control back to the agent for your next request.'
@@ -281,6 +298,18 @@ export function ProjectBrowserPanel({
               }}
               onFocus={() => setUrlFocused(true)}
             />
+            <button
+              type="button"
+              aria-label="Open in default browser"
+              title={state.url ? 'Open current page in the default browser' : 'No page loaded'}
+              className={browserControlClass}
+              disabled={!state.url}
+              onClick={() => {
+                void handleOpenExternal()
+              }}
+            >
+              <ExternalLink aria-hidden="true" size={13} />
+            </button>
             <button
               type="button"
               aria-label={state.loading ? 'Stop loading' : 'Reload'}
