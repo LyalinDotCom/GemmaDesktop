@@ -152,6 +152,57 @@ function createFailingWriteFileTool(): RegisteredTool<{ path: string; content: s
 }
 
 describe("final assistant message after tool use", () => {
+  it("preserves provider response metadata while continuing after tools", async () => {
+    const providerMetadata = {
+      geminiApi: {
+        historyParts: [{
+          functionCall: {
+            name: "write_file",
+            args: {
+              path: "package.json",
+              content: "{\"name\":\"demo\"}",
+            },
+          },
+          thoughtSignature: "signature-from-provider",
+        }],
+      },
+    };
+    const adapter = new MockAdapter([
+      {
+        ...createToolCallResponse({
+          text: "",
+          toolName: "write_file",
+          toolInput: {
+            path: "package.json",
+            content: "{\"name\":\"demo\"}",
+          },
+        }),
+        metadata: providerMetadata,
+      },
+      createTextResponse("I created package.json."),
+    ]);
+
+    const registry = new ToolRegistry();
+    registry.register(createWriteFileTool());
+
+    const engine = new SessionEngine({
+      adapter,
+      model: "mock-model",
+      mode: "build",
+      workingDirectory: process.cwd(),
+      tools: new ToolRuntime({ registry }),
+      maxSteps: 2,
+    });
+
+    await engine.run("Create a package file.");
+
+    const secondRequest = adapter.requests[1];
+    const replayedAssistantMessage = secondRequest?.messages.find((message) =>
+      message.role === "assistant" && message.toolCalls?.length,
+    );
+    expect(replayedAssistantMessage?.metadata).toEqual(providerMetadata);
+  });
+
   it("continues the turn until the assistant provides user-facing text after tools", async () => {
     const adapter = new MockAdapter([
       createToolCallResponse({

@@ -67,11 +67,16 @@ interface GeminiContent {
   parts?: GeminiPart[];
 }
 
-type GeminiPart =
+type GeminiPartBase =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
   | { functionCall: { name?: string; args?: unknown } }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
+
+type GeminiPart = GeminiPartBase & {
+  thought?: boolean;
+  thoughtSignature?: string;
+};
 
 const DEFAULT_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_RUNTIME_ID = "gemini-api";
@@ -277,6 +282,88 @@ function sanitizeGeminiSchema(value: unknown): unknown {
   return target;
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function cloneGeminiHistoryPart(part: GeminiPart): GeminiPart | undefined {
+  const thoughtSignature = typeof part.thoughtSignature === "string"
+    ? part.thoughtSignature
+    : undefined;
+  const thought = typeof part.thought === "boolean" ? part.thought : undefined;
+  const extras = {
+    ...(thoughtSignature ? { thoughtSignature } : {}),
+    ...(typeof thought === "boolean" ? { thought } : {}),
+  };
+
+  if ("text" in part && typeof part.text === "string") {
+    return { text: part.text, ...extras };
+  }
+
+  if ("functionCall" in part) {
+    return {
+      functionCall: {
+        name: part.functionCall.name,
+        args: part.functionCall.args,
+      },
+      ...extras,
+    };
+  }
+
+  return undefined;
+}
+
+function coerceGeminiHistoryPart(value: unknown): GeminiPart | undefined {
+  const record = objectRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const thoughtSignature = typeof record.thoughtSignature === "string"
+    ? record.thoughtSignature
+    : undefined;
+  const thought = typeof record.thought === "boolean" ? record.thought : undefined;
+  const extras = {
+    ...(thoughtSignature ? { thoughtSignature } : {}),
+    ...(typeof thought === "boolean" ? { thought } : {}),
+  };
+
+  if (typeof record.text === "string") {
+    return { text: record.text, ...extras };
+  }
+
+  const functionCall = objectRecord(record.functionCall);
+  if (functionCall) {
+    const name = typeof functionCall.name === "string"
+      ? functionCall.name
+      : undefined;
+    return {
+      functionCall: {
+        name,
+        args: functionCall.args,
+      },
+      ...extras,
+    };
+  }
+
+  return undefined;
+}
+
+function geminiHistoryPartsFromMetadata(metadata: Record<string, unknown> | undefined): GeminiPart[] | undefined {
+  const geminiApi = objectRecord(metadata?.geminiApi);
+  const rawParts = geminiApi?.historyParts;
+  if (!Array.isArray(rawParts)) {
+    return undefined;
+  }
+
+  const parts = rawParts
+    .map(coerceGeminiHistoryPart)
+    .filter((part): part is GeminiPart => Boolean(part));
+  return parts.length > 0 ? parts : undefined;
+}
+
 function firstSystemInstruction(messages: SessionMessage[]): { systemInstruction?: { parts: Array<{ text: string }> }; rest: SessionMessage[] } {
   const systemParts: string[] = [];
   const rest: SessionMessage[] = [];
@@ -326,6 +413,15 @@ async function messageToGeminiContent(message: SessionMessage): Promise<GeminiCo
         },
       }],
     };
+  }
+  if (message.role === "assistant") {
+    const historyParts = geminiHistoryPartsFromMetadata(message.metadata);
+    if (historyParts) {
+      return {
+        role: "model",
+        parts: historyParts,
+      };
+    }
   }
   if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
     return {
@@ -386,6 +482,9 @@ function parseUsage(raw: GeminiGenerateResponse["usageMetadata"]): TokenUsage | 
 function parseResponse(response: GeminiGenerateResponse): ChatResponse {
   const candidate = response.candidates?.[0];
   const parts = candidate?.content?.parts ?? [];
+  const historyParts = parts
+    .map(cloneGeminiHistoryPart)
+    .filter((part): part is GeminiPart => Boolean(part));
   const textParts: Array<Extract<ContentPart, { type: "text" }>> = [];
   const toolCalls: ModelToolCall[] = [];
   for (const part of parts) {
@@ -412,14 +511,25 @@ function parseResponse(response: GeminiGenerateResponse): ChatResponse {
     raw: response,
     metadata: {
       modelVersion: response.modelVersion,
+      geminiApi: historyParts.length > 0
+        ? { historyParts }
+        : undefined,
     },
   };
 }
 
 function decorateGeminiError(error: unknown): Error {
   if (error instanceof Error) {
-    if (/400|401|403/.test(error.message)) {
+    if (/401|403/.test(error.message)) {
       return new Error(`Gemini API request failed. Check the configured API key and model. ${error.message}`);
+    }
+    if (/400/.test(error.message)) {
+      const requestHint = /thought_?signature|thoughtSignature/i.test(error.message)
+        ? "Gemini API rejected the tool-call history because a thought signature was missing."
+        : /additionalProperties/i.test(error.message)
+          ? "Gemini API rejected the tool schema payload."
+          : "Gemini API rejected the request payload.";
+      return new Error(`${requestHint} ${error.message}`);
     }
     return error;
   }

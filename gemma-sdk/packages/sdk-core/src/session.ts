@@ -1875,6 +1875,9 @@ export class SessionEngine {
       {
         toolCalls: response.toolCalls.length > 0 ? response.toolCalls : undefined,
         reasoning: toolLoopReasoning,
+        metadata: response.metadata
+          ? structuredClone(response.metadata)
+          : undefined,
       },
     );
     this.history.push(message);

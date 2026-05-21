@@ -194,4 +194,145 @@ describe("Gemini API runtime adapter", () => {
       }],
     }]);
   });
+
+  it("replays Gemini thought signatures on function call history", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const server = await createMockServer((request) => {
+      if (request.path.startsWith("/models/gemini-3.5-flash:generateContent")) {
+        requestBodies.push(request.bodyJson as Record<string, unknown>);
+        if (requestBodies.length === 1) {
+          return {
+            json: {
+              candidates: [{
+                content: {
+                  role: "model",
+                  parts: [{
+                    functionCall: {
+                      name: "read_file",
+                      args: { path: "README.md" },
+                    },
+                    thoughtSignature: "signature-from-gemini",
+                  }],
+                },
+                finishReason: "STOP",
+              }],
+            },
+          };
+        }
+
+        return {
+          json: {
+            candidates: [{
+              content: { role: "model", parts: [{ text: "done" }] },
+              finishReason: "STOP",
+            }],
+          },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createGeminiApiAdapter({
+      apiKey: "test-key",
+      baseUrl: server.url,
+    });
+    const tools = [{
+      name: "read_file",
+      description: "Read a workspace file.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+    }];
+
+    const first = await adapter.generate({
+      model: "gemini-3.5-flash",
+      messages: [
+        { id: "u1", role: "user", content: [{ type: "text", text: "Read README.md" }], createdAt: "now" },
+      ],
+      tools,
+    });
+    expect(first.toolCalls).toHaveLength(1);
+
+    await adapter.generate({
+      model: "gemini-3.5-flash",
+      messages: [
+        { id: "u1", role: "user", content: [{ type: "text", text: "Read README.md" }], createdAt: "now" },
+        {
+          id: "a1",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          createdAt: "now",
+          toolCalls: first.toolCalls,
+          metadata: first.metadata,
+        },
+        {
+          id: "t1",
+          role: "tool",
+          name: "read_file",
+          toolCallId: first.toolCalls[0]?.id,
+          content: [{ type: "text", text: "README contents" }],
+          createdAt: "now",
+        },
+      ],
+      tools,
+    });
+
+    expect(requestBodies[1]?.contents).toEqual([
+      { role: "user", parts: [{ text: "Read README.md" }] },
+      {
+        role: "model",
+        parts: [{
+          functionCall: {
+            name: "read_file",
+            args: { path: "README.md" },
+          },
+          thoughtSignature: "signature-from-gemini",
+        }],
+      },
+      {
+        role: "user",
+        parts: [{
+          functionResponse: {
+            name: "read_file",
+            response: {
+              content: "README contents",
+              toolCallId: first.toolCalls[0]?.id,
+            },
+          },
+        }],
+      },
+    ]);
+  });
+
+  it("does not blame API keys for Gemini request-shape 400 errors", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path.startsWith("/models/gemini-3.5-flash:generateContent")) {
+        return {
+          status: 400,
+          json: {
+            error: {
+              code: 400,
+              message: "Function call is missing a thought_signature in functionCall parts.",
+              status: "INVALID_ARGUMENT",
+            },
+          },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    await expect(createGeminiApiAdapter({
+      apiKey: "test-key",
+      baseUrl: server.url,
+    }).generate({
+      model: "gemini-3.5-flash",
+      messages: [
+        { id: "u1", role: "user", content: [{ type: "text", text: "Hello" }], createdAt: "now" },
+      ],
+    })).rejects.toThrow(/tool-call history/);
+  });
 });

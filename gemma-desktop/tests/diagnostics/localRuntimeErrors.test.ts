@@ -69,4 +69,15 @@ describe('local runtime errors', () => {
       }))),
     ).toBe(true)
   })
+
+  it('recognizes model-not-found unload misses with dotted model ids as benign', () => {
+    expect(
+      isModelNotLoadedError(new Error(JSON.stringify({
+        error: {
+          type: 'model_not_found',
+          message: "Model with instance identifier 'minimax-m2.7-ram-90gb-mlx' is not loaded.",
+        },
+      }, null, 2))),
+    ).toBe(true)
+  })
 })

@@ -951,6 +951,16 @@ function clearPrimaryModelAvailabilityIssues(): void {
   optionalPrimaryWarmupFailureReports.clear()
 }
 
+function clearPrimaryModelAvailabilityIssuesForRuntime(runtimeId: string): void {
+  const normalizedRuntimeId = normalizeProviderRuntimeId(runtimeId)
+  for (const issue of primaryModelAvailabilityIssues.values()) {
+    if (normalizeProviderRuntimeId(issue.runtimeId) === normalizedRuntimeId) {
+      primaryModelAvailabilityIssues.delete(modelTargetKey(issue))
+      optionalPrimaryWarmupFailureReports.delete(modelTargetKey(issue))
+    }
+  }
+}
+
 function isPrimaryModelUnavailableError(error: unknown): error is PrimaryModelUnavailableError {
   return error instanceof PrimaryModelUnavailableError
 }
@@ -2272,13 +2282,28 @@ async function loadModelSelectionUnlocked(
 
   for (const entry of targetEntries) {
     if (!supportsExplicitModelLoad(entry.target)) {
-      errors.push(createLifecycleError({
-        action: 'load',
-        modelId: entry.target.modelId,
-        runtimeId: entry.target.runtimeId,
-        roles: entry.roles,
-        error: `${getLocalRuntimeDisplayName(entry.target.runtimeId)} does not expose an explicit load operation for ${entry.target.modelId}.`,
-      }))
+      try {
+        await loadModelForRuntime(entry.target)
+        if (entry.roles.includes('main')) {
+          activePrimaryModelTarget = entry.target
+        }
+        loaded.push(createLifecycleStepResult({
+          action: 'load',
+          ok: true,
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          message: `${getLocalRuntimeDisplayName(entry.target.runtimeId)} does not require explicit model load.`,
+        }))
+      } catch (error) {
+        errors.push(createLifecycleError({
+          action: 'load',
+          modelId: entry.target.modelId,
+          runtimeId: entry.target.runtimeId,
+          roles: entry.roles,
+          error: getErrorDisplayMessage(error),
+        }))
+      }
       continue
     }
 
@@ -2626,6 +2651,10 @@ async function ensurePrimaryModelTargetLoadedUnlocked(
 
   primaryModelLoadTarget = { ...target }
   primaryModelLoadPromise = (async () => {
+    if (!supportsExplicitModelLoad(target)) {
+      return await loadModelForRuntime(target)
+    }
+
     if (activePrimaryModelTarget && !primaryTargetsMatch(activePrimaryModelTarget, target)) {
       const previousTarget = activePrimaryModelTarget
       await unloadModelForRuntime(previousTarget)
@@ -3354,6 +3383,21 @@ async function loadModelForRuntime(
     status: 'started',
     target,
   })
+
+  if (isGeminiModelRuntime(target.runtimeId)) {
+    if (!currentSettings.integrations.geminiApi.apiKey.trim()) {
+      throw new Error(
+        'Gemini API key is not configured. Open Settings > Gemini Hosted and paste the shared Gemini API key used for hosted models and grounded search.',
+      )
+    }
+    appendModelLifecycleLog({
+      action: 'load',
+      status: 'skipped',
+      target,
+      message: 'Hosted Gemini models do not require explicit model load.',
+    })
+    return target
+  }
 
   if (target.runtimeId === 'ollama-native' || target.runtimeId === 'ollama-openai') {
     const profile = resolveManagedOllamaLoadProfile(currentSettings, target)
@@ -15163,6 +15207,9 @@ export function registerIpcHandlers(): void {
           geminiApiKey: nextSettings.integrations.geminiApi.apiKey,
           geminiApiModel: nextSettings.integrations.geminiApi.model,
         })
+        gemmaDesktop?.updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))
+        clearPrimaryModelAvailabilityIssuesForRuntime('gemini-api')
+        broadcastEnvironmentModelsChanged()
       }
       if (Object.prototype.hasOwnProperty.call(settingsPatch, 'runtimes')) {
         gemmaDesktop?.updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))

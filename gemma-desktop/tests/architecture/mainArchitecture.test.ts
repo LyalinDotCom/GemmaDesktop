@@ -181,4 +181,16 @@ describe('main process architecture', () => {
     expect(ipcSource).not.toMatch(/interface\s+AppSessionConfig\b/)
     expect(ipcSource).not.toContain("APP_SESSION_METADATA_KEY = 'gemmaDesktopApp'")
   })
+
+  it('refreshes hosted Gemini runtime providers when Gemini API settings change', () => {
+    const ipcSource = readSource(ipcSourcePath)
+    const integrationsSettingsBlock = ipcSource.match(
+      /hasOwnProperty\.call\(settingsPatch, 'integrations'\)[\s\S]*?hasOwnProperty\.call\(settingsPatch, 'runtimes'\)/,
+    )?.[0]
+
+    expect(integrationsSettingsBlock).toContain('updateIntegrations')
+    expect(integrationsSettingsBlock).toContain('updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))')
+    expect(integrationsSettingsBlock).toContain("clearPrimaryModelAvailabilityIssuesForRuntime('gemini-api')")
+    expect(integrationsSettingsBlock).toContain('broadcastEnvironmentModelsChanged()')
+  })
 })

@@ -82,6 +82,7 @@ export type SettingsTab =
   | 'lmstudio'
   | 'llamacpp'
   | 'omlx'
+  | 'gemini'
   | 'notifications'
   | 'context'
   | 'speech'
@@ -98,6 +99,7 @@ const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['lmstudio', 'LM Studio'],
   ['llamacpp', 'llama.cpp'],
   ['omlx', 'oMLX'],
+  ['gemini', 'Gemini Hosted'],
   ['notifications', 'Notifications'],
   ['context', 'Context'],
   ['speech', 'Speech'],
@@ -1431,6 +1433,78 @@ export function SettingsModal({
                 </SettingsSection>
               )}
 
+              {activeTab === 'gemini' && (
+                <SettingsSection
+                  title="Gemini Hosted API"
+                  description={
+                    <>
+                      Hosted Gemini inference and the <code>search_web</code> grounding tool share this Gemini API key. Paste an API key from{' '}
+                      <a
+                        href="https://aistudio.google.com/app/apikey"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 underline hover:text-indigo-700 dark:text-indigo-400"
+                      >
+                        aistudio.google.com/app/apikey
+                      </a>
+                      . Without a key, Gemini hosted models and grounded web search stay unavailable.
+                    </>
+                  }
+                >
+                  <SettingsField label="API key">
+                    <div className="relative">
+                      <TextInput
+                        type={showGeminiApiKey ? 'text' : 'password'}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder="AIza..."
+                        value={local.integrations.geminiApi.apiKey}
+                        onChange={(e) => {
+                          const integrations = {
+                            ...local.integrations,
+                            geminiApi: { ...local.integrations.geminiApi, apiKey: e.target.value },
+                          }
+                          setLocal({ ...local, integrations })
+                          commitUpdate({ integrations })
+                        }}
+                        className="pr-9 font-mono text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowGeminiApiKey((prev) => !prev)}
+                        title={showGeminiApiKey ? 'Hide API key' : 'Show API key'}
+                        className="absolute inset-y-0 right-1.5 flex items-center rounded-md px-1.5 text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                      >
+                        {showGeminiApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </SettingsField>
+
+                  <SettingsField
+                    label="Grounded search model"
+                    hint={
+                      <>
+                        Defaults to <code>gemini-3-flash-preview</code>. Hosted chat models are selected from the model picker after model discovery refreshes.
+                      </>
+                    }
+                  >
+                    <TextInput
+                      type="text"
+                      value={local.integrations.geminiApi.model}
+                      onChange={(e) => {
+                        const integrations = {
+                          ...local.integrations,
+                          geminiApi: { ...local.integrations.geminiApi, model: e.target.value },
+                        }
+                        setLocal({ ...local, integrations })
+                        commitUpdate({ integrations })
+                      }}
+                      className="font-mono text-xs"
+                    />
+                  </SettingsField>
+                </SettingsSection>
+              )}
+
               {activeTab === 'integrations' && (
                 <>
                   <SettingsSection
@@ -1457,76 +1531,6 @@ export function SettingsModal({
                           const integrations = {
                             ...local.integrations,
                             geminiCli: { ...local.integrations.geminiCli, model: e.target.value },
-                          }
-                          setLocal({ ...local, integrations })
-                          commitUpdate({ integrations })
-                        }}
-                        className="font-mono text-xs"
-                      />
-                    </SettingsField>
-                  </SettingsSection>
-
-                  <SettingsSection
-                    title="Gemini API"
-                    description={
-                      <>
-                        Hosted Gemini models and the <code>search_web</code> grounding tool use the official Gemini API. Paste an API key from{' '}
-                        <a
-                          href="https://aistudio.google.com/app/apikey"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-600 underline hover:text-indigo-700 dark:text-indigo-400"
-                        >
-                          aistudio.google.com/app/apikey
-                        </a>
-                        . Without a key, Gemini hosted models and grounded web search stay unavailable.
-                      </>
-                    }
-                  >
-                    <SettingsField label="API key">
-                      <div className="relative">
-                        <TextInput
-                          type={showGeminiApiKey ? 'text' : 'password'}
-                          autoComplete="off"
-                          spellCheck={false}
-                          placeholder="AIza..."
-                          value={local.integrations.geminiApi.apiKey}
-                          onChange={(e) => {
-                            const integrations = {
-                              ...local.integrations,
-                              geminiApi: { ...local.integrations.geminiApi, apiKey: e.target.value },
-                            }
-                            setLocal({ ...local, integrations })
-                            commitUpdate({ integrations })
-                          }}
-                          className="pr-9 font-mono text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowGeminiApiKey((prev) => !prev)}
-                          title={showGeminiApiKey ? 'Hide API key' : 'Show API key'}
-                          className="absolute inset-y-0 right-1.5 flex items-center rounded-md px-1.5 text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-                        >
-                          {showGeminiApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </button>
-                      </div>
-                    </SettingsField>
-
-                    <SettingsField
-                      label="Model"
-                      hint={
-                        <>
-                          Search grounding model. Defaults to <code>gemini-3-flash-preview</code>. Any Gemini model that supports the <code>googleSearch</code> tool will work.
-                        </>
-                      }
-                    >
-                      <TextInput
-                        type="text"
-                        value={local.integrations.geminiApi.model}
-                        onChange={(e) => {
-                          const integrations = {
-                            ...local.integrations,
-                            geminiApi: { ...local.integrations.geminiApi, model: e.target.value },
                           }
                           setLocal({ ...local, integrations })
                           commitUpdate({ integrations })

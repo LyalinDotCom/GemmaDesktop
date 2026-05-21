@@ -294,14 +294,20 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('Keep Ollama models warm')
   })
 
-  it('surfaces Gemini API settings for hosted models and grounded web search', () => {
-    const markup = renderSettingsModal('integrations')
+  it('surfaces Gemini Hosted settings for hosted models and grounded web search', () => {
+    const markup = renderSettingsModal('gemini')
 
-    expect(markup).toContain('Gemini API')
-    expect(markup).toContain('Hosted Gemini models')
-    expect(markup).toContain('Gemini CLI (Ask Gemini)')
-    expect(markup).toContain(ASK_GEMINI_DEFAULT_MODEL)
+    expect(markup).toContain('Gemini Hosted API')
+    expect(markup).toContain('Hosted Gemini inference')
     expect(markup).toContain('aistudio.google.com/app/apikey')
     expect(markup).toContain('gemini-3-flash-preview')
+  })
+
+  it('keeps Gemini CLI settings on the Integrations tab', () => {
+    const markup = renderSettingsModal('integrations')
+
+    expect(markup).toContain('Gemini CLI (Ask Gemini)')
+    expect(markup).toContain(ASK_GEMINI_DEFAULT_MODEL)
+    expect(markup).not.toContain('Gemini Hosted API')
   })
 })
