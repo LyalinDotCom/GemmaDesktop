@@ -8,6 +8,7 @@ import {
   GripVertical,
   Loader2,
   PanelLeftClose,
+  PanelRightOpen,
   Pencil,
   Pin,
   PinOff,
@@ -118,6 +119,7 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void
   onRenameSession: (id: string, title: string, conversationIcon: string | null) => void
   onCloseProcess: (sessionId: string, terminalId: string) => void
+  onOpenProcessPreview?: (sessionId: string, previewUrl: string) => void
   onPinSession: (id: string) => void
   onUnpinSession: (id: string) => void
   onFlagFollowUp: (id: string) => void
@@ -266,6 +268,7 @@ export function Sidebar({
   onDeleteSession,
   onRenameSession,
   onCloseProcess,
+  onOpenProcessPreview,
   onPinSession,
   onUnpinSession,
   onFlagFollowUp,
@@ -1306,18 +1309,34 @@ export function Sidebar({
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onCloseProcess(session.id, process.terminalId)
-                  }}
-                  className="rounded p-0.5 text-emerald-700/80 transition-colors hover:bg-emerald-100 hover:text-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900/50 dark:hover:text-white"
-                  aria-label={`Terminate process ${process.command}`}
-                  title="Terminate process"
-                >
-                  <X size={11} />
-                </button>
+                <div className="flex flex-shrink-0 items-center gap-0.5">
+                  {process.previewUrl && onOpenProcessPreview ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onOpenProcessPreview(session.id, process.previewUrl ?? '')
+                      }}
+                      className="rounded p-0.5 text-emerald-700/80 transition-colors hover:bg-emerald-100 hover:text-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900/50 dark:hover:text-white"
+                      aria-label={`Open Project Browser for process ${process.command}`}
+                      title={`Open Project Browser at ${process.previewUrl}`}
+                    >
+                      <PanelRightOpen size={11} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onCloseProcess(session.id, process.terminalId)
+                    }}
+                    className="rounded p-0.5 text-emerald-700/80 transition-colors hover:bg-emerald-100 hover:text-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900/50 dark:hover:text-white"
+                    aria-label={`Terminate process ${process.command}`}
+                    title="Terminate process"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

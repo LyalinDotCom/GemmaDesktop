@@ -1550,6 +1550,37 @@ export function App() {
     })
   }, [])
 
+  const handleOpenProcessPreview = useCallback((sessionId: string, previewUrl: string) => {
+    const targetUrl = previewUrl.trim()
+    if (!targetUrl) {
+      return
+    }
+
+    if (state.currentView !== 'chat') {
+      dispatch({ type: 'SET_VIEW', view: 'chat' })
+    }
+    setAssistantHomeVisible(false)
+    setCoBrowseActive(false)
+    setCoBrowseControlBusy(false)
+    setCoBrowseControlError(null)
+    setRightDockView('browser')
+
+    const shouldSelectSession = state.activeSessionId !== sessionId
+
+    void window.gemmaDesktopBridge.browser.navigate(targetUrl, {
+      sessionId,
+      coBrowseActive: false,
+    })
+      .then(() => {
+        if (shouldSelectSession) {
+          void selectSession(sessionId)
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to open background process in Project Browser:', error)
+      })
+  }, [dispatch, selectSession, state.activeSessionId, state.currentView])
+
   const projectBrowserPanel = (
     <ProjectBrowserPanel
       state={projectBrowserState}
@@ -2464,6 +2495,7 @@ export function App() {
           onDeleteSession={deleteSession}
           onRenameSession={renameSession}
           onCloseProcess={handleCloseBackgroundProcess}
+          onOpenProcessPreview={handleOpenProcessPreview}
           onPinSession={(sessionId) => {
             void pinSession(sessionId)
           }}

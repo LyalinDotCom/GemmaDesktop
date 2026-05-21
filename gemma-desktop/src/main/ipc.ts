@@ -398,6 +398,7 @@ import {
   type ProjectBrowserState,
 } from '../shared/projectBrowser'
 import {
+  extractBackgroundProcessPreviewUrl,
   type RunningBackgroundProcessSummary,
   BACKGROUND_PROCESS_TOOL_NAMES,
 } from '../shared/backgroundProcesses'
@@ -1418,12 +1419,14 @@ function listRunningBackgroundProcesses(
     }
 
     const transcript = liveState?.transcript ?? block.transcript
+    const previewUrl = extractBackgroundProcessPreviewUrl(transcript)
     return [{
       terminalId: block.terminalId,
       command: block.command,
       workingDirectory: block.workingDirectory,
       startedAt: liveState?.startedAt ?? block.startedAt,
       previewText: summarizeShellTranscript(transcript),
+      ...(previewUrl ? { previewUrl } : {}),
     }]
   })
 }
