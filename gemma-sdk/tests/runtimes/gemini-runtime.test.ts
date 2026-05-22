@@ -201,6 +201,56 @@ describe("Gemini API runtime adapter", () => {
     }]);
   });
 
+  it("serializes image parts as Gemini inline data", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path.startsWith("/models/gemini-3.5-flash:generateContent")) {
+        requestBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            candidates: [{
+              content: { parts: [{ text: "I can see it." }] },
+              finishReason: "STOP",
+            }],
+          },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    await createGeminiApiAdapter({
+      apiKey: "test-key",
+      baseUrl: server.url,
+    }).generate({
+      model: "gemini-3.5-flash",
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image." },
+            { type: "image_url", url: "data:image/png;base64,aGVsbG8=", mediaType: "image/png" },
+          ],
+          createdAt: "now",
+        },
+      ],
+    });
+
+    expect(requestBody?.contents).toEqual([{
+      role: "user",
+      parts: [
+        { text: "Describe this image." },
+        {
+          inlineData: {
+            mimeType: "image/png",
+            data: "aGVsbG8=",
+          },
+        },
+      ],
+    }]);
+  });
+
   it("forwards Gemini generation settings and keeps thought summaries out of visible text", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const server = await createMockServer((request) => {

@@ -32,6 +32,29 @@ describe('content attachment capabilities', () => {
     ], capabilities, 'qwen2.5-coder:32b', 'ollama')).toThrow('not configured for image input');
   });
 
+  it('honors Gemini model metadata for image, audio, video, and PDF support', () => {
+    expect(inferAttachmentCapabilities({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      explicitImage: true,
+      explicitAudio: true,
+      explicitPdf: true
+    })).toMatchObject({
+      image: true,
+      audio: true,
+      video: true,
+      pdf: true,
+      source: 'provider-metadata'
+    });
+
+    const withoutMetadata = inferAttachmentCapabilities({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash'
+    });
+    expect(withoutMetadata.image).toBe(false);
+    expect(withoutMetadata.pdf).toBe(false);
+  });
+
   it('extracts supported media paths from prompts', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-content-'));
     await writeFile(join(cwd, 'sample.png'), 'not-a-real-image', 'utf8');

@@ -39,10 +39,12 @@ import {
 import { extractMemoryPayload } from '@/lib/memoryInput'
 import { shouldOfferComposerHistoryNavigation } from '@/lib/composerHistoryNavigation'
 import {
+  clipboardDataToImageFiles,
   dataTransferMayContainFiles,
   detectAttachmentKind,
   filesToAttachments,
   resolveAttachmentPreviewUrl,
+  type InputAttachmentFile,
 } from '@/lib/inputAttachments'
 import {
   clampPdfPageRange,
@@ -257,6 +259,10 @@ function buildAttachmentBudgetMessage(issues: string[]): string {
   return issues.join(' ')
 }
 
+function buildImageInputUnsupportedMessage(modelId: string, action: string): string {
+  return `Primary model "${modelId}" is not marked as supporting native image input, so Gemma Desktop cannot ${action} for this session.`
+}
+
 function attachmentToBudgetItem(attachment: FileAttachment) {
   return {
     kind: attachment.kind,
@@ -438,9 +444,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     [models, selectedModelId, selectedRuntimeId],
   )
   const selectedAttachmentSupport = selectedModel?.attachmentSupport
+  const selectedModelLabel = selectedModel?.id ?? selectedModelId
   const selectedContextLength = selectedModel?.contextLength ?? 32_768
   const pdfWorkerModelId = selectedAttachmentSupport?.image
-    ? (selectedModel?.id ?? selectedModelId)
+    ? selectedModelLabel
     : undefined
   const isResearchConversation = conversationKind === 'research'
   const floatingPresentation = presentation === 'floating'
@@ -489,6 +496,21 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     || submitLocked
     || speechLocked
     || isShellMode
+  const attachmentLockedReason = isResearchConversation
+    ? 'Research conversations currently support text prompts only.'
+    : isShellMode
+      ? 'Shell mode is active. Remove the leading ! if you want to attach files instead.'
+      : sessionBusy
+        ? isCompacting
+          ? 'Wait for compaction to finish before attaching files'
+          : 'Wait for this turn to finish before attaching files'
+        : conversationRunDisabledReason
+          ? conversationRunDisabledReason
+          : speechLocked
+            ? 'Finish speech input before attaching files'
+            : submitLocked
+              ? 'Wait for the current send to finish before attaching files'
+              : null
   const showSpeechControl = speechStatus?.enabled ?? false
   const conversationModeControlDisabled =
     modeChangeDisabled || isCompacting || speechLocked || sessionBusy || conversationRunBlocked
@@ -496,16 +518,20 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     modeChangeDisabled || isCompacting || speechLocked || conversationRunBlocked
 
   const attachmentAccept = useMemo(() => {
-    const accepted = [
-      'image/*',
-      '.pdf',
-      'application/pdf',
-      'video/*',
-      '.mp4',
-      '.mov',
-      '.m4v',
-      '.webm',
-    ]
+    const accepted: string[] = []
+
+    if (selectedAttachmentSupport?.image) {
+      accepted.push(
+        'image/*',
+        '.pdf',
+        'application/pdf',
+        'video/*',
+        '.mp4',
+        '.mov',
+        '.m4v',
+        '.webm',
+      )
+    }
 
     if (selectedAttachmentSupport?.audio) {
       accepted.push(
@@ -523,7 +549,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     }
 
     return accepted.join(',')
-  }, [selectedAttachmentSupport?.audio])
+  }, [selectedAttachmentSupport?.audio, selectedAttachmentSupport?.image])
 
   const planPdfAttachment = useCallback(async (
     attachment: PdfAttachment,
@@ -650,6 +676,51 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       path: attachment.path,
     }).catch(() => {})
   }, [sessionId])
+
+  const appendPreparedAttachments = useCallback((
+    nextAttachments: FileAttachment[],
+    options: { dedupe?: boolean; discardOnBudget?: boolean } = {},
+  ): boolean => {
+    if (nextAttachments.length === 0) {
+      return false
+    }
+
+    const budget = assessAttachmentBudget({
+      attachments: [...latestAttachmentsRef.current, ...nextAttachments].map(attachmentToBudgetItem),
+      support: selectedAttachmentSupport,
+      contextLength: selectedContextLength,
+    })
+    if (budget.issues.length > 0) {
+      if (options.discardOnBudget) {
+        for (const attachment of nextAttachments) {
+          discardPendingManagedAttachment(attachment)
+        }
+      }
+      setAttachmentErrorMessage(buildAttachmentBudgetMessage(budget.issues))
+      return false
+    }
+
+    resetEscapeClearState()
+    setAttachmentErrorMessage(null)
+    setAttachments((current) => {
+      if (!options.dedupe) {
+        return [...current, ...nextAttachments]
+      }
+      const deduped = [...current]
+      for (const attachment of nextAttachments) {
+        if (!deduped.some((existing) => sameAttachmentIdentity(existing, attachment))) {
+          deduped.push(attachment)
+        }
+      }
+      return deduped
+    })
+    return true
+  }, [
+    discardPendingManagedAttachment,
+    resetEscapeClearState,
+    selectedAttachmentSupport,
+    selectedContextLength,
+  ])
 
   const clearSpeechEventSubscription = useCallback(() => {
     if (speechEventCleanupRef.current) {
@@ -1530,12 +1601,29 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       return
     }
 
+    const hasUnsupportedImage = nextAttachments.some(
+      (attachment) => (
+        attachment.kind === 'image'
+        || attachment.kind === 'video'
+        || (
+          attachment.kind === 'pdf'
+          && (attachment.fitStatus === 'worker_unavailable' || !selectedAttachmentSupport?.image)
+        )
+      ) && !selectedAttachmentSupport?.image,
+    )
+    if (hasUnsupportedImage) {
+      setAttachmentErrorMessage(
+        buildImageInputUnsupportedMessage(selectedModelLabel, 'send image, video, or PDF attachments'),
+      )
+      return
+    }
+
     const hasUnsupportedAudio = nextAttachments.some(
       (attachment) => attachment.kind === 'audio' && !selectedAttachmentSupport?.audio,
     )
     if (hasUnsupportedAudio) {
       setAttachmentErrorMessage(
-        `Model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting audio files, so Gemma Desktop cannot send those attachments in this session.`,
+        `Model "${selectedModelLabel}" is not marked as supporting audio files, so Gemma Desktop cannot send those attachments in this session.`,
       )
       return
     }
@@ -1564,8 +1652,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     submitMemoryNote,
     selectedAttachmentSupport,
     selectedContextLength,
-    selectedModel?.id,
-    selectedModelId,
+    selectedModelLabel,
   ])
 
   const handleRunShellCommand = useCallback(async () => {
@@ -1595,32 +1682,27 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     shellCommand,
   ])
 
-  const appendFiles = useCallback(async (files: Iterable<File> | ArrayLike<File>) => {
-    if (attachmentsLocked) {
-      return
-    }
-
-    if (isResearchConversation) {
-      setAttachmentErrorMessage(
-        'Research conversations currently support text prompts only.',
-      )
-      return
-    }
-
-    if (isShellMode) {
-      setAttachmentErrorMessage(
-        'Shell mode is active. Remove the leading ! if you want to attach files instead.',
-      )
+  const appendFiles = useCallback(async (
+    files: Iterable<InputAttachmentFile> | ArrayLike<InputAttachmentFile>,
+  ) => {
+    if (attachmentLockedReason) {
+      setAttachmentErrorMessage(attachmentLockedReason)
       return
     }
 
     const fileList = Array.from(files)
-    const allowedFiles: File[] = []
+    const allowedFiles: InputAttachmentFile[] = []
+    let skippedUnsupportedImage = false
     let skippedUnsupportedAudio = false
 
     for (const file of fileList) {
       const kind = detectAttachmentKind(file)
       if (!kind) {
+        continue
+      }
+
+      if ((kind === 'image' || kind === 'video') && !selectedAttachmentSupport?.image) {
+        skippedUnsupportedImage = true
         continue
       }
 
@@ -1633,9 +1715,15 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     }
 
     if (allowedFiles.length === 0) {
+      if (skippedUnsupportedImage) {
+        setAttachmentErrorMessage(
+          buildImageInputUnsupportedMessage(selectedModelLabel, 'attach images or local video keyframes'),
+        )
+        return
+      }
       if (skippedUnsupportedAudio) {
         setAttachmentErrorMessage(
-          `Model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting audio files, so Gemma Desktop cannot attach them in this session.`,
+          `Model "${selectedModelLabel}" is not marked as supporting audio files, so Gemma Desktop cannot attach them in this session.`,
         )
       }
       return
@@ -1658,34 +1746,28 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       setAttachmentErrorMessage(
         'Gemma Desktop could not prepare one of the selected videos into local keyframes. Try a smaller MP4/MOV clip.',
       )
-    } else {
-      const budget = assessAttachmentBudget({
-        attachments: [...attachments, ...plannedAttachments].map(attachmentToBudgetItem),
-        support: selectedAttachmentSupport,
-        contextLength: selectedContextLength,
-      })
-      setAttachmentErrorMessage(
-        skippedUnsupportedAudio
-          ? `Model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting audio files, so Gemma Desktop skipped them.`
-          : budget.issues.length > 0
-            ? buildAttachmentBudgetMessage(budget.issues)
-            : null,
-      )
+      return
     }
 
-    resetEscapeClearState()
-    setAttachments((current) => [...current, ...plannedAttachments])
+    if (!appendPreparedAttachments(plannedAttachments)) {
+      return
+    }
+
+    if (skippedUnsupportedImage) {
+      setAttachmentErrorMessage(
+        buildImageInputUnsupportedMessage(selectedModelLabel, 'attach images or local video keyframes'),
+      )
+    } else if (skippedUnsupportedAudio) {
+      setAttachmentErrorMessage(
+        `Model "${selectedModelLabel}" is not marked as supporting audio files, so Gemma Desktop skipped them.`,
+      )
+    }
   }, [
-    attachmentsLocked,
-    attachments,
-    isResearchConversation,
-    isShellMode,
+    appendPreparedAttachments,
+    attachmentLockedReason,
     planPdfAttachment,
-    resetEscapeClearState,
     selectedAttachmentSupport,
-    selectedContextLength,
-    selectedModel?.id,
-    selectedModelId,
+    selectedModelLabel,
   ])
 
   const updatePdfAttachment = useCallback((
@@ -1737,7 +1819,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
 
     if (!selectedAttachmentSupport?.image) {
       setAttachmentErrorMessage(
-        `Primary model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting native image input, so Gemma Desktop cannot capture the screen for this session.`,
+        buildImageInputUnsupportedMessage(selectedModelLabel, 'capture the screen'),
       )
       return
     }
@@ -1753,23 +1835,13 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         return
       }
 
-      const budget = assessAttachmentBudget({
-        attachments: [...latestAttachmentsRef.current, attachment].map(attachmentToBudgetItem),
-        support: selectedAttachmentSupport,
-        contextLength: selectedContextLength,
+      const appended = appendPreparedAttachments([attachment], {
+        dedupe: true,
+        discardOnBudget: true,
       })
-      if (budget.issues.length > 0) {
-        discardPendingManagedAttachment(attachment)
-        setAttachmentErrorMessage(buildAttachmentBudgetMessage(budget.issues))
+      if (!appended) {
         return
       }
-
-      resetEscapeClearState()
-      setAttachments((current) => (
-        current.some((existing) => sameAttachmentIdentity(existing, attachment))
-          ? current
-          : [...current, attachment]
-      ))
       window.requestAnimationFrame(() => {
         focusComposerTextarea(textareaRef.current)
       })
@@ -1784,16 +1856,32 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       setScreenCaptureBusy(false)
     }
   }, [
+    appendPreparedAttachments,
     attachmentsLocked,
-    discardPendingManagedAttachment,
     isSubmitPending,
-    resetEscapeClearState,
     screenCaptureBusy,
     selectedAttachmentSupport,
-    selectedContextLength,
-    selectedModel?.id,
-    selectedModelId,
+    selectedModelLabel,
     sessionId,
+  ])
+
+  const handleCameraAttachmentConfirm = useCallback((attachment: FileAttachment) => {
+    if (attachmentLockedReason) {
+      setAttachmentErrorMessage(attachmentLockedReason)
+      return
+    }
+    if (!selectedAttachmentSupport?.image) {
+      setAttachmentErrorMessage(
+        buildImageInputUnsupportedMessage(selectedModelLabel, 'attach camera images'),
+      )
+      return
+    }
+    appendPreparedAttachments([attachment])
+  }, [
+    appendPreparedAttachments,
+    attachmentLockedReason,
+    selectedAttachmentSupport?.image,
+    selectedModelLabel,
   ])
 
   const handleAttachInputChange = useCallback(
@@ -1808,6 +1896,19 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       } finally {
         event.target.value = ''
       }
+    },
+    [appendFiles],
+  )
+
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const imageFiles = clipboardDataToImageFiles(event.clipboardData)
+      if (imageFiles.length === 0) {
+        return
+      }
+
+      event.preventDefault()
+      void appendFiles(imageFiles)
     },
     [appendFiles],
   )
@@ -2124,21 +2225,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
         : `${floatingPresentation ? 'rounded-2xl p-2' : 'rounded-md p-1.5'} bg-violet-600 text-white transition-colors hover:bg-violet-700 disabled:opacity-30 disabled:hover:bg-violet-600`
   const assistantNarrationTitle = assistantNarrationDisabledReason
     ?? describeAssistantNarrationMode(assistantNarrationMode)
-  const attachmentButtonTitle = isResearchConversation
-    ? 'Research conversations currently support text prompts only.'
-    : isShellMode
-    ? 'Shell mode does not accept attachments'
-    : sessionBusy
-      ? isCompacting
-        ? 'Wait for compaction to finish before attaching files'
-        : 'Wait for this turn to finish before attaching files'
-      : conversationRunDisabledReason
-        ? conversationRunDisabledReason
-      : speechLocked
-        ? 'Finish speech input before attaching files'
-      : attachmentAccept.length > 0
-        ? 'Attach file'
-        : 'This model does not currently accept local attachments'
+  const attachmentButtonTitle = attachmentLockedReason
+    ?? (attachmentAccept.length > 0
+      ? 'Attach file or paste an image with Cmd+V / Ctrl+V'
+      : 'This model does not currently accept local attachments')
   const screenCaptureButtonTitle = isResearchConversation
     ? 'Research conversations currently support text prompts only.'
     : isShellMode
@@ -2152,7 +2242,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       : speechLocked
         ? 'Finish speech input before capturing the screen'
       : !selectedAttachmentSupport?.image
-        ? `Primary model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting native image input, so Gemma Desktop cannot capture the screen for this session.`
+        ? buildImageInputUnsupportedMessage(selectedModelLabel, 'capture the screen')
         : screenCaptureBusy
           ? 'Capturing screen...'
           : 'Capture screen without Gemma Desktop'
@@ -2161,6 +2251,16 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     || isSubmitPending
     || screenCaptureBusy
     || !selectedAttachmentSupport?.image
+  const cameraButtonTitle = isResearchConversation
+    ? 'Research conversations currently support text prompts only.'
+    : isShellMode
+      ? 'Shell mode does not accept camera input'
+      : conversationRunDisabledReason
+        ? conversationRunDisabledReason
+        : !selectedAttachmentSupport?.image
+          ? buildImageInputUnsupportedMessage(selectedModelLabel, 'attach camera images')
+          : 'Open camera'
+  const cameraButtonDisabled = attachmentsLocked || !selectedAttachmentSupport?.image
   const trimmedText = text.trim()
   const canRunShellCommand =
     isShellMode
@@ -2429,6 +2529,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onInput={handleInput}
+                onPaste={handlePaste}
                 placeholder={composerPlaceholder}
                 rows={1}
                 disabled={submitLocked || (isCompacting && !isShellMode)}
@@ -2460,17 +2561,10 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
               </button>
               <button
                 onClick={() => setCameraOpen(true)}
-                disabled={attachmentsLocked}
+                disabled={cameraButtonDisabled}
                 className={`${floatingPresentation ? 'rounded-xl p-2' : 'rounded-md p-1.5'} text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-300`}
-                title={
-                  isResearchConversation
-                    ? 'Research conversations currently support text prompts only.'
-                    : isShellMode
-                    ? 'Shell mode does not accept camera input'
-                    : conversationRunDisabledReason
-                      ? conversationRunDisabledReason
-                    : 'Open camera'
-                }
+                title={cameraButtonTitle}
+                aria-label={cameraButtonTitle}
               >
                 <Camera size={16} />
               </button>
@@ -2929,12 +3023,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           <CameraCaptureModal
             open={cameraOpen}
             onClose={() => setCameraOpen(false)}
-            onConfirm={(attachment) => {
-              if (attachmentsLocked) {
-                return
-              }
-              setAttachments((current) => [...current, attachment])
-            }}
+            onConfirm={handleCameraAttachmentConfirm}
           />
         </div>
       </div>

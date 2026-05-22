@@ -561,6 +561,7 @@ describe('session attachment pipeline', () => {
   it('rejects unsupported attachment kinds using the shared capability snapshot', () => {
     const unsupportedKinds = findUnsupportedAttachmentKinds(
       [
+        { kind: 'image' },
         { kind: 'audio' },
         { kind: 'pdf' },
       ],
@@ -594,6 +595,7 @@ describe('session attachment pipeline', () => {
     expect(
       findUnsupportedAttachmentKinds(
         [
+          { kind: 'image' },
           { kind: 'audio' },
           { kind: 'pdf' },
         ],
@@ -626,6 +628,32 @@ describe('session attachment pipeline', () => {
         },
       ),
     ).toEqual(['audio'])
+    expect(
+      findUnsupportedAttachmentKinds(
+        [
+          { kind: 'image' },
+          { kind: 'video' },
+        ],
+        {
+          runtime: {
+            id: 'ollama-native',
+            displayName: 'Ollama Native',
+            family: 'ollama',
+            kind: 'native',
+          },
+          modelId: 'qwen2.5-coder:32b',
+          runtimeCapabilities: [],
+          modelCapabilities: [
+            {
+              id: 'model.input.image',
+              scope: 'model',
+              status: 'unsupported',
+              source: 'test',
+            },
+          ],
+        },
+      ),
+    ).toEqual(['image', 'video'])
     expect(
       buildUnsupportedAttachmentErrorMessage({
         modelId: 'gemma4:26b',

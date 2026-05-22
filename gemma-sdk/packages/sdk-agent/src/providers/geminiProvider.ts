@@ -18,6 +18,7 @@ export interface GeminiModelInfo {
   supportsReasoning?: boolean;
   supportsImage?: boolean;
   supportsAudio?: boolean;
+  supportsPdf?: boolean;
   contextTokens?: number;
   outputTokens?: number;
 }
@@ -130,7 +131,8 @@ export async function listGeminiModelInfos(
           displayName: model.displayName,
           supportsReasoning: model.thinking === true || /(?:pro|3\.5|3\.1)/i.test(model.name ?? ''),
           supportsImage: /gemini/i.test(model.name ?? ''),
-          supportsAudio: false,
+          supportsAudio: /gemini/i.test(model.name ?? ''),
+          supportsPdf: /gemini/i.test(model.name ?? ''),
           contextTokens: model.inputTokenLimit,
           outputTokens: model.outputTokenLimit,
         })),

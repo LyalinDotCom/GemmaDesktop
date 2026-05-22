@@ -5495,6 +5495,31 @@ async function syncSessionRequestPreferences(
   }
 }
 
+async function refreshSessionCapabilityContextForAttachments(
+  sessionId: string,
+  session: GemmaDesktopSession,
+  snapshot: SessionSnapshot,
+  attachments: IncomingAttachment[],
+): Promise<{
+  session: GemmaDesktopSession
+  snapshot: SessionSnapshot
+}> {
+  if (attachments.length === 0) {
+    return { session, snapshot }
+  }
+
+  const nextSession = await gemmaDesktop.sessions.resume({
+    snapshot,
+  })
+  const nextSnapshot = nextSession.snapshot()
+  liveSessions.set(sessionId, nextSession)
+
+  return {
+    session: nextSession,
+    snapshot: nextSnapshot,
+  }
+}
+
 type SessionCompositionFrame = Pick<
   SessionSnapshot,
   'mode' | 'systemInstructions' | 'metadata'
@@ -7145,6 +7170,15 @@ async function validateOutgoingAttachmentsForSession(input: {
   }
 
   const support = deriveAttachmentSupport(input.snapshot.capabilityContext?.modelCapabilities ?? [])
+  const hasUnsupportedImage = input.attachments.some((attachment) =>
+    attachment.kind === 'image' && !support.image,
+  )
+  if (hasUnsupportedImage) {
+    throw new Error(
+      `Model "${input.snapshot.modelId}" is not marked as supporting native image input, so Gemma Desktop cannot send image attachments in this session.`,
+    )
+  }
+
   const hasUnsupportedAudio = input.attachments.some((attachment) =>
     attachment.kind === 'audio' && !support.audio,
   )
@@ -10762,6 +10796,15 @@ async function sendSessionMessageInternal(
         restoreTemporaryModelOverride = override.restore
       }
     }
+
+    const refreshedCapabilities = await refreshSessionCapabilityContextForAttachments(
+      sessionId,
+      session,
+      sessionSnapshot,
+      message.attachments ?? [],
+    )
+    session = refreshedCapabilities.session
+    sessionSnapshot = refreshedCapabilities.snapshot
   } catch (error) {
     releaseExecutionGate()
     throw error

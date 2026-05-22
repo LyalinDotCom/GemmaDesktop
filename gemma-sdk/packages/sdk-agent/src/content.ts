@@ -41,6 +41,7 @@ export interface AttachmentCapabilityInput {
   displayName?: string;
   explicitImage?: boolean;
   explicitAudio?: boolean;
+  explicitPdf?: boolean;
 }
 
 export function contentToText(content: MessageContent): string {
@@ -56,9 +57,9 @@ export function contentToText(content: MessageContent): string {
 }
 
 export function inferAttachmentCapabilities(input: AttachmentCapabilityInput): AttachmentCapabilities {
-  const providerSupportsImages = input.provider === 'ollama' || input.provider === 'lmstudio';
-  const providerSupportsAudio = input.provider === 'ollama';
-  const providerSupportsPdf = false;
+  const providerSupportsImages = input.provider === 'ollama' || input.provider === 'lmstudio' || input.provider === 'gemini';
+  const providerSupportsAudio = input.provider === 'ollama' || input.provider === 'gemini';
+  const providerSupportsPdf = input.provider === 'gemini';
   const signature = [input.model, input.displayName]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     .join(' ')
@@ -76,8 +77,8 @@ export function inferAttachmentCapabilities(input: AttachmentCapabilityInput): A
     image,
     audio,
     video: image,
-    pdf: providerSupportsPdf,
-    source: input.explicitImage != null || input.explicitAudio != null ? 'provider-metadata' : isGemma ? 'model-family-inference' : 'provider-default'
+    pdf: providerSupportsPdf && (input.explicitPdf ?? false),
+    source: input.explicitImage != null || input.explicitAudio != null || input.explicitPdf != null ? 'provider-metadata' : isGemma ? 'model-family-inference' : 'provider-default'
   };
 }
 

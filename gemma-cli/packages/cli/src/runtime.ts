@@ -183,7 +183,8 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
     model: selectedModel,
     displayName: providerCapabilities.displayName,
     explicitImage: providerCapabilities.supportsImage,
-    explicitAudio: providerCapabilities.supportsAudio
+    explicitAudio: providerCapabilities.supportsAudio,
+    explicitPdf: providerCapabilities.supportsPdf
   });
   const skills = await loadSkills({ cwd: options.cwd, selected: options.skills });
   const systemContext = skillsToSystemContext(skills);
@@ -316,7 +317,7 @@ async function resolveProviderAttachmentCapabilities(
   provider: CliOptions['provider'],
   model: string,
   options: { ollamaUrl?: string; lmStudioUrl?: string; geminiApiKey?: string; geminiApiBaseUrl?: string }
-): Promise<{ displayName?: string; supportsImage?: boolean; supportsAudio?: boolean; supportsReasoning?: boolean; contextTokens?: number }> {
+): Promise<{ displayName?: string; supportsImage?: boolean; supportsAudio?: boolean; supportsPdf?: boolean; supportsReasoning?: boolean; contextTokens?: number }> {
   try {
     if (provider === 'ollama') {
       return await getOllamaModelCapabilities(model, options.ollamaUrl);
@@ -338,6 +339,7 @@ async function resolveProviderAttachmentCapabilities(
         displayName: exact?.displayName,
         supportsImage: exact?.supportsImage,
         supportsAudio: exact?.supportsAudio,
+        supportsPdf: exact?.supportsPdf,
         supportsReasoning: exact?.supportsReasoning,
         contextTokens: exact?.contextTokens
       };

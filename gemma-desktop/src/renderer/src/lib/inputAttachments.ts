@@ -80,6 +80,29 @@ type FileTransferLike = {
   types: Iterable<string>
 }
 
+type FileListLike = {
+  length: number
+  item?: (index: number) => InputAttachmentFile | null
+  [index: number]: InputAttachmentFile | undefined
+}
+
+type ClipboardItemLike = {
+  kind?: string
+  type?: string
+  getAsFile?: () => InputAttachmentFile | null
+}
+
+type ClipboardItemListLike = {
+  length: number
+  item?: (index: number) => ClipboardItemLike | null
+  [index: number]: ClipboardItemLike | undefined
+}
+
+type ClipboardDataLike = {
+  files?: FileListLike
+  items?: ClipboardItemListLike
+}
+
 function normalizeFilePathForUrl(filePath: string): string {
   return filePath.replace(/\\/g, '/')
 }
@@ -802,4 +825,56 @@ export function dataTransferMayContainFiles(dataTransfer: FileTransferLike | nul
   }
 
   return Array.from(dataTransfer.types).includes('Files')
+}
+
+function fileListToArray(files: FileListLike | undefined): InputAttachmentFile[] {
+  if (!files || files.length === 0) {
+    return []
+  }
+
+  const result: InputAttachmentFile[] = []
+  for (let index = 0; index < files.length; index += 1) {
+    const file = typeof files.item === 'function'
+      ? files.item(index)
+      : files[index]
+    if (file) {
+      result.push(file)
+    }
+  }
+  return result
+}
+
+function clipboardItemsToArray(items: ClipboardItemListLike | undefined): ClipboardItemLike[] {
+  if (!items || items.length === 0) {
+    return []
+  }
+
+  const result: ClipboardItemLike[] = []
+  for (let index = 0; index < items.length; index += 1) {
+    const item = typeof items.item === 'function'
+      ? items.item(index)
+      : items[index]
+    if (item) {
+      result.push(item)
+    }
+  }
+  return result
+}
+
+export function clipboardDataToImageFiles(
+  clipboardData: ClipboardDataLike | null,
+): InputAttachmentFile[] {
+  if (!clipboardData) {
+    return []
+  }
+
+  const fileImages = fileListToArray(clipboardData.files).filter(isImageFileLike)
+  if (fileImages.length > 0) {
+    return fileImages
+  }
+
+  return clipboardItemsToArray(clipboardData.items)
+    .filter((item) => item.kind === 'file' && Boolean(item.type?.startsWith('image/')))
+    .map((item) => item.getAsFile?.() ?? null)
+    .filter((file): file is InputAttachmentFile => Boolean(file && isImageFileLike(file)))
 }

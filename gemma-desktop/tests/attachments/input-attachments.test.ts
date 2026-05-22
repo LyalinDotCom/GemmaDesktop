@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildVideoSampleTimes,
+  clipboardDataToImageFiles,
   detectAttachmentKind,
   dataTransferMayContainFiles,
   fileToAttachment,
@@ -67,6 +68,37 @@ describe('input attachments', () => {
         source: 'file',
       },
     ])
+  })
+
+  it('extracts pasted image files from clipboard files and items', () => {
+    const image = new File(['pixel'], 'clipboard.png', { type: 'image/png' }) as InputAttachmentFile
+    const text = new File(['hello'], 'notes.txt', { type: 'text/plain' }) as InputAttachmentFile
+
+    expect(clipboardDataToImageFiles({
+      files: {
+        length: 2,
+        item: (index: number) => [image, text][index] ?? null,
+      },
+    })).toEqual([image])
+
+    expect(clipboardDataToImageFiles({
+      files: { length: 0 },
+      items: {
+        length: 2,
+        item: (index: number) => [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => image,
+          },
+          {
+            kind: 'string',
+            type: 'text/plain',
+            getAsFile: () => text,
+          },
+        ][index] ?? null,
+      },
+    })).toEqual([image])
   })
 
   it('builds file-backed PDF attachments when Electron file paths are available', async () => {

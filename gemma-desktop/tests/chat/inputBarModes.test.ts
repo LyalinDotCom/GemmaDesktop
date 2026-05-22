@@ -220,6 +220,7 @@ describe('InputBar mode rendering', () => {
     )
 
     expect(markup).toContain('title="More actions"')
+    expect(markup).toContain('Attach file or paste an image with Cmd+V / Ctrl+V')
     expect(markup).toContain('title="Context: ~0 / 32768 tokens (0%)"')
     expect(markup).not.toContain('loaded model visible on hover')
   })
@@ -254,6 +255,10 @@ describe('InputBar mode rendering', () => {
     expect(textOnlyMarkup).toContain(
       'Primary model &quot;text-only-model&quot; is not marked as supporting native image input',
     )
+    expect(textOnlyMarkup).toContain('This model does not currently accept local attachments')
+    expect(textOnlyMarkup.match(/<button[^>]*aria-label="This model does not currently accept local attachments"[^>]*>/)?.[0] ?? '')
+      .toMatch(/\sdisabled(?=[\s=>])/)
+    expect(textOnlyMarkup).toContain('cannot attach camera images for this session')
     expect(textOnlyMarkup).toMatch(
       /<button[^>]*disabled=""[^>]*aria-label="Primary model &quot;text-only-model&quot; is not marked as supporting native image input/,
     )

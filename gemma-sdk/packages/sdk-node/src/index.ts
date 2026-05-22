@@ -1716,9 +1716,11 @@ export class GemmaDesktop {
       && snapshot.capabilityContext.runtime.id === snapshot.runtimeId
         ? snapshot.capabilityContext
         : undefined;
+    const resolvedCapabilityContext = await this.resolveSessionCapabilityContext(adapter, snapshot.modelId);
     const capabilityContext =
-      snapshotCapabilityContext
-      ?? await this.resolveSessionCapabilityContext(adapter, snapshot.modelId);
+      resolvedCapabilityContext?.modelCapabilities.length
+        ? resolvedCapabilityContext
+        : snapshotCapabilityContext ?? resolvedCapabilityContext;
     const toolNames = resolveModeToolNames(snapshot.mode);
     const tools =
       toolNames.length === 0
