@@ -104,6 +104,8 @@ describe('read aloud player', () => {
     buttonState: ReadAloudButtonState
     playbackControls: ReadAloudPlaybackControls
   } | null
+  let streamEventCallback: ((event: unknown) => void) | null
+  let activeStreamId: string | null
 
   beforeEach(() => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -111,6 +113,8 @@ describe('read aloud player', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     latestState = null
+    streamEventCallback = null
+    activeStreamId = null
 
     MockAudio.playMock = vi.fn(async () => {})
     MockAudio.pauseMock = vi.fn()
@@ -120,6 +124,13 @@ describe('read aloud player', () => {
     vi.stubGlobal('gemmaDesktopBridge', {
       readAloud: {
         cancelCurrent: vi.fn(async () => ({ ok: true })),
+        cleanupStream: vi.fn(async () => ({ ok: true })),
+        startStream: vi.fn(async (input: { streamId: string }) => ({ streamId: input.streamId })),
+        onStreamEvent: vi.fn((streamId: string, callback: (event: unknown) => void) => {
+          activeStreamId = streamId
+          streamEventCallback = callback
+          return vi.fn()
+        }),
         synthesize: vi.fn(async () => ({
           audioPath: '/tmp/gemma-read-aloud.wav',
           fromCache: false,
@@ -157,6 +168,18 @@ describe('read aloud player', () => {
 
     await act(async () => {
       latestState?.buttonState.onClick?.()
+    })
+
+    await act(async () => {
+      streamEventCallback?.({
+        type: 'segment-ready',
+        streamId: activeStreamId,
+        index: 0,
+        totalSegments: 1,
+        audioPath: '/tmp/gemma-read-aloud-segment.wav',
+        durationMs: 1250,
+        generatedDurationMs: 1250,
+      })
     })
 
     await vi.waitFor(() => {

@@ -389,6 +389,70 @@ describe('ReadAloudService warmup', () => {
     }))
   })
 
+  it('cancels playback without waiting for in-flight worker disposal', async () => {
+    const cacheRoot = await makeTempDir()
+    await makePreparedAssetRoot(cacheRoot)
+
+    let resolveGenerate!: (value: {
+      audio: Float32Array
+      sampling_rate: number
+    }) => void
+    let resolveDispose!: () => void
+    const model = {
+      generate: vi.fn(
+        () =>
+          new Promise<{
+            audio: Float32Array
+            sampling_rate: number
+          }>((resolve) => {
+            resolveGenerate = resolve
+          }),
+      ),
+      dispose: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDispose = resolve
+          }),
+      ),
+    }
+    const service = new ReadAloudService({
+      supportedPlatform: 'darwin',
+      cacheRoot: path.join(cacheRoot, 'read-aloud-state'),
+      assetRootCandidates: [cacheRoot],
+      modelLoader: {
+        load: vi.fn(async () => model),
+      },
+    })
+
+    const synthesizePromise = service.synthesize(
+      {
+        messageId: 'message-1',
+        text: 'Cancel this read aloud request.',
+        voice: 'af_heart',
+        speed: 1,
+        purpose: 'message',
+        useCache: false,
+      },
+      {
+        enabled: true,
+      },
+    )
+
+    await vi.waitFor(() => {
+      expect(model.generate).toHaveBeenCalledTimes(1)
+    })
+
+    await expect(service.cancelCurrent()).resolves.toEqual({ ok: true })
+    expect(model.dispose).toHaveBeenCalledTimes(1)
+
+    resolveGenerate({
+      audio: new Float32Array([0, 0, 0, 0]),
+      sampling_rate: 24_000,
+    })
+    await expect(synthesizePromise).rejects.toThrow('Read aloud cancelled.')
+    resolveDispose()
+  })
+
   it('returns cached wav duration immediately so the player can seek on first frame', async () => {
     const cacheRoot = await makeTempDir()
     await makePreparedAssetRoot(cacheRoot)
@@ -436,5 +500,173 @@ describe('ReadAloudService warmup', () => {
       durationMs: 1250,
     }))
     expect(modelLoader.load).not.toHaveBeenCalled()
+  })
+
+  it('streams segment audio before the final cached wav is ready', async () => {
+    const cacheRoot = await makeTempDir()
+    await makePreparedAssetRoot(cacheRoot)
+    const cacheStateRoot = path.join(cacheRoot, 'read-aloud-state')
+
+    let resolveSecondSegment!: (value: {
+      audio: Float32Array
+      sampling_rate: number
+    }) => void
+    const model = {
+      generate: vi.fn((text: string) => {
+        if (text.startsWith('First')) {
+          return Promise.resolve({
+            audio: new Float32Array(24_000),
+            sampling_rate: 24_000,
+          })
+        }
+
+        return new Promise<{
+          audio: Float32Array
+          sampling_rate: number
+        }>((resolve) => {
+          resolveSecondSegment = resolve
+        })
+      }),
+    }
+    const modelLoader = {
+      load: vi.fn(async () => model),
+    }
+    const service = new ReadAloudService({
+      supportedPlatform: 'darwin',
+      cacheRoot: cacheStateRoot,
+      assetRootCandidates: [cacheRoot],
+      modelLoader,
+    })
+    const events: unknown[] = []
+
+    await service.startStreaming(
+      {
+        streamId: 'stream-test',
+        messageId: 'message-1',
+        text: 'First sentence. Second sentence.',
+        voice: 'af_heart',
+        speed: 1,
+        purpose: 'message',
+        useCache: true,
+      },
+      {
+        enabled: true,
+        emit: (event) => events.push(event),
+      },
+    )
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'segment-ready',
+      )).toBe(true)
+    })
+
+    expect(events.some((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'final-ready',
+    )).toBe(false)
+
+    const firstSegment = events.find((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'segment-ready',
+    ) as { audioPath: string; durationMs: number | null } | undefined
+    expect(firstSegment).toEqual(expect.objectContaining({
+      durationMs: 1000,
+    }))
+    await expect(fs.access(firstSegment!.audioPath)).resolves.toBeUndefined()
+
+    resolveSecondSegment({
+      audio: new Float32Array(12_000),
+      sampling_rate: 24_000,
+    })
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'final-ready',
+      )).toBe(true)
+    })
+
+    const finalEvent = events.find((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'final-ready',
+    ) as { result: { audioPath: string; durationMs: number | null } } | undefined
+    expect(finalEvent?.result.durationMs).toBe(1500)
+    await expect(fs.access(finalEvent!.result.audioPath)).resolves.toBeUndefined()
+
+    await service.cleanupStream('stream-test')
+
+    await expect(fs.access(firstSegment!.audioPath)).rejects.toThrow()
+    await expect(fs.access(finalEvent!.result.audioPath)).resolves.toBeUndefined()
+  })
+
+  it('removes temporary final audio for uncached streaming playback', async () => {
+    const cacheRoot = await makeTempDir()
+    await makePreparedAssetRoot(cacheRoot)
+    const cacheStateRoot = path.join(cacheRoot, 'read-aloud-state')
+    const model = {
+      generate: vi.fn(async () => ({
+        audio: new Float32Array(24_000),
+        sampling_rate: 24_000,
+      })),
+    }
+    const service = new ReadAloudService({
+      supportedPlatform: 'darwin',
+      cacheRoot: cacheStateRoot,
+      assetRootCandidates: [cacheRoot],
+      modelLoader: {
+        load: vi.fn(async () => model),
+      },
+    })
+    const events: unknown[] = []
+
+    await service.startStreaming(
+      {
+        streamId: 'uncached-stream-test',
+        messageId: 'narration-1',
+        text: 'Temporary narration.',
+        voice: 'af_heart',
+        speed: 1,
+        purpose: 'preview',
+        useCache: false,
+      },
+      {
+        enabled: true,
+        emit: (event) => events.push(event),
+      },
+    )
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'final-ready',
+      )).toBe(true)
+    })
+
+    const finalEvent = events.find((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'final-ready',
+    ) as { result: { audioPath: string }; temporaryFinal: boolean } | undefined
+    expect(finalEvent?.temporaryFinal).toBe(true)
+    await expect(fs.access(finalEvent!.result.audioPath)).resolves.toBeUndefined()
+
+    await service.cleanupStream('uncached-stream-test')
+
+    await expect(fs.access(finalEvent!.result.audioPath)).rejects.toThrow()
   })
 })

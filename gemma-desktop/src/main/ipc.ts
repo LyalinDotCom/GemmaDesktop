@@ -15179,6 +15179,42 @@ export function registerIpcHandlers(): void {
     return await readAloudService.cancelCurrent()
   })
 
+  ipcMain.handle('read-aloud:start-stream', async (event, input: Record<string, unknown>) => {
+    const currentSettings = await getSettingsState()
+    const requestedStreamId =
+      typeof input.streamId === 'string' && input.streamId.trim().length > 0
+        ? input.streamId.trim()
+        : randomUUID()
+
+    return await readAloudService.startStreaming(
+      {
+        streamId: requestedStreamId,
+        messageId:
+          typeof input.messageId === 'string' && input.messageId.trim().length > 0
+            ? input.messageId
+            : randomUUID(),
+        text: typeof input.text === 'string' ? input.text : '',
+        voice: normalizeReadAloudVoice(input.voice),
+        speed: clampReadAloudSpeed(input.speed),
+        purpose: input.purpose === 'preview' ? 'preview' : 'message',
+        useCache: input.useCache !== false,
+      },
+      {
+        enabled: currentSettings.readAloud.enabled,
+        emit: (streamEvent) => {
+          if (event.sender.isDestroyed()) {
+            return
+          }
+          event.sender.send(`read-aloud:stream-event:${streamEvent.streamId}`, streamEvent)
+        },
+      },
+    )
+  })
+
+  ipcMain.handle('read-aloud:cleanup-stream', async (_, streamId: string) => {
+    return await readAloudService.cleanupStream(streamId)
+  })
+
   ipcMain.handle('assistant-narration:generate', async (_, input: Record<string, unknown>) => {
     const phase = normalizeAssistantNarrationPhase(input.phase)
     const attachments = normalizeAssistantNarrationAttachments(input.attachments)

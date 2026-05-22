@@ -21,6 +21,9 @@ import type {
 import type {
   ReadAloudInstallProgress,
   ReadAloudInspection,
+  ReadAloudStreamEvent,
+  ReadAloudStreamStartResult,
+  ReadAloudStreamSynthesisInput,
   ReadAloudSynthesisInput,
   ReadAloudSynthesisResult,
   ReadAloudTestInput,
@@ -1224,9 +1227,15 @@ export interface GemmaDesktopBridge {
   readAloud: {
     inspect(): Promise<ReadAloudInspection>
     synthesize(input: ReadAloudSynthesisInput): Promise<ReadAloudSynthesisResult>
+    startStream(input: ReadAloudStreamSynthesisInput): Promise<ReadAloudStreamStartResult>
     cancelCurrent(): Promise<{ ok: true }>
+    cleanupStream(streamId: string): Promise<{ ok: true }>
     test(input?: ReadAloudTestInput): Promise<ReadAloudSynthesisResult>
     listVoices(): Promise<ReadAloudVoiceOption[]>
+    onStreamEvent(
+      streamId: string,
+      callback: (event: ReadAloudStreamEvent) => void,
+    ): () => void
     onStatusChanged(callback: (status: ReadAloudInspection) => void): () => void
   }
   assistantNarration: {

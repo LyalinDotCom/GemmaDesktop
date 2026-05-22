@@ -429,9 +429,20 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
   readAloud: {
     inspect: () => ipcRenderer.invoke('read-aloud:inspect'),
     synthesize: (input: unknown) => ipcRenderer.invoke('read-aloud:synthesize', input),
+    startStream: (input: unknown) => ipcRenderer.invoke('read-aloud:start-stream', input),
     cancelCurrent: () => ipcRenderer.invoke('read-aloud:cancel-current'),
+    cleanupStream: (streamId: string) => ipcRenderer.invoke('read-aloud:cleanup-stream', streamId),
     test: (input?: unknown) => ipcRenderer.invoke('read-aloud:test', input),
     listVoices: () => ipcRenderer.invoke('read-aloud:list-voices'),
+    onStreamEvent: (
+      streamId: string,
+      callback: (event: unknown) => void,
+    ) => {
+      const channel = `read-aloud:stream-event:${streamId}`
+      const handler = (_: unknown, event: unknown) => callback(event)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
     onStatusChanged: (callback: (status: unknown) => void) => {
       const handler = (_: unknown, status: unknown) => callback(status)
       ipcRenderer.on('read-aloud:status-changed', handler)

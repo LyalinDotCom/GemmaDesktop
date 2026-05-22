@@ -127,6 +127,8 @@ const EXPECTED_IPC_CHANNELS = [
   'read-aloud:inspect',
   'read-aloud:list-voices',
   'read-aloud:cancel-current',
+  'read-aloud:start-stream',
+  'read-aloud:cleanup-stream',
   'assistant-narration:generate',
   'thinking-summary:generate',
   'read-aloud:synthesize',

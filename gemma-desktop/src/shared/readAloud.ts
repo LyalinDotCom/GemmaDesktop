@@ -116,6 +116,55 @@ export interface ReadAloudSynthesisResult {
   textHash: string
 }
 
+export interface ReadAloudStreamSynthesisInput extends ReadAloudSynthesisInput {
+  streamId: string
+}
+
+export interface ReadAloudStreamStartResult {
+  streamId: string
+}
+
+export type ReadAloudStreamEvent =
+  | {
+    type: 'started'
+    streamId: string
+    totalSegments: number
+    voice: ReadAloudVoiceId
+    speed: number
+    textHash: string
+    fromCache: boolean
+  }
+  | {
+    type: 'segment-ready'
+    streamId: string
+    index: number
+    totalSegments: number
+    audioPath: string
+    durationMs: number | null
+    generatedDurationMs: number | null
+  }
+  | {
+    type: 'final-ready'
+    streamId: string
+    result: ReadAloudSynthesisResult
+    temporaryFinal: boolean
+  }
+  | {
+    type: 'complete'
+    streamId: string
+    result: ReadAloudSynthesisResult
+    temporaryFinal: boolean
+  }
+  | {
+    type: 'cancelled'
+    streamId: string
+  }
+  | {
+    type: 'error'
+    streamId: string
+    message: string
+  }
+
 export interface ReadAloudTestInput {
   voice?: ReadAloudVoiceId
   speed?: number

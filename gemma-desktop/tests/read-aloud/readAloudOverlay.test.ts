@@ -14,6 +14,7 @@ describe('read aloud playback overlay', () => {
           currentTimeSec: 12,
           durationSec: 34,
           canSeek: true,
+          generating: false,
           togglePlayPause: vi.fn(),
           seekTo: vi.fn(),
           dismiss: vi.fn(),
@@ -39,6 +40,7 @@ describe('read aloud playback overlay', () => {
           currentTimeSec: 0,
           durationSec: 0,
           canSeek: false,
+          generating: false,
           togglePlayPause: vi.fn(),
           seekTo: vi.fn(),
           dismiss: vi.fn(),
@@ -59,6 +61,7 @@ describe('read aloud playback overlay', () => {
           currentTimeSec: 5,
           durationSec: 20,
           canSeek: true,
+          generating: false,
           togglePlayPause: vi.fn(),
           seekTo: vi.fn(),
           dismiss: vi.fn(),
@@ -83,6 +86,7 @@ describe('read aloud playback overlay', () => {
           currentTimeSec: 4,
           durationSec: 16,
           canSeek: true,
+          generating: false,
           togglePlayPause: vi.fn(),
           seekTo: vi.fn(),
           dismiss: vi.fn(),
@@ -106,6 +110,7 @@ describe('read aloud playback overlay', () => {
           currentTimeSec: 1,
           durationSec: 10,
           canSeek: true,
+          generating: false,
           togglePlayPause: vi.fn(),
           seekTo: vi.fn(),
           dismiss: vi.fn(),
@@ -116,5 +121,31 @@ describe('read aloud playback overlay', () => {
     expect(html).toContain('data-variant="chat"')
     expect(html).toContain('bg-indigo-600')
     expect(html).not.toContain('bg-cyan-300')
+  })
+
+  it('renders generated audio progress as non-adjustable while streaming', () => {
+    const html = renderToStaticMarkup(
+      createElement(ReadAloudPlaybackOverlay, {
+        controls: {
+          visible: true,
+          phase: 'playing',
+          label: 'Reading response aloud',
+          currentTimeSec: 2,
+          durationSec: 5,
+          canSeek: false,
+          generating: true,
+          togglePlayPause: vi.fn(),
+          seekTo: vi.fn(),
+          dismiss: vi.fn(),
+        },
+      }),
+    )
+
+    expect(html).toContain('Generating audio')
+    expect(html).toContain('role="progressbar"')
+    expect(html).toContain('aria-disabled="true"')
+    expect(html).toContain('aria-label="Generating read aloud audio"')
+    expect(html).not.toContain('role="slider"')
+    expect(html).not.toContain('00:05</span>')
   })
 })

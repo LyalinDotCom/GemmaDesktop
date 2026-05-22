@@ -387,6 +387,7 @@ describe('InputBar mode rendering', () => {
       currentTimeSec: 1,
       durationSec: 4,
       canSeek: true,
+      generating: false,
       togglePlayPause: () => {},
       seekTo: () => {},
       dismiss: () => {},

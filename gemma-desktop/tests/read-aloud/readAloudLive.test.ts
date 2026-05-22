@@ -80,4 +80,152 @@ describeLive('read aloud live Kokoro validation', () => {
     expect(result.durationMs).toEqual(expect.any(Number))
     expect(result.durationMs).toBeGreaterThan(0)
   })
+
+  it('streams playable segment wavs before producing the final wav', async () => {
+    const userDataRoot = path.join(os.homedir(), 'Library', 'Application Support', 'Gemma Desktop')
+    const installedAssetRoot = path.join(
+      userDataRoot,
+      'read-aloud',
+      'assets',
+      'Kokoro-82M-v1.0-ONNX',
+    )
+    const preparedAssetRoot = path.resolve(
+      __dirname,
+      '../..',
+      '.cache',
+      'read-aloud-assets',
+      'Kokoro-82M-v1.0-ONNX',
+    )
+    const cacheRoot = await makeTempDir()
+    const service = new ReadAloudService({
+      supportedPlatform: 'darwin',
+      cacheRoot,
+      assetRootCandidates: [installedAssetRoot, preparedAssetRoot],
+    })
+    const events: unknown[] = []
+    const streamId = `live-stream-${Date.now()}`
+
+    await service.startStreaming(
+      {
+        streamId,
+        messageId: `live-read-aloud-stream-${Date.now()}`,
+        text: 'Gemma Desktop is streaming this first read aloud sentence. The final audio file should arrive afterward.',
+        voice: 'af_heart',
+        speed: 1,
+        purpose: 'preview',
+        useCache: false,
+      },
+      {
+        enabled: true,
+        emit: (event) => events.push(event),
+      },
+    )
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'segment-ready',
+      )).toBe(true)
+    }, { timeout: 30_000 })
+
+    const segmentEvent = events.find((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'segment-ready',
+    ) as { audioPath: string; durationMs: number | null } | undefined
+    const segmentStat = await fs.stat(segmentEvent!.audioPath)
+    expect(segmentStat.size).toBeGreaterThan(44)
+    expect(segmentEvent!.durationMs).toEqual(expect.any(Number))
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'final-ready',
+      )).toBe(true)
+    }, { timeout: 30_000 })
+
+    const finalEvent = events.find((event) =>
+      typeof event === 'object'
+      && event !== null
+      && 'type' in event
+      && event.type === 'final-ready',
+    ) as { result: { audioPath: string; durationMs: number | null }; temporaryFinal: boolean } | undefined
+    const finalStat = await fs.stat(finalEvent!.result.audioPath)
+    expect(finalStat.size).toBeGreaterThan(44)
+    expect(finalEvent!.temporaryFinal).toBe(true)
+    expect(finalEvent!.result.durationMs).toEqual(expect.any(Number))
+
+    await service.cleanupStream(streamId)
+    await expect(fs.access(finalEvent!.result.audioPath)).rejects.toThrow()
+  }, 30_000)
+
+  it('cancels streaming playback while worker synthesis is in flight', async () => {
+    const userDataRoot = path.join(os.homedir(), 'Library', 'Application Support', 'Gemma Desktop')
+    const installedAssetRoot = path.join(
+      userDataRoot,
+      'read-aloud',
+      'assets',
+      'Kokoro-82M-v1.0-ONNX',
+    )
+    const preparedAssetRoot = path.resolve(
+      __dirname,
+      '../..',
+      '.cache',
+      'read-aloud-assets',
+      'Kokoro-82M-v1.0-ONNX',
+    )
+    const cacheRoot = await makeTempDir()
+    const service = new ReadAloudService({
+      supportedPlatform: 'darwin',
+      cacheRoot,
+      assetRootCandidates: [installedAssetRoot, preparedAssetRoot],
+    })
+    const events: unknown[] = []
+    const streamId = `live-cancel-stream-${Date.now()}`
+
+    await service.startStreaming(
+      {
+        streamId,
+        messageId: `live-read-aloud-cancel-${Date.now()}`,
+        text: [
+          'Gemma Desktop should be able to stop this first generated sentence.',
+          `The second sentence is deliberately longer so cancellation can happen while worker synthesis is still busy ${'responsive '.repeat(80)}.`,
+        ].join(' '),
+        voice: 'af_heart',
+        speed: 1,
+        purpose: 'preview',
+        useCache: false,
+      },
+      {
+        enabled: true,
+        emit: (event) => events.push(event),
+      },
+    )
+
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'segment-ready',
+      )).toBe(true)
+    }, { timeout: 30_000 })
+
+    await expect(service.cancelCurrent()).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => {
+      expect(events.some((event) =>
+        typeof event === 'object'
+        && event !== null
+        && 'type' in event
+        && event.type === 'cancelled',
+      )).toBe(true)
+    }, { timeout: 30_000 })
+
+    await service.cleanupStream(streamId)
+  }, 45_000)
 })

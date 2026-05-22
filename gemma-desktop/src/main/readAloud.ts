@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { app } from 'electron'
 import {
   READ_ALOUD_BACKEND,
@@ -18,6 +19,9 @@ import {
   normalizeReadAloudVoice,
   type ReadAloudInstallProgress,
   type ReadAloudInspection,
+  type ReadAloudStreamEvent,
+  type ReadAloudStreamStartResult,
+  type ReadAloudStreamSynthesisInput,
   type ReadAloudSynthesisInput,
   type ReadAloudSynthesisResult,
   type ReadAloudTestInput,
@@ -26,6 +30,7 @@ import {
 
 const READ_ALOUD_CACHE_LIMIT_BYTES = 256 * 1024 * 1024
 const READ_ALOUD_PREVIEW_MESSAGE_ID = '__read_aloud_preview__'
+const READ_ALOUD_STREAM_ID_PATTERN = /^[A-Za-z0-9_-]{1,120}$/
 const READ_ALOUD_MODEL_REVISION = '1939ad2a8e416c0acfeecc08a694d14ef25f2231'
 const READ_ALOUD_MODEL_BASE_URL =
   `https://huggingface.co/onnx-community/${READ_ALOUD_MODEL_ID}/resolve/${READ_ALOUD_MODEL_REVISION}`
@@ -52,6 +57,78 @@ const READ_ALOUD_REMOTE_ASSETS = [
     sizeBytes: 92361116,
   },
 ] as const
+
+const READ_ALOUD_WORKER_SOURCE = `
+const path = require('node:path')
+const { parentPort } = require('node:worker_threads')
+
+let tts = null
+
+function postFailure(id, error) {
+  parentPort.postMessage({
+    id,
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+  })
+}
+
+parentPort.on('message', async (message) => {
+  const id = message && typeof message.id === 'number' ? message.id : null
+  if (id == null) {
+    return
+  }
+
+  try {
+    if (message.type === 'load') {
+      // kokoro-js checks __dirname when loading bundled voice files. Worker
+      // eval scripts get their own __dirname, so point it back at kokoro-js.
+      globalThis.__dirname = path.dirname(require.resolve('kokoro-js'))
+      const [{ env }, { KokoroTTS }] = await Promise.all([
+        import('@huggingface/transformers'),
+        import('kokoro-js'),
+      ])
+      env.allowRemoteModels = false
+      env.localModelPath = path.dirname(message.assetRoot) + path.sep
+      env.cacheDir = message.cacheDir
+
+      tts = await KokoroTTS.from_pretrained(message.modelId, {
+        dtype: message.dtype,
+        device: message.backend,
+      })
+      parentPort.postMessage({ id, ok: true })
+      return
+    }
+
+    if (message.type === 'generate') {
+      if (!tts) {
+        throw new Error('Read aloud worker has not loaded the Kokoro model yet.')
+      }
+
+      const audio = await tts.generate(message.text, {
+        voice: message.voice,
+        speed: message.speed,
+      })
+      const samples = audio.audio instanceof Float32Array
+        ? audio.audio
+        : new Float32Array(audio.audio)
+      parentPort.postMessage(
+        {
+          id,
+          ok: true,
+          audio: samples,
+          sampling_rate: audio.sampling_rate,
+        },
+        [samples.buffer],
+      )
+      return
+    }
+
+    throw new Error('Unknown read aloud worker request.')
+  } catch (error) {
+    postFailure(id, error)
+  }
+})
+`
 
 function isAbortError(error: unknown): boolean {
   return Boolean(
@@ -103,6 +180,7 @@ interface ReadAloudModel {
       speed: number
     },
   ): Promise<ReadAloudModelChunk['audio']>
+  dispose?(): Promise<void>
 }
 
 interface ReadAloudModelLoader {
@@ -123,6 +201,11 @@ interface ReadAloudServiceOptions {
 }
 
 type ReadAloudChangeListener = () => void
+type ReadAloudStreamEmitter = (event: ReadAloudStreamEvent) => void
+
+interface ReadAloudStreamArtifacts {
+  tempDir: string
+}
 
 interface ReadAloudAssetResolution {
   assetRoot: string
@@ -173,6 +256,29 @@ async function yieldToEventLoop(): Promise<void> {
 
 function hashValue(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function normalizeReadAloudStreamId(value: unknown): string {
+  if (
+    typeof value === 'string'
+    && READ_ALOUD_STREAM_ID_PATTERN.test(value)
+  ) {
+    return value
+  }
+
+  return randomUUID()
+}
+
+function buildReadAloudStreamRoot(cacheRoot: string): string {
+  return path.join(cacheRoot, 'streams')
+}
+
+function buildReadAloudStreamDir(cacheRoot: string, streamId: string): string {
+  return path.join(buildReadAloudStreamRoot(cacheRoot), streamId)
+}
+
+function buildReadAloudStreamSegmentPath(streamDir: string, index: number): string {
+  return path.join(streamDir, 'segments', `segment-${String(index + 1).padStart(4, '0')}.wav`)
 }
 
 function describeLoadingState(): string {
@@ -572,6 +678,53 @@ function resolveDurationMs(
   return Math.max(0, Math.round((sampleCount / sampleRate) * 1000))
 }
 
+function encodeFloat32MonoPcmWav(
+  audio: Float32Array,
+  sampleRate: number,
+): Buffer {
+  const channelCount = 1
+  const bitsPerSample = 16
+  const blockAlign = channelCount * (bitsPerSample / 8)
+  const byteRate = sampleRate * blockAlign
+  const dataSize = audio.length * blockAlign
+  const buffer = Buffer.alloc(44 + dataSize)
+
+  buffer.write('RIFF', 0, 'ascii')
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write('WAVE', 8, 'ascii')
+  buffer.write('fmt ', 12, 'ascii')
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channelCount, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.write('data', 36, 'ascii')
+  buffer.writeUInt32LE(dataSize, 40)
+
+  let outputOffset = 44
+  for (const sample of audio) {
+    const clamped = Math.max(-1, Math.min(1, Number.isFinite(sample) ? sample : 0))
+    const scaled = clamped < 0
+      ? Math.round(clamped * 0x8000)
+      : Math.round(clamped * 0x7fff)
+    buffer.writeInt16LE(scaled, outputOffset)
+    outputOffset += 2
+  }
+
+  return buffer
+}
+
+async function writeReadAloudWavFile(
+  filePath: string,
+  audio: Float32Array,
+  sampleRate: number,
+): Promise<void> {
+  await ensureDir(path.dirname(filePath))
+  await fs.writeFile(filePath, encodeFloat32MonoPcmWav(audio, sampleRate))
+}
+
 export function buildReadAloudCacheKey(input: {
   messageId: string
   text: string
@@ -635,24 +788,192 @@ export async function pruneReadAloudCache(
   }
 }
 
+interface ReadAloudWorkerPendingRequest {
+  resolve(value: unknown): void
+  reject(error: Error): void
+}
+
+class WorkerBackedReadAloudModel implements ReadAloudModel {
+  private readonly worker: Worker
+  private readonly pending = new Map<number, ReadAloudWorkerPendingRequest>()
+  private nextRequestId = 1
+  private disposed = false
+  private disposePromise: Promise<void> | null = null
+  private resolveDispose: (() => void) | null = null
+
+  private constructor(worker: Worker) {
+    this.worker = worker
+    this.worker.on('message', (message: unknown) => {
+      this.handleMessage(message)
+    })
+    this.worker.on('error', (error) => {
+      this.rejectPending(error instanceof Error ? error : new Error(String(error)))
+    })
+    this.worker.on('exit', (code) => {
+      if (this.disposed) {
+        return
+      }
+      this.rejectPending(new Error(`Read aloud worker exited unexpectedly with code ${code}.`))
+    })
+  }
+
+  public static async load(
+    assetRoot: string,
+    cacheDir: string,
+  ): Promise<WorkerBackedReadAloudModel> {
+    const model = new WorkerBackedReadAloudModel(
+      new Worker(READ_ALOUD_WORKER_SOURCE, {
+        eval: true,
+        name: 'gemma-read-aloud-worker',
+      }),
+    )
+
+    await model.request({
+      type: 'load',
+      assetRoot,
+      cacheDir,
+      modelId: READ_ALOUD_MODEL_ID,
+      dtype: READ_ALOUD_MODEL_DTYPE,
+      backend: READ_ALOUD_BACKEND,
+    })
+
+    return model
+  }
+
+  public async generate(
+    text: string,
+    options: {
+      voice: ReadAloudVoiceId
+      speed: number
+    },
+  ): Promise<ReadAloudModelChunk['audio']> {
+    const result = await this.request({
+      type: 'generate',
+      text,
+      voice: options.voice,
+      speed: options.speed,
+    })
+
+    if (
+      !result
+      || typeof result !== 'object'
+      || !('audio' in result)
+      || !(result.audio instanceof Float32Array)
+      || !('sampling_rate' in result)
+      || typeof result.sampling_rate !== 'number'
+    ) {
+      throw new Error('Read aloud worker returned invalid audio.')
+    }
+
+    return {
+      audio: result.audio,
+      sampling_rate: result.sampling_rate,
+    }
+  }
+
+  public async dispose(): Promise<void> {
+    if (this.disposed) {
+      return await (this.disposePromise ?? Promise.resolve())
+    }
+
+    this.disposed = true
+    this.disposePromise = new Promise<void>((resolve) => {
+      this.resolveDispose = resolve
+    })
+    this.terminateIfIdle()
+    return await this.disposePromise
+  }
+
+  private request(message: Record<string, unknown>): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error('Read aloud cancelled.'))
+    }
+
+    const id = this.nextRequestId
+    this.nextRequestId += 1
+
+    return awaitableRequest<unknown>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject })
+      this.worker.postMessage({
+        ...message,
+        id,
+      })
+    })
+  }
+
+  private handleMessage(message: unknown): void {
+    if (
+      !message
+      || typeof message !== 'object'
+      || !('id' in message)
+      || typeof message.id !== 'number'
+    ) {
+      return
+    }
+
+    const pending = this.pending.get(message.id)
+    if (!pending) {
+      return
+    }
+    this.pending.delete(message.id)
+
+    if ('ok' in message && message.ok === true) {
+      pending.resolve(message)
+      this.terminateIfIdle()
+      return
+    }
+
+    const errorMessage =
+      'error' in message && typeof message.error === 'string'
+        ? message.error
+        : 'Read aloud worker failed.'
+    pending.reject(new Error(errorMessage))
+    this.terminateIfIdle()
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      pending.reject(error)
+    }
+    this.pending.clear()
+    this.resolveDispose?.()
+    this.resolveDispose = null
+  }
+
+  private terminateIfIdle(): void {
+    if (!this.disposed || this.pending.size > 0) {
+      return
+    }
+
+    const resolveDispose = this.resolveDispose
+    this.resolveDispose = null
+    void this.worker.terminate()
+      .catch((error) => {
+        warnReadAloudCleanupFailure('Failed to terminate idle read-aloud worker', error)
+      })
+      .finally(() => {
+        resolveDispose?.()
+      })
+  }
+}
+
+function awaitableRequest<T>(
+  setup: (
+    resolve: (value: T) => void,
+    reject: (error: Error) => void,
+  ) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    setup(resolve, reject)
+  })
+}
+
 class TransformersKokoroLoader implements ReadAloudModelLoader {
   public async load(
     assetRoot: string,
     cacheDir: string,
   ): Promise<ReadAloudModel> {
-    const [{ env }, { KokoroTTS }] = await Promise.all([
-      import('@huggingface/transformers'),
-      import('kokoro-js'),
-    ])
-
-    env.allowRemoteModels = false
-    env.localModelPath = `${path.dirname(assetRoot)}${path.sep}`
-    env.cacheDir = cacheDir
-
-    return await KokoroTTS.from_pretrained(READ_ALOUD_MODEL_ID, {
-      dtype: READ_ALOUD_MODEL_DTYPE,
-      device: READ_ALOUD_BACKEND,
-    }) as ReadAloudModel
+    return await WorkerBackedReadAloudModel.load(assetRoot, cacheDir)
   }
 }
 
@@ -664,6 +985,8 @@ export class ReadAloudService {
   private readonly assetRootCandidates: string[]
   private readonly modelLoader: ReadAloudModelLoader
   private readonly beforeHeavyWork: () => Promise<void>
+  private readonly streamCleanupReadyPromise: Promise<void>
+  private readonly activeStreamArtifacts = new Map<string, ReadAloudStreamArtifacts>()
   private tts: ReadAloudModel | null = null
   private loadedAssetRoot: string | null = null
   private loadingPromise: Promise<ReadAloudModel> | null = null
@@ -687,6 +1010,7 @@ export class ReadAloudService {
     this.assetRootCandidates = options.assetRootCandidates ?? defaultAssetRootCandidates(this.cacheRoot)
     this.modelLoader = options.modelLoader ?? new TransformersKokoroLoader()
     this.beforeHeavyWork = options.beforeHeavyWork ?? yieldToEventLoop
+    this.streamCleanupReadyPromise = this.cleanupStaleStreamArtifacts()
   }
 
   public onChanged(listener: ReadAloudChangeListener): () => void {
@@ -976,6 +1300,10 @@ export class ReadAloudService {
         }
 
         const audio = await tts.generate(segmentText, { voice, speed })
+        if (controller.signal.aborted) {
+          throw new Error('Read aloud cancelled.')
+        }
+
         chunks.push(audio.audio)
         sampleRate = audio.sampling_rate
       }
@@ -984,14 +1312,11 @@ export class ReadAloudService {
         throw new Error('Read aloud did not produce any audio.')
       }
 
-      const [{ RawAudio }] = await Promise.all([
-        import('@huggingface/transformers'),
-      ])
-      const wav = new RawAudio(
+      await writeReadAloudWavFile(
+        cachePath,
         concatAudioBuffers(chunks),
         sampleRate,
-      ).toWav()
-      await fs.writeFile(cachePath, Buffer.from(wav))
+      )
       await pruneReadAloudCache(resolution.cacheDir)
 
       return {
@@ -1014,10 +1339,59 @@ export class ReadAloudService {
     } finally {
       if (this.currentAbortController === controller) {
         this.currentAbortController = null
+        this.busy = false
+        this.emitChanged()
       }
-      this.busy = false
-      this.emitChanged()
     }
+  }
+
+  public async startStreaming(
+    input: ReadAloudStreamSynthesisInput,
+    options: {
+      enabled: boolean
+      emit: ReadAloudStreamEmitter
+    },
+  ): Promise<ReadAloudStreamStartResult> {
+    if (this.supportedPlatform !== 'darwin') {
+      throw new Error('Read aloud is currently available on macOS builds only.')
+    }
+
+    if (!options.enabled) {
+      throw new Error('Read aloud is disabled in Settings.')
+    }
+
+    const streamId = normalizeReadAloudStreamId(input.streamId)
+    const text = input.text.trim()
+    if (text.length === 0) {
+      throw new Error('There is no readable text in this message.')
+    }
+
+    void this.runStreamingSynthesis(
+      {
+        ...input,
+        streamId,
+        text,
+      },
+      options,
+    )
+
+    return { streamId }
+  }
+
+  public async cleanupStream(streamId: string): Promise<{ ok: true }> {
+    if (!READ_ALOUD_STREAM_ID_PATTERN.test(streamId)) {
+      return { ok: true }
+    }
+
+    const artifacts = this.activeStreamArtifacts.get(streamId)
+    this.activeStreamArtifacts.delete(streamId)
+    const tempDir = artifacts?.tempDir ?? buildReadAloudStreamDir(this.cacheRoot, streamId)
+    await this.streamCleanupReadyPromise
+    await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
+      warnReadAloudCleanupFailure(`Failed to remove read-aloud stream artifacts ${tempDir}`, error)
+    })
+
+    return { ok: true }
   }
 
   public async test(
@@ -1048,9 +1422,232 @@ export class ReadAloudService {
       this.currentAbortController = null
       this.busy = false
       this.emitChanged()
+
+      const currentModel = this.tts
+      this.tts = null
+      this.loadedAssetRoot = null
+      void currentModel?.dispose?.().catch((error) => {
+        warnReadAloudCleanupFailure('Failed to stop read-aloud worker after cancellation', error)
+      })
     }
 
     return { ok: true }
+  }
+
+  private async runStreamingSynthesis(
+    input: ReadAloudStreamSynthesisInput,
+    options: {
+      enabled: boolean
+      emit: ReadAloudStreamEmitter
+    },
+  ): Promise<void> {
+    const streamId = input.streamId
+    const text = input.text.trim()
+    const voice = normalizeReadAloudVoice(input.voice)
+    const speed = clampReadAloudSpeed(input.speed)
+    const segments = splitTextForReadAloud(text)
+    const { cacheKey, textHash } = buildReadAloudCacheKey({
+      messageId: input.messageId || READ_ALOUD_PREVIEW_MESSAGE_ID,
+      text,
+      voice,
+      speed,
+      modelVersion: `${READ_ALOUD_MODEL_ID}:${READ_ALOUD_MODEL_DTYPE}`,
+    })
+    const usePersistentCache = input.useCache !== false
+    const tempDir = buildReadAloudStreamDir(this.cacheRoot, streamId)
+    let completed = false
+    let registeredArtifacts = false
+    let controller: AbortController | null = null
+
+    const emit = options.emit
+
+    try {
+      await this.cancelCurrent()
+      controller = new AbortController()
+      this.currentAbortController = controller
+      this.busy = true
+      this.lastError = null
+      this.emitChanged()
+
+      const resolution = await this.ensureAssetsReady()
+      if (controller.signal.aborted) {
+        throw new Error('Read aloud cancelled.')
+      }
+
+      const cachePath = path.join(resolution.cacheDir, `${cacheKey}.wav`)
+
+      await ensureDir(resolution.cacheDir)
+      await pruneReadAloudCache(resolution.cacheDir)
+
+      if (usePersistentCache && await pathExists(cachePath)) {
+        const now = new Date()
+        await fs.utimes(cachePath, now, now).catch((error) => {
+          warnReadAloudCleanupFailure(`Failed to refresh read-aloud cache timestamp for ${cachePath}`, error)
+        })
+        const result: ReadAloudSynthesisResult = {
+          audioPath: cachePath,
+          fromCache: true,
+          durationMs: await parseWavDurationFromFile(cachePath),
+          voice,
+          speed,
+          textHash,
+        }
+        emit({
+          type: 'started',
+          streamId,
+          totalSegments: 1,
+          voice,
+          speed,
+          textHash,
+          fromCache: true,
+        })
+        emit({
+          type: 'final-ready',
+          streamId,
+          result,
+          temporaryFinal: false,
+        })
+        emit({
+          type: 'complete',
+          streamId,
+          result,
+          temporaryFinal: false,
+        })
+        completed = true
+        return
+      }
+
+      await this.streamCleanupReadyPromise
+      await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
+        warnReadAloudCleanupFailure(`Failed to reset read-aloud stream artifacts ${tempDir}`, error)
+      })
+      await ensureDir(path.join(tempDir, 'segments'))
+      this.activeStreamArtifacts.set(streamId, { tempDir })
+      registeredArtifacts = true
+
+      emit({
+        type: 'started',
+        streamId,
+        totalSegments: segments.length,
+        voice,
+        speed,
+        textHash,
+        fromCache: false,
+      })
+
+      const needsModelLoad = !this.tts || this.loadedAssetRoot !== resolution.assetRoot
+      if (needsModelLoad) {
+        await this.beforeHeavyWork()
+      }
+
+      const tts = await this.getModel(resolution.assetRoot, resolution.cacheDir)
+      if (controller.signal.aborted) {
+        throw new Error('Read aloud cancelled.')
+      }
+
+      const chunks: Float32Array[] = []
+      let sampleRate = READ_ALOUD_SAMPLE_RATE
+      let generatedSampleCount = 0
+
+      for (const [index, segmentText] of segments.entries()) {
+        if (controller.signal.aborted) {
+          throw new Error('Read aloud cancelled.')
+        }
+
+        const audio = await tts.generate(segmentText, { voice, speed })
+        if (controller.signal.aborted) {
+          throw new Error('Read aloud cancelled.')
+        }
+
+        chunks.push(audio.audio)
+        sampleRate = audio.sampling_rate
+        generatedSampleCount += audio.audio.length
+
+        const segmentPath = buildReadAloudStreamSegmentPath(tempDir, index)
+        await writeReadAloudWavFile(segmentPath, audio.audio, sampleRate)
+        if (controller.signal.aborted) {
+          throw new Error('Read aloud cancelled.')
+        }
+
+        emit({
+          type: 'segment-ready',
+          streamId,
+          index,
+          totalSegments: segments.length,
+          audioPath: segmentPath,
+          durationMs: resolveDurationMs(audio.audio.length, sampleRate),
+          generatedDurationMs: resolveDurationMs(generatedSampleCount, sampleRate),
+        })
+      }
+
+      if (chunks.length === 0) {
+        throw new Error('Read aloud did not produce any audio.')
+      }
+
+      const finalPath = usePersistentCache
+        ? cachePath
+        : path.join(tempDir, 'final.wav')
+      const combinedAudio = concatAudioBuffers(chunks)
+      await writeReadAloudWavFile(finalPath, combinedAudio, sampleRate)
+      if (usePersistentCache) {
+        await pruneReadAloudCache(resolution.cacheDir)
+      }
+
+      const result: ReadAloudSynthesisResult = {
+        audioPath: finalPath,
+        fromCache: false,
+        durationMs: resolveDurationMs(combinedAudio.length, sampleRate),
+        voice,
+        speed,
+        textHash,
+      }
+
+      emit({
+        type: 'final-ready',
+        streamId,
+        result,
+        temporaryFinal: !usePersistentCache,
+      })
+      emit({
+        type: 'complete',
+        streamId,
+        result,
+        temporaryFinal: !usePersistentCache,
+      })
+      completed = true
+    } catch (error) {
+      const cancelled =
+        controller?.signal.aborted === true
+        || (error instanceof Error && error.message === 'Read aloud cancelled.')
+      if (cancelled) {
+        emit({ type: 'cancelled', streamId })
+      } else {
+        const errorMessage = error instanceof Error ? error.message : 'Read aloud failed.'
+        this.lastError = errorMessage
+        emit({
+          type: 'error',
+          streamId,
+          message: errorMessage,
+        })
+      }
+    } finally {
+      if (controller && this.currentAbortController === controller) {
+        this.currentAbortController = null
+        this.busy = false
+        this.emitChanged()
+      }
+
+      if (!completed && registeredArtifacts) {
+        await this.cleanupStream(streamId)
+      }
+    }
+  }
+
+  private async cleanupStaleStreamArtifacts(): Promise<void> {
+    const streamRoot = buildReadAloudStreamRoot(this.cacheRoot)
+    await fs.rm(streamRoot, { recursive: true, force: true }).catch((error) => {
+      warnReadAloudCleanupFailure(`Failed to remove stale read-aloud stream artifacts ${streamRoot}`, error)
+    })
   }
 
   private async ensureAssetsReady(): Promise<ReadAloudAssetResolution> {

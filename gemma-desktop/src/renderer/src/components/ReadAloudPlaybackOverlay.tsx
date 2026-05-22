@@ -17,7 +17,14 @@ interface ReadAloudPlaybackOverlayProps {
   className?: string
 }
 
-function buildStatusLabel(phase: ReadAloudPlaybackControls['phase']): string {
+function buildStatusLabel(
+  phase: ReadAloudPlaybackControls['phase'],
+  generating: boolean,
+): string {
+  if (generating && phase !== 'idle') {
+    return 'Generating audio'
+  }
+
   switch (phase) {
     case 'idle':
       return 'Read aloud'
@@ -156,7 +163,7 @@ export function ReadAloudPlaybackOverlay({
   const durationLabel = controls.durationSec > 0
     ? formatElapsedClock(Math.round(controls.durationSec * 1000))
     : '--:--'
-  const statusLabel = buildStatusLabel(controls.phase)
+  const statusLabel = buildStatusLabel(controls.phase, controls.generating)
   const sliderValueText = `${currentLabel} of ${durationLabel}`
   const isPlaying = controls.phase === 'playing'
 
@@ -319,9 +326,13 @@ export function ReadAloudPlaybackOverlay({
               </span>
               <div
                 ref={trackRef}
-                role="slider"
+                role={controls.canSeek ? 'slider' : 'progressbar'}
                 tabIndex={controls.canSeek ? 0 : -1}
-                aria-label="Read aloud playback position"
+                aria-label={
+                  controls.canSeek
+                    ? 'Read aloud playback position'
+                    : 'Read aloud playback progress'
+                }
                 aria-valuemin={0}
                 aria-valuemax={rangeMax}
                 aria-valuenow={displayedTimeSec}
@@ -334,7 +345,9 @@ export function ReadAloudPlaybackOverlay({
                 onPointerCancel={handlePointerCancel}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
-                className="group relative h-6 min-w-0 flex-1 touch-none select-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed"
+                className={`group relative h-6 min-w-0 flex-1 touch-none select-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60 ${
+                  controls.canSeek ? 'cursor-pointer' : 'cursor-default'
+                }`}
               >
                 <div className={styles.trackBase} />
                 <div
@@ -350,9 +363,19 @@ export function ReadAloudPlaybackOverlay({
                   style={{ left: `${progressPercent}%` }}
                 />
               </div>
-              <span className={`w-10 text-left ${styles.timeText}`}>
-                {durationLabel}
-              </span>
+              {controls.generating ? (
+                <span className={`flex w-10 justify-start ${styles.timeText}`}>
+                  <Loader2
+                    size={13}
+                    className="animate-spin"
+                    aria-label="Generating read aloud audio"
+                  />
+                </span>
+              ) : (
+                <span className={`w-10 text-left ${styles.timeText}`}>
+                  {durationLabel}
+                </span>
+              )}
             </div>
           </div>
         </div>
