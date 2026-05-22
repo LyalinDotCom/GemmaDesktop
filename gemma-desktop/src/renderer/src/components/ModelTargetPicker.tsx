@@ -81,6 +81,11 @@ function compareModelTargetOptions(
   left: ModelTargetOption,
   right: ModelTargetOption,
 ): number {
+  const geminiPriority = compareGeminiModelPriority(left, right)
+  if (geminiPriority !== 0) {
+    return geminiPriority
+  }
+
   return (
     compareModelOptionText(left.label, right.label)
     || compareModelOptionText(left.providerLabel, right.providerLabel)
@@ -88,6 +93,27 @@ function compareModelTargetOptions(
     || compareModelOptionText(left.runtimeId, right.runtimeId)
     || compareModelOptionText(left.modelId, right.modelId)
   )
+}
+
+function geminiModelPriority(option: ModelTargetOption): number {
+  if (option.runtimeId !== 'gemini-api') {
+    return 0
+  }
+  const value = `${option.modelId} ${option.label}`.toLowerCase()
+  if (/gemini-3(?:[.-]|$)/.test(value)) return 0
+  if (/gemma-4(?:[.-]|$)/.test(value)) return 1
+  if (/gemini-2\.5(?:[.-]|$)/.test(value)) return 3
+  return 2
+}
+
+function compareGeminiModelPriority(
+  left: ModelTargetOption,
+  right: ModelTargetOption,
+): number {
+  if (left.runtimeId !== 'gemini-api' || right.runtimeId !== 'gemini-api') {
+    return 0
+  }
+  return geminiModelPriority(left) - geminiModelPriority(right)
 }
 
 function normalizeModelTargetOption(option: ModelTargetOption): ModelTargetOption {

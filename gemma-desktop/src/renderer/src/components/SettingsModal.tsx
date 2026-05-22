@@ -39,6 +39,20 @@ import {
   getDefaultOmlxSettings,
 } from '@shared/omlxRuntimeConfig'
 import {
+  GEMINI_API_CONTEXT_PRESET_VALUES,
+  GEMINI_API_PROFILE_DESCRIPTIONS,
+  GEMINI_API_PROFILE_LABELS,
+  GEMINI_API_PROFILE_ORDER,
+  GEMINI_API_SETTING_RANGES,
+  GEMINI_THINKING_LEVEL_OPTIONS,
+  formatGeminiContextPreset,
+  getDefaultGeminiApiSettings,
+  resolveGeminiApiProfileKey,
+  type AppGeminiApiSettings,
+  type GeminiApiGenerationProfile,
+  type GeminiApiProfileKey,
+} from '@shared/geminiApiRuntimeConfig'
+import {
   READ_ALOUD_VOICE_OPTIONS,
   clampReadAloudSpeed,
 } from '@shared/readAloud'
@@ -508,6 +522,59 @@ export function SettingsModal({
     })
   }
 
+  const updateGeminiApiSettings = (patch: Partial<AppGeminiApiSettings>) => {
+    const integrations = {
+      ...local.integrations,
+      geminiApi: { ...local.integrations.geminiApi, ...patch },
+    }
+    setLocal({ ...local, integrations })
+    commitUpdate({ integrations })
+  }
+
+  const updateGeminiApiProfile = (
+    profileKey: GeminiApiProfileKey,
+    patch: Partial<GeminiApiGenerationProfile>,
+  ) => {
+    const currentProfile = local.integrations.geminiApi.profiles[profileKey]
+    const integrations = {
+      ...local.integrations,
+      geminiApi: {
+        ...local.integrations.geminiApi,
+        profiles: {
+          ...local.integrations.geminiApi.profiles,
+          [profileKey]: { ...currentProfile, ...patch },
+        },
+      },
+    }
+    setLocal({ ...local, integrations })
+    commitUpdate({ integrations })
+  }
+
+  const handleGeminiApiRequiredNumberChange = (
+    profileKey: GeminiApiProfileKey,
+    key: 'temperature' | 'topP' | 'topK' | 'thinkingBudget',
+    rawValue: string,
+  ) => {
+    const defaults = getDefaultGeminiApiSettings().profiles[profileKey]
+    const nextValue = rawValue.trim().length > 0
+      ? Number(rawValue)
+      : defaults[key]
+    updateGeminiApiProfile(profileKey, {
+      [key]: Number.isFinite(nextValue) ? nextValue : defaults[key],
+    })
+  }
+
+  const handleGeminiApiOptionalNumberChange = (
+    profileKey: GeminiApiProfileKey,
+    key: 'maxOutputTokens' | 'contextTokens',
+    rawValue: string,
+  ) => {
+    const nextValue = rawValue.trim().length > 0 ? Number(rawValue) : null
+    updateGeminiApiProfile(profileKey, {
+      [key]: Number.isFinite(nextValue) ? nextValue : null,
+    })
+  }
+
   const handlePickDefaultDirectory = async () => {
     const picked = await window.gemmaDesktopBridge.folders.pickDirectory(
       local.defaultProjectDirectory,
@@ -539,6 +606,9 @@ export function SettingsModal({
   }
 
   const readAloudProgressLabel = buildReadAloudProgressLabel(readAloudStatus)
+  const selectedGeminiProfileKey = resolveGeminiApiProfileKey(
+    local.integrations.geminiApi.model,
+  )
 
   const previewButtonLabel =
     readAloudStatus?.state === 'installing' && readAloudProgressLabel
@@ -1459,14 +1529,7 @@ export function SettingsModal({
                         spellCheck={false}
                         placeholder="AIza..."
                         value={local.integrations.geminiApi.apiKey}
-                        onChange={(e) => {
-                          const integrations = {
-                            ...local.integrations,
-                            geminiApi: { ...local.integrations.geminiApi, apiKey: e.target.value },
-                          }
-                          setLocal({ ...local, integrations })
-                          commitUpdate({ integrations })
-                        }}
+                        onChange={(e) => updateGeminiApiSettings({ apiKey: e.target.value })}
                         className="pr-9 font-mono text-xs"
                       />
                       <button
@@ -1481,27 +1544,183 @@ export function SettingsModal({
                   </SettingsField>
 
                   <SettingsField
-                    label="Grounded search model"
+                    label="Default Gemini API model"
                     hint={
                       <>
-                        Defaults to <code>gemini-3-flash-preview</code>. Hosted chat models are selected from the model picker after model discovery refreshes.
+                        Defaults to <code>gemini-3-flash-preview</code>. Gemini 3.x is the primary hosted path; 2.5 models remain available from model discovery as legacy choices.
                       </>
                     }
                   >
                     <TextInput
                       type="text"
                       value={local.integrations.geminiApi.model}
-                      onChange={(e) => {
-                        const integrations = {
-                          ...local.integrations,
-                          geminiApi: { ...local.integrations.geminiApi, model: e.target.value },
-                        }
-                        setLocal({ ...local, integrations })
-                        commitUpdate({ integrations })
-                      }}
+                      onChange={(e) => updateGeminiApiSettings({ model: e.target.value })}
                       className="font-mono text-xs"
                     />
                   </SettingsField>
+
+                  <Note>
+                    The current default model uses the {GEMINI_API_PROFILE_LABELS[selectedGeminiProfileKey]} profile. Gemini 3.x and Gemini 2.5 profiles follow Google Gemini CLI defaults; Gemma on Gemini API follows the same Gemma sampling defaults as local Gemma.
+                  </Note>
+
+                  <div className="space-y-4">
+                    {GEMINI_API_PROFILE_ORDER.map((profileKey) => {
+                      const profile = local.integrations.geminiApi.profiles[profileKey]
+                      const sendsThinkingLevel = profileKey === 'gemini3' || profileKey === 'gemmaApi'
+                      const sendsThinkingBudget = profileKey === 'gemini25'
+                      const sendsThinking = sendsThinkingLevel || sendsThinkingBudget
+                      const requestedSummary = [
+                        `temperature=${profile.temperature}`,
+                        `topP=${profile.topP}`,
+                        `topK=${profile.topK}`,
+                        profile.maxOutputTokens != null ? `maxOutputTokens=${profile.maxOutputTokens}` : 'maxOutputTokens=provider default',
+                        profile.contextTokens != null ? `context=${profile.contextTokens}` : 'context=discovered limit',
+                        sendsThinkingLevel ? `thinkingLevel=${profile.thinkingLevel}` : null,
+                        sendsThinkingBudget ? `thinkingBudget=${profile.thinkingBudget}` : null,
+                        sendsThinking ? `includeThoughts=${profile.includeThoughts}` : 'thinking=not sent',
+                      ].filter((part): part is string => Boolean(part))
+
+                      return (
+                        <div key={profileKey} className="space-y-3 border-t border-zinc-100 pt-4 first:border-t-0 first:pt-0 dark:border-zinc-900">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                              {GEMINI_API_PROFILE_LABELS[profileKey]}
+                            </div>
+                            {profileKey === selectedGeminiProfileKey ? <Tag tone="success">selected</Tag> : null}
+                            {profileKey === 'gemini25' ? <Tag tone="warning">legacy</Tag> : null}
+                          </div>
+                          <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                            {GEMINI_API_PROFILE_DESCRIPTIONS[profileKey]}
+                          </p>
+
+                          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                            <SettingsField label="Temperature">
+                              <TextInput
+                                type="number"
+                                min={GEMINI_API_SETTING_RANGES.temperature.min}
+                                max={GEMINI_API_SETTING_RANGES.temperature.max}
+                                step={GEMINI_API_SETTING_RANGES.temperature.step}
+                                value={profile.temperature}
+                                onChange={(e) => handleGeminiApiRequiredNumberChange(profileKey, 'temperature', e.target.value)}
+                              />
+                            </SettingsField>
+
+                            <SettingsField label="Top P">
+                              <TextInput
+                                type="number"
+                                min={GEMINI_API_SETTING_RANGES.topP.min}
+                                max={GEMINI_API_SETTING_RANGES.topP.max}
+                                step={GEMINI_API_SETTING_RANGES.topP.step}
+                                value={profile.topP}
+                                onChange={(e) => handleGeminiApiRequiredNumberChange(profileKey, 'topP', e.target.value)}
+                              />
+                            </SettingsField>
+
+                            <SettingsField label="Top K">
+                              <TextInput
+                                type="number"
+                                min={GEMINI_API_SETTING_RANGES.topK.min}
+                                max={GEMINI_API_SETTING_RANGES.topK.max}
+                                step={GEMINI_API_SETTING_RANGES.topK.step}
+                                value={profile.topK}
+                                onChange={(e) => handleGeminiApiRequiredNumberChange(profileKey, 'topK', e.target.value)}
+                              />
+                            </SettingsField>
+
+                            <SettingsField
+                              label="Max Output Tokens"
+                              hint="Leave blank to use the model's API default."
+                            >
+                              <TextInput
+                                type="number"
+                                min={GEMINI_API_SETTING_RANGES.maxOutputTokens.min}
+                                max={GEMINI_API_SETTING_RANGES.maxOutputTokens.max}
+                                step={GEMINI_API_SETTING_RANGES.maxOutputTokens.step}
+                                placeholder="provider default"
+                                value={profile.maxOutputTokens ?? ''}
+                                onChange={(e) => handleGeminiApiOptionalNumberChange(profileKey, 'maxOutputTokens', e.target.value)}
+                              />
+                            </SettingsField>
+
+                            <SettingsField
+                              label="Context Budget"
+                              hint="Local session accounting only; Gemini API enforces the selected model's actual input limit."
+                            >
+                              <Select
+                                value={profile.contextTokens ?? ''}
+                                onChange={(e) => handleGeminiApiOptionalNumberChange(profileKey, 'contextTokens', e.target.value)}
+                              >
+                                <option value="">Use discovered model limit</option>
+                                {GEMINI_API_CONTEXT_PRESET_VALUES.map((value) => (
+                                  <option key={value} value={value}>
+                                    {formatGeminiContextPreset(value)} ({value.toLocaleString()})
+                                  </option>
+                                ))}
+                              </Select>
+                            </SettingsField>
+
+                            {sendsThinkingLevel ? (
+                              <SettingsField
+                                label="Thinking Level"
+                                hint="Sent to this model family."
+                              >
+                                <Select
+                                  value={profile.thinkingLevel}
+                                  onChange={(e) =>
+                                    updateGeminiApiProfile(profileKey, {
+                                      thinkingLevel: e.target.value as GeminiApiGenerationProfile['thinkingLevel'],
+                                    })}
+                                >
+                                  {GEMINI_THINKING_LEVEL_OPTIONS.map((level) => (
+                                    <option key={level} value={level}>
+                                      {level}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </SettingsField>
+                            ) : null}
+
+                            {sendsThinkingBudget ? (
+                              <SettingsField
+                                label="Thinking Budget"
+                                hint="Legacy Gemini 2.5 setting."
+                              >
+                                <TextInput
+                                  type="number"
+                                  min={GEMINI_API_SETTING_RANGES.thinkingBudget.min}
+                                  max={GEMINI_API_SETTING_RANGES.thinkingBudget.max}
+                                  step={GEMINI_API_SETTING_RANGES.thinkingBudget.step}
+                                  value={profile.thinkingBudget}
+                                  onChange={(e) => handleGeminiApiRequiredNumberChange(profileKey, 'thinkingBudget', e.target.value)}
+                                />
+                              </SettingsField>
+                            ) : null}
+                          </div>
+
+                          {sendsThinking ? (
+                            <SettingsRow
+                              label="Include Thought Summaries"
+                              description="Shows Gemini thought summaries in the app reasoning stream when the API returns them."
+                              control={
+                                <Toggle
+                                  checked={profile.includeThoughts}
+                                  ariaLabel={`Toggle ${GEMINI_API_PROFILE_LABELS[profileKey]} thought summaries`}
+                                  onChange={() =>
+                                    updateGeminiApiProfile(profileKey, {
+                                      includeThoughts: !profile.includeThoughts,
+                                    })}
+                                />
+                              }
+                            />
+                          ) : (
+                            <Note>Thinking config is not sent for this fallback profile.</Note>
+                          )}
+
+                          <Note>Requested now: {requestedSummary.join(' · ')}</Note>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </SettingsSection>
               )}
 

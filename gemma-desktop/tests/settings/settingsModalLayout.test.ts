@@ -15,6 +15,7 @@ import type { AppSettings, ModelSummary } from '../../src/renderer/src/types'
 import { getDefaultLmStudioSettings } from '../../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../../src/shared/ollamaRuntimeConfig'
 import { getDefaultOmlxSettings } from '../../src/shared/omlxRuntimeConfig'
+import { getDefaultGeminiApiSettings } from '../../src/shared/geminiApiRuntimeConfig'
 import { getDefaultReasoningSettings } from '../../src/shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '../../src/shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../../src/shared/geminiModels'
@@ -107,10 +108,7 @@ function makeSettings(): AppSettings {
       },
     },
     integrations: {
-      geminiApi: {
-        apiKey: '',
-        model: 'gemini-3-flash-preview',
-      },
+      geminiApi: getDefaultGeminiApiSettings(),
       geminiCli: {
         model: ASK_GEMINI_DEFAULT_MODEL,
       },
@@ -207,20 +205,27 @@ describe('SettingsModal layout', () => {
       modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference'),
       modelOption('alpha:7b', 'Alpha 7B', 'lmstudio-openai', 'LM Studio', 'OpenAI-compatible inference'),
       modelOption('qwen3:8b', 'Qwen3 8B', 'lmstudio-native', 'LM Studio', 'Provider-native inference'),
+      modelOption('gemini-2.5-pro', 'Gemini 2.5 Pro', 'gemini-api', 'Gemini API', 'Hosted inference'),
+      modelOption('gemini-3.5-flash', 'Gemini 3.5 Flash', 'gemini-api', 'Gemini API', 'Hosted inference'),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-native', 'Ollama', 'Provider-native inference'),
       modelOption('gemma4:26b', 'Gemma 4 26B', 'ollama-openai', 'Ollama', 'OpenAI-compatible inference'),
     ])
 
     expect(groups.map((group) => group.providerLabel)).toEqual([
+      'Gemini API',
       'LM Studio',
       'Ollama',
     ])
     expect(groups[0]?.options.map(formatModelTargetOptionLabel)).toEqual([
+      'Gemini 3.5 Flash - Gemini API - Hosted inference',
+      'Gemini 2.5 Pro - Gemini API - Hosted inference',
+    ])
+    expect(groups[1]?.options.map(formatModelTargetOptionLabel)).toEqual([
       'Alpha 7B - LM Studio - OpenAI-compatible inference',
       'Qwen3 8B - LM Studio - OpenAI-compatible inference',
       'Zeta 7B - LM Studio - OpenAI-compatible inference',
     ])
-    expect(groups[1]?.options.map(formatModelTargetOptionLabel)).toEqual([
+    expect(groups[2]?.options.map(formatModelTargetOptionLabel)).toEqual([
       'Gemma 4 26B - Ollama - OpenAI-compatible inference',
     ])
   })
@@ -301,6 +306,16 @@ describe('SettingsModal layout', () => {
     expect(markup).toContain('Hosted Gemini inference')
     expect(markup).toContain('aistudio.google.com/app/apikey')
     expect(markup).toContain('gemini-3-flash-preview')
+    expect(markup).toContain('Temperature')
+    expect(markup).toContain('Top P')
+    expect(markup).toContain('Top K')
+    expect(markup).toContain('Max Output Tokens')
+    expect(markup).toContain('Context Budget')
+    expect(markup).toContain('Thinking Level')
+    expect(markup).toContain('Thinking Budget')
+    expect(markup).toContain('Include Thought Summaries')
+    expect(markup).toContain('temperature=1')
+    expect(markup).toContain('thinkingLevel=high')
   })
 
   it('keeps Gemini CLI settings on the Integrations tab', () => {

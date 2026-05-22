@@ -205,6 +205,13 @@ import {
   type OmlxManagedModelProfile,
 } from '../shared/omlxRuntimeConfig'
 import {
+  buildGeminiGenerationOptions,
+  getDefaultGeminiApiSettings,
+  normalizeGeminiApiSettings,
+  resolveGeminiContextTokens,
+  type AppGeminiApiSettings,
+} from '../shared/geminiApiRuntimeConfig'
+import {
   buildDoctorReport,
   collectDoctorCommandChecks,
 } from './doctor'
@@ -1149,10 +1156,7 @@ type AppSettingsRecord = {
     omlx: { endpoint: string; apiKey: string }
   }
   integrations: {
-    geminiApi: {
-      apiKey: string
-      model: string
-    }
+    geminiApi: AppGeminiApiSettings
     geminiCli: {
       model: string
     }
@@ -4220,10 +4224,7 @@ function getDefaultSettings(): AppSettingsRecord {
       omlx: { endpoint: 'http://127.0.0.1:8000', apiKey: '' },
     },
     integrations: {
-      geminiApi: {
-        apiKey: '',
-        model: 'gemini-3-flash-preview',
-      },
+      geminiApi: getDefaultGeminiApiSettings(),
       geminiCli: {
         model: ASK_GEMINI_DEFAULT_MODEL,
       },
@@ -4475,19 +4476,10 @@ async function loadSettings(): Promise<AppSettingsRecord> {
         ...defaults.integrations.geminiCli,
         ...(reusable.integrations?.geminiCli ?? {}),
       },
-      geminiApi: (() => {
-        const merged = {
-          ...defaults.integrations.geminiApi,
-          ...(reusable.integrations?.geminiApi ?? {}),
-        }
-        if (
-          merged.model === 'gemini-2.5-flash'
-          || merged.model === 'gemini-3.1-flash-preview'
-        ) {
-          merged.model = defaults.integrations.geminiApi.model
-        }
-        return merged
-      })(),
+      geminiApi: normalizeGeminiApiSettings(
+        reusable.integrations?.geminiApi,
+        defaults.integrations.geminiApi,
+      ),
     },
     defaultProjectDirectory:
       typeof reusable.defaultProjectDirectory === 'string'
@@ -4625,10 +4617,10 @@ async function saveSettings(
       ),
     },
     integrations: {
-      geminiApi: {
-        ...current.integrations.geminiApi,
-        ...(patch.integrations?.geminiApi ?? {}),
-      },
+      geminiApi: normalizeGeminiApiSettings(
+        patch.integrations?.geminiApi ?? current.integrations.geminiApi,
+        current.integrations.geminiApi,
+      ),
       geminiCli: {
         ...current.integrations.geminiCli,
         ...(patch.integrations?.geminiCli ?? {}),
@@ -5222,6 +5214,62 @@ function sameNumericRecord(
   )
 }
 
+function normalizeRequestPreferenceJsonValue(value: unknown): unknown {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+  ) {
+    return value
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeRequestPreferenceJsonValue)
+      .filter((entry) => entry !== undefined)
+  }
+
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, entry]) => [key, normalizeRequestPreferenceJsonValue(entry)] as const)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function normalizeRequestPreferenceObjectOptions(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const normalized = normalizeRequestPreferenceJsonValue(value)
+  if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) {
+    return undefined
+  }
+  return Object.keys(normalized).length > 0
+    ? normalized as Record<string, unknown>
+    : undefined
+}
+
+function sameJsonRecord(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  if (!left && !right) {
+    return true
+  }
+  if (!left || !right) {
+    return false
+  }
+  return JSON.stringify(normalizeRequestPreferenceJsonValue(left))
+    === JSON.stringify(normalizeRequestPreferenceJsonValue(right))
+}
+
 function resolveSessionStorageDirectory(
   sessionId: string,
   snapshot: SessionSnapshot,
@@ -5287,6 +5335,15 @@ function resolveEffectiveOmlxOptions(
   )
 }
 
+function resolveEffectiveGeminiOptions(
+  currentSettings: AppSettingsRecord,
+  target: { modelId: string; runtimeId: string },
+): Record<string, unknown> | undefined {
+  return target.runtimeId === 'gemini-api'
+    ? buildGeminiGenerationOptions(currentSettings.integrations.geminiApi, target.modelId)
+    : undefined
+}
+
 function resolveEffectiveReasoningMode(
   _currentSettings: AppSettingsRecord,
   target: { modelId: string; runtimeId: string },
@@ -5314,6 +5371,7 @@ function withResolvedRequestPreferencesMetadata(
   const ollamaOptions = resolveEffectiveOllamaOptions(currentSettings, target)
   const lmstudioOptions = resolveEffectiveLmStudioOptions(currentSettings, target)
   const omlxOptions = resolveEffectiveOmlxOptions(currentSettings, target)
+  const geminiOptions = resolveEffectiveGeminiOptions(currentSettings, target)
   const ollamaKeepAlive = resolveEffectiveOllamaKeepAlive(currentSettings, target)
   const currentPreferences = readRequestPreferences(metadata)
   const currentReasoningMode =
@@ -5336,6 +5394,9 @@ function withResolvedRequestPreferencesMetadata(
   const currentOmlxOptions = normalizeRequestPreferenceNumericOptions(
     currentPreferences?.omlxOptions,
   )
+  const currentGeminiOptions = normalizeRequestPreferenceObjectOptions(
+    currentPreferences?.geminiOptions,
+  )
 
   if (
     currentReasoningMode === reasoningMode
@@ -5343,6 +5404,7 @@ function withResolvedRequestPreferencesMetadata(
     && sameNumericRecord(currentOllamaOptions, ollamaOptions)
     && sameNumericRecord(currentLmStudioOptions, lmstudioOptions)
     && sameNumericRecord(currentOmlxOptions, omlxOptions)
+    && sameJsonRecord(currentGeminiOptions, geminiOptions)
   ) {
     return metadata
   }
@@ -5374,6 +5436,11 @@ function withResolvedRequestPreferencesMetadata(
     nextPreferences.omlxOptions = omlxOptions
   } else {
     delete nextPreferences.omlxOptions
+  }
+  if (geminiOptions) {
+    nextPreferences.geminiOptions = geminiOptions
+  } else {
+    delete nextPreferences.geminiOptions
   }
 
   if (Object.keys(nextPreferences).length > 0) {
@@ -6996,9 +7063,16 @@ function setPendingCompactionState(
 }
 
 async function resolveSessionContextLength(snapshot: SessionSnapshot): Promise<number> {
+  const currentSettings = await getSettingsState().catch(() => null)
+  const configuredGeminiContext = snapshot.runtimeId === 'gemini-api' && currentSettings
+    ? resolveGeminiContextTokens(currentSettings.integrations.geminiApi, snapshot.modelId)
+    : undefined
+  if (configuredGeminiContext) {
+    return configuredGeminiContext
+  }
+
   try {
     const env = await gemmaDesktop.inspectEnvironment()
-    const currentSettings = await getSettingsState().catch(() => null)
     const models = mapModels(env.runtimes, currentSettings)
     const matched = models.find(
       (model) =>

@@ -43,6 +43,7 @@ import type {
 import type { AppOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import type { AppLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
 import type { AppOmlxSettings } from '@shared/omlxRuntimeConfig'
+import type { AppGeminiApiSettings } from '@shared/geminiApiRuntimeConfig'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
 import type {
   LoadDefaultModelsResult,
@@ -653,10 +654,7 @@ export interface AppSettings {
     omlx: { endpoint: string; apiKey: string }
   }
   integrations: {
-    geminiApi: {
-      apiKey: string
-      model: string
-    }
+    geminiApi: AppGeminiApiSettings
     geminiCli: {
       model: string
     }

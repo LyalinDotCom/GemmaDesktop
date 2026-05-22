@@ -228,6 +228,7 @@ function generationConfig(request: ChatRequest): Record<string, unknown> | undef
   const config: Record<string, unknown> = {};
   if (typeof settings.temperature === "number") config.temperature = settings.temperature;
   if (typeof settings.topP === "number") config.topP = settings.topP;
+  if (typeof settings.topK === "number") config.topK = settings.topK;
   if (typeof settings.maxTokens === "number") config.maxOutputTokens = settings.maxTokens;
   if (request.responseFormat) {
     config.responseMimeType = "application/json";
@@ -486,10 +487,15 @@ function parseResponse(response: GeminiGenerateResponse): ChatResponse {
     .map(cloneGeminiHistoryPart)
     .filter((part): part is GeminiPart => Boolean(part));
   const textParts: Array<Extract<ContentPart, { type: "text" }>> = [];
+  const reasoningParts: string[] = [];
   const toolCalls: ModelToolCall[] = [];
   for (const part of parts) {
     if ("text" in part && typeof part.text === "string") {
-      textParts.push({ type: "text", text: part.text });
+      if (part.thought === true) {
+        reasoningParts.push(part.text);
+      } else {
+        textParts.push({ type: "text", text: part.text });
+      }
     }
     if ("functionCall" in part) {
       toolCalls.push({
@@ -502,9 +508,11 @@ function parseResponse(response: GeminiGenerateResponse): ChatResponse {
     }
   }
   const text = textParts.map((part) => part.text).join("");
+  const reasoning = reasoningParts.join("");
   return {
     text,
     content: textParts,
+    reasoning: reasoning || undefined,
     toolCalls,
     usage: parseUsage(response.usageMetadata),
     finishReason: candidate?.finishReason,
@@ -647,11 +655,16 @@ export function createGeminiApiAdapter(options: GeminiApiAdapterOptions = {}): R
       throw decorateGeminiError(new Error(`Gemini API stream failed with ${response.status}: ${errorBody}`));
     }
     let fullText = "";
+    let fullReasoning = "";
     let finalResponse: GeminiGenerateResponse | undefined;
     for await (const message of parseSse(response.body, request.signal)) {
       const parsed = JSON.parse(message.data) as GeminiGenerateResponse;
       finalResponse = parsed;
       const chunk = parseResponse(parsed);
+      if (chunk.reasoning) {
+        fullReasoning += chunk.reasoning;
+        yield { type: "reasoning.delta", delta: chunk.reasoning };
+      }
       if (chunk.text) {
         fullText += chunk.text;
         yield { type: "text.delta", delta: chunk.text };
@@ -663,6 +676,7 @@ export function createGeminiApiAdapter(options: GeminiApiAdapterOptions = {}): R
             ...chunk,
             text: fullText,
             content: fullText ? [{ type: "text", text: fullText }] : [],
+            reasoning: fullReasoning || chunk.reasoning,
           },
         };
         return;
@@ -678,6 +692,7 @@ export function createGeminiApiAdapter(options: GeminiApiAdapterOptions = {}): R
         }),
         text: fullText,
         content: fullText ? [{ type: "text", text: fullText }] : [],
+        reasoning: fullReasoning || (finalResponse ? parseResponse(finalResponse).reasoning : undefined),
       },
     };
   }

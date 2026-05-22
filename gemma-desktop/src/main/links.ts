@@ -1,13 +1,17 @@
 import fs from 'fs/promises'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import { shell } from 'electron'
 
 const SAFE_EXTERNAL_PROTOCOLS = new Set([
-  'file:',
   'http:',
   'https:',
   'mailto:',
   'tel:',
+])
+const SAFE_NAVIGATION_EXTERNAL_PROTOCOLS = new Set([
+  ...SAFE_EXTERNAL_PROTOCOLS,
+  'file:',
 ])
 
 function parseUrl(target: string): URL | null {
@@ -35,7 +39,10 @@ export function normalizeSafeExternalUrl(target: string): string | null {
   }
 
   const parsed = parseUrl(normalized)
-  if (!parsed || !SAFE_EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+  if (!parsed) {
+    return null
+  }
+  if (!SAFE_EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
     return null
   }
 
@@ -64,7 +71,7 @@ export function shouldOpenNavigationExternally(
     return false
   }
 
-  return SAFE_EXTERNAL_PROTOCOLS.has(parsedTarget.protocol)
+  return SAFE_NAVIGATION_EXTERNAL_PROTOCOLS.has(parsedTarget.protocol)
 }
 
 export async function openLinkTarget(target: string): Promise<boolean> {
@@ -87,11 +94,30 @@ export async function openLinkTarget(target: string): Promise<boolean> {
     }
   }
 
+  const parsed = parseUrl(normalized)
+  if (parsed?.protocol === 'file:') {
+    try {
+      const resolvedPath = fileURLToPath(parsed)
+      await fs.access(resolvedPath)
+      const error = await shell.openPath(resolvedPath)
+      if (error) {
+        throw new Error(error)
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const externalUrl = normalizeSafeExternalUrl(normalized)
   if (!externalUrl) {
     return false
   }
 
-  await shell.openExternal(externalUrl)
-  return true
+  try {
+    await shell.openExternal(externalUrl)
+    return true
+  } catch {
+    return false
+  }
 }

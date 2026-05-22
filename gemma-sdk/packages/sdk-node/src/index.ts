@@ -318,6 +318,35 @@ function buildRequestPreviewSettings(
   if (typeof preferences?.ollamaKeepAlive === "string" && preferences.ollamaKeepAlive.trim().length > 0) {
     settings.ollamaKeepAlive = preferences.ollamaKeepAlive.trim();
   }
+  const lmstudioOptions =
+    preferences?.lmstudioOptions && typeof preferences.lmstudioOptions === "object" && !Array.isArray(preferences.lmstudioOptions)
+      ? Object.fromEntries(
+          Object.entries(preferences.lmstudioOptions as Record<string, unknown>).filter(([, value]) =>
+            typeof value === "number" && Number.isFinite(value),
+          ),
+        )
+      : undefined;
+  if (lmstudioOptions && Object.keys(lmstudioOptions).length > 0) {
+    settings.lmstudioOptions = structuredClone(lmstudioOptions);
+  }
+  const omlxOptions =
+    preferences?.omlxOptions && typeof preferences.omlxOptions === "object" && !Array.isArray(preferences.omlxOptions)
+      ? Object.fromEntries(
+          Object.entries(preferences.omlxOptions as Record<string, unknown>).filter(([, value]) =>
+            typeof value === "number" && Number.isFinite(value),
+          ),
+        )
+      : undefined;
+  if (omlxOptions && Object.keys(omlxOptions).length > 0) {
+    settings.omlxOptions = structuredClone(omlxOptions);
+  }
+  if (
+    preferences?.geminiOptions
+    && typeof preferences.geminiOptions === "object"
+    && !Array.isArray(preferences.geminiOptions)
+  ) {
+    settings.geminiOptions = structuredClone(preferences.geminiOptions);
+  }
   return settings;
 }
 

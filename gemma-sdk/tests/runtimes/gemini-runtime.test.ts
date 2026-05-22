@@ -195,6 +195,151 @@ describe("Gemini API runtime adapter", () => {
     }]);
   });
 
+  it("forwards Gemini generation settings and keeps thought summaries out of visible text", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const server = await createMockServer((request) => {
+      if (request.path.startsWith("/models/gemini-3.5-flash:generateContent")) {
+        requestBody = request.bodyJson as Record<string, unknown>;
+        return {
+          json: {
+            candidates: [{
+              content: {
+                parts: [
+                  {
+                    text: "I should summarize the direct answer.",
+                    thought: true,
+                    thoughtSignature: "thought-signature",
+                  },
+                  { text: "Visible answer." },
+                ],
+              },
+              finishReason: "STOP",
+            }],
+            usageMetadata: {
+              promptTokenCount: 7,
+              thoughtsTokenCount: 5,
+              candidatesTokenCount: 3,
+              totalTokenCount: 15,
+            },
+          },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const response = await createGeminiApiAdapter({
+      apiKey: "test-key",
+      baseUrl: server.url,
+    }).generate({
+      model: "gemini-3.5-flash",
+      messages: [
+        { id: "u1", role: "user", content: [{ type: "text", text: "Hello" }], createdAt: "now" },
+      ],
+      settings: {
+        temperature: 0.2,
+        topP: 0.8,
+        topK: 32,
+        maxTokens: 4096,
+        geminiOptions: {
+          temperature: 1,
+          topP: 0.95,
+          topK: 64,
+          maxOutputTokens: 8192,
+          thinkingConfig: {
+            includeThoughts: true,
+            thinkingLevel: "high",
+          },
+        },
+      },
+    });
+
+    expect(requestBody).toMatchObject({
+      generationConfig: {
+        temperature: 1,
+        topP: 0.95,
+        topK: 64,
+        maxOutputTokens: 8192,
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingLevel: "high",
+        },
+      },
+    });
+    expect(response.text).toBe("Visible answer.");
+    expect(response.content).toEqual([{ type: "text", text: "Visible answer." }]);
+    expect(response.reasoning).toBe("I should summarize the direct answer.");
+    expect(response.usage).toMatchObject({ reasoningTokens: 5 });
+    expect(response.metadata).toMatchObject({
+      geminiApi: {
+        historyParts: [
+          {
+            text: "I should summarize the direct answer.",
+            thought: true,
+            thoughtSignature: "thought-signature",
+          },
+          { text: "Visible answer." },
+        ],
+      },
+    });
+  });
+
+  it("streams Gemini thought summaries on the reasoning channel", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path.startsWith("/models/gemini-3.5-flash:streamGenerateContent")) {
+        return {
+          sse: [
+            `data: ${JSON.stringify({
+              candidates: [{
+                content: { parts: [{ text: "Thinking. ", thought: true }] },
+              }],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              candidates: [{
+                content: { parts: [{ text: "Done." }] },
+              }],
+            })}\n\n`,
+          ],
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const events: unknown[] = [];
+    for await (const event of createGeminiApiAdapter({
+      apiKey: "test-key",
+      baseUrl: server.url,
+    }).stream({
+      model: "gemini-3.5-flash",
+      messages: [
+        { id: "u1", role: "user", content: [{ type: "text", text: "Hello" }], createdAt: "now" },
+      ],
+      settings: {
+        geminiOptions: {
+          thinkingConfig: {
+            includeThoughts: true,
+            thinkingLevel: "high",
+          },
+        },
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(events[0]).toEqual({ type: "reasoning.delta", delta: "Thinking. " });
+    expect(events[1]).toEqual({ type: "text.delta", delta: "Done." });
+    expect(events[2]).toMatchObject({
+      type: "response.complete",
+      response: {
+        text: "Done.",
+        reasoning: "Thinking. ",
+        content: [{ type: "text", text: "Done." }],
+      },
+    });
+  });
+
   it("replays Gemini thought signatures on function call history", async () => {
     const requestBodies: Record<string, unknown>[] = [];
     const server = await createMockServer((request) => {

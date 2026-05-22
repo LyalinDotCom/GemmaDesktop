@@ -72,6 +72,15 @@ describe("session request reasoning settings", () => {
             max_tokens: 4096,
             temperature: 0.8,
           },
+          geminiOptions: {
+            temperature: 1,
+            topP: 0.95,
+            topK: 64,
+            thinkingConfig: {
+              includeThoughts: true,
+              thinkingLevel: "high",
+            },
+          },
         },
       },
     });
@@ -91,6 +100,15 @@ describe("session request reasoning settings", () => {
       omlxOptions: {
         max_tokens: 4096,
         temperature: 0.8,
+      },
+      geminiOptions: {
+        temperature: 1,
+        topP: 0.95,
+        topK: 64,
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingLevel: "high",
+        },
       },
     }));
   });

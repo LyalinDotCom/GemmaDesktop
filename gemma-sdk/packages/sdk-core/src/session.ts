@@ -884,6 +884,47 @@ function normalizeRequestNumericOptions(
   return entries.length > 0 ? Object.fromEntries(entries) as Record<string, number> : undefined;
 }
 
+function normalizeRequestJsonValue(value: unknown): unknown {
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeRequestJsonValue)
+      .filter((entry) => entry !== undefined);
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, entry]) => [key, normalizeRequestJsonValue(entry)] as const)
+    .filter(([, entry]) => entry !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeRequestJsonOptions(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const normalized = normalizeRequestJsonValue(value);
+  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+    return undefined;
+  }
+  return Object.keys(normalized).length > 0
+    ? normalized as Record<string, unknown>
+    : undefined;
+}
+
 function buildRequestSettings(
   mode: unknown,
   metadata: Record<string, unknown> | undefined,
@@ -919,6 +960,10 @@ function buildRequestSettings(
   const omlxOptions = normalizeRequestNumericOptions(preferences?.omlxOptions);
   if (omlxOptions) {
     settings.omlxOptions = omlxOptions;
+  }
+  const geminiOptions = normalizeRequestJsonOptions(preferences?.geminiOptions);
+  if (geminiOptions) {
+    settings.geminiOptions = geminiOptions;
   }
   return settings;
 }

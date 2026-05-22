@@ -33,6 +33,10 @@ import {
   resolveManagedOmlxProfile,
   type AppOmlxSettings,
 } from '../shared/omlxRuntimeConfig'
+import {
+  buildGeminiDisplayOptionsRecord,
+  type AppGeminiApiSettings,
+} from '../shared/geminiApiRuntimeConfig'
 import { deriveAttachmentSupport } from '../shared/attachmentSupport'
 
 export interface RuntimeAdapterSettings {
@@ -43,7 +47,7 @@ export interface RuntimeAdapterSettings {
     omlx: { endpoint: string; apiKey: string }
   }
   integrations?: {
-    geminiApi: { apiKey: string }
+    geminiApi: Pick<AppGeminiApiSettings, 'apiKey'>
   }
 }
 
@@ -51,6 +55,9 @@ export interface ModelMappingSettings {
   ollama: AppOllamaSettings
   lmstudio: AppLmStudioSettings
   omlx: AppOmlxSettings
+  integrations?: {
+    geminiApi: AppGeminiApiSettings
+  }
 }
 
 export interface PendingModelTarget {
@@ -404,6 +411,12 @@ export function mapModels(
             ),
           )
         : undefined
+      const geminiRequestedOptions = currentSettings
+        ? buildGeminiDisplayOptionsRecord(
+            currentSettings.integrations?.geminiApi,
+            m.id,
+          )
+        : undefined
       const runtimeConfig =
         m.runtimeId === 'ollama-native' || m.runtimeId === 'ollama-openai'
           ? {
@@ -449,6 +462,7 @@ export function mapModels(
               : m.runtimeId === 'gemini-api'
                 ? {
                     provider: 'gemini' as const,
+                    requestedOptions: geminiRequestedOptions,
                     nominalContextLength,
                     loadedContextLength,
                   }

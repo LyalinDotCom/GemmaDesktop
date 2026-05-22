@@ -52,11 +52,27 @@ describe('external link handling', () => {
     expect(openExternalMock).not.toHaveBeenCalled()
   })
 
+  it('opens file URLs with the system shell instead of openExternal', async () => {
+    await expect(openLinkTarget('file:///tmp/gemma-desktop/link-test.md')).resolves.toBe(true)
+
+    expect(accessMock).toHaveBeenCalledWith('/tmp/gemma-desktop/link-test.md')
+    expect(openPathMock).toHaveBeenCalledWith('/tmp/gemma-desktop/link-test.md')
+    expect(openExternalMock).not.toHaveBeenCalled()
+  })
+
   it('opens safe external URLs with the system browser', async () => {
     await expect(openLinkTarget('https://gemma-desktop.dev/docs')).resolves.toBe(true)
 
     expect(openExternalMock).toHaveBeenCalledWith('https://gemma-desktop.dev/docs')
     expect(openPathMock).not.toHaveBeenCalled()
+  })
+
+  it('returns false instead of throwing when the OS rejects an external URL', async () => {
+    openExternalMock.mockRejectedValueOnce(new Error('Failed to open URL'))
+
+    await expect(openLinkTarget('https://gemma-desktop.dev/docs')).resolves.toBe(false)
+
+    expect(openExternalMock).toHaveBeenCalledWith('https://gemma-desktop.dev/docs')
   })
 
   it('rejects unsafe or unsupported targets', async () => {
