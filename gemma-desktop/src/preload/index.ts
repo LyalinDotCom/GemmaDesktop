@@ -339,6 +339,8 @@ contextBridge.exposeInMainWorld('gemmaDesktopBridge', {
   },
 
   attachments: {
+    captureScreen: (input: unknown) =>
+      ipcRenderer.invoke('attachments:capture-screen', input),
     planPdfProcessing: (input: unknown) =>
       ipcRenderer.invoke('attachments:plan-pdf-processing', input),
     discardPending: (input: unknown) =>

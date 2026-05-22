@@ -10,6 +10,7 @@ import {
   FileDown,
   FileCode2,
   Camera,
+  MonitorDown,
   AudioLines,
   BookOpenText,
   Film,
@@ -256,6 +257,25 @@ function buildAttachmentBudgetMessage(issues: string[]): string {
   return issues.join(' ')
 }
 
+function attachmentToBudgetItem(attachment: FileAttachment) {
+  return {
+    kind: attachment.kind,
+    name: attachment.name,
+    size: attachment.size,
+    durationMs:
+      attachment.kind === 'audio' || attachment.kind === 'video'
+        ? attachment.durationMs
+        : undefined,
+    pageCount: attachment.kind === 'pdf' ? attachment.pageCount : undefined,
+    batchCount: attachment.kind === 'pdf' ? attachment.batchCount : undefined,
+    fitStatus: attachment.kind === 'pdf' ? attachment.fitStatus : undefined,
+    sampledFrameCount:
+      attachment.kind === 'video'
+        ? attachment.sampledFrames?.length ?? 0
+        : undefined,
+  }
+}
+
 function focusComposerTextarea(textarea: HTMLTextAreaElement | null): void {
   if (!textarea) {
     return
@@ -335,6 +355,7 @@ export function InputBar({
   const [text, setText] = useState(initialDraftText)
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const [cameraOpen, setCameraOpen] = useState(false)
+  const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
   const [pdfAdvancedOpen, setPdfAdvancedOpen] = useState<Record<string, boolean>>({})
   const [copiedChat, setCopiedChat] = useState(false)
   const [exportedChat, setExportedChat] = useState(false)
@@ -1177,6 +1198,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     setHistoryIndex(null)
     setDraftBeforeHistory('')
     setCameraOpen(false)
+    setScreenCaptureBusy(false)
     setPdfAdvancedOpen({})
     setCopiedChat(false)
     setExportedChat(false)
@@ -1519,22 +1541,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     }
 
     const budget = assessAttachmentBudget({
-      attachments: nextAttachments.map((attachment) => ({
-        kind: attachment.kind,
-        name: attachment.name,
-        size: attachment.size,
-        durationMs:
-          attachment.kind === 'audio' || attachment.kind === 'video'
-            ? attachment.durationMs
-            : undefined,
-        pageCount: attachment.kind === 'pdf' ? attachment.pageCount : undefined,
-        batchCount: attachment.kind === 'pdf' ? attachment.batchCount : undefined,
-        fitStatus: attachment.kind === 'pdf' ? attachment.fitStatus : undefined,
-        sampledFrameCount:
-          attachment.kind === 'video'
-            ? attachment.sampledFrames?.length ?? 0
-            : undefined,
-      })),
+      attachments: nextAttachments.map(attachmentToBudgetItem),
       support: selectedAttachmentSupport,
       contextLength: selectedContextLength,
     })
@@ -1653,22 +1660,7 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       )
     } else {
       const budget = assessAttachmentBudget({
-        attachments: [...attachments, ...plannedAttachments].map((attachment) => ({
-          kind: attachment.kind,
-          name: attachment.name,
-          size: attachment.size,
-          durationMs:
-            attachment.kind === 'audio' || attachment.kind === 'video'
-              ? attachment.durationMs
-              : undefined,
-          pageCount: attachment.kind === 'pdf' ? attachment.pageCount : undefined,
-          batchCount: attachment.kind === 'pdf' ? attachment.batchCount : undefined,
-          fitStatus: attachment.kind === 'pdf' ? attachment.fitStatus : undefined,
-          sampledFrameCount:
-            attachment.kind === 'video'
-              ? attachment.sampledFrames?.length ?? 0
-              : undefined,
-        })),
+        attachments: [...attachments, ...plannedAttachments].map(attachmentToBudgetItem),
         support: selectedAttachmentSupport,
         contextLength: selectedContextLength,
       })
@@ -1736,6 +1728,72 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
     attachmentsLocked,
     attachmentAccept.length,
     isSubmitPending,
+  ])
+
+  const handleScreenCaptureButtonClick = useCallback(async () => {
+    if (attachmentsLocked || isSubmitPending || screenCaptureBusy) {
+      return
+    }
+
+    if (!selectedAttachmentSupport?.image) {
+      setAttachmentErrorMessage(
+        `Primary model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting native image input, so Gemma Desktop cannot capture the screen for this session.`,
+      )
+      return
+    }
+
+    setScreenCaptureBusy(true)
+    setAttachmentErrorMessage(null)
+
+    try {
+      const attachment = await window.gemmaDesktopBridge.attachments.captureScreen({
+        sessionId,
+      })
+      if (!attachment) {
+        return
+      }
+
+      const budget = assessAttachmentBudget({
+        attachments: [...latestAttachmentsRef.current, attachment].map(attachmentToBudgetItem),
+        support: selectedAttachmentSupport,
+        contextLength: selectedContextLength,
+      })
+      if (budget.issues.length > 0) {
+        discardPendingManagedAttachment(attachment)
+        setAttachmentErrorMessage(buildAttachmentBudgetMessage(budget.issues))
+        return
+      }
+
+      resetEscapeClearState()
+      setAttachments((current) => (
+        current.some((existing) => sameAttachmentIdentity(existing, attachment))
+          ? current
+          : [...current, attachment]
+      ))
+      window.requestAnimationFrame(() => {
+        focusComposerTextarea(textareaRef.current)
+      })
+    } catch (error) {
+      console.error('Failed to capture screen attachment:', error)
+      setAttachmentErrorMessage(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Gemma Desktop could not capture the screen.',
+      )
+    } finally {
+      setScreenCaptureBusy(false)
+    }
+  }, [
+    attachmentsLocked,
+    discardPendingManagedAttachment,
+    isSubmitPending,
+    resetEscapeClearState,
+    screenCaptureBusy,
+    selectedAttachmentSupport,
+    selectedContextLength,
+    selectedModel?.id,
+    selectedModelId,
+    sessionId,
   ])
 
   const handleAttachInputChange = useCallback(
@@ -2081,6 +2139,28 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
       : attachmentAccept.length > 0
         ? 'Attach file'
         : 'This model does not currently accept local attachments'
+  const screenCaptureButtonTitle = isResearchConversation
+    ? 'Research conversations currently support text prompts only.'
+    : isShellMode
+    ? 'Shell mode does not accept screen captures'
+    : sessionBusy
+      ? isCompacting
+        ? 'Wait for compaction to finish before capturing the screen'
+        : 'Wait for this turn to finish before capturing the screen'
+      : conversationRunDisabledReason
+        ? conversationRunDisabledReason
+      : speechLocked
+        ? 'Finish speech input before capturing the screen'
+      : !selectedAttachmentSupport?.image
+        ? `Primary model "${selectedModel?.id ?? selectedModelId}" is not marked as supporting native image input, so Gemma Desktop cannot capture the screen for this session.`
+        : screenCaptureBusy
+          ? 'Capturing screen...'
+          : 'Capture screen without Gemma Desktop'
+  const screenCaptureDisabled =
+    attachmentsLocked
+    || isSubmitPending
+    || screenCaptureBusy
+    || !selectedAttachmentSupport?.image
   const trimmedText = text.trim()
   const canRunShellCommand =
     isShellMode
@@ -2366,6 +2446,17 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                 aria-label={attachmentButtonTitle}
               >
                 <Paperclip size={16} />
+              </button>
+              <button
+                onClick={() => {
+                  void handleScreenCaptureButtonClick()
+                }}
+                disabled={screenCaptureDisabled}
+                className={`${floatingPresentation ? 'rounded-xl p-2' : 'rounded-md p-1.5'} text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 dark:disabled:hover:bg-transparent dark:disabled:hover:text-zinc-400`}
+                title={screenCaptureButtonTitle}
+                aria-label={screenCaptureButtonTitle}
+              >
+                <MonitorDown size={16} />
               </button>
               <button
                 onClick={() => setCameraOpen(true)}

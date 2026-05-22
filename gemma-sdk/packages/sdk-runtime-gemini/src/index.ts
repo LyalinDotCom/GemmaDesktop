@@ -129,6 +129,7 @@ function createRuntimeCapabilities(apiKey: string | undefined): CapabilityRecord
 function createModelCapabilities(model: GeminiModelResponse): CapabilityRecord[] {
   const methods = new Set((model.supportedGenerationMethods ?? []).map((method) => method.toLowerCase()));
   const capabilities: CapabilityRecord[] = [];
+  const modelName = model.name ?? "";
   if (methods.has("generatecontent")) {
     capabilities.push(
       { id: "inference.chat", scope: "model", status: "supported", source: "runtime-probe" },
@@ -139,14 +140,18 @@ function createModelCapabilities(model: GeminiModelResponse): CapabilityRecord[]
   if (methods.has("embedcontent")) {
     capabilities.push({ id: "model.embedding", scope: "model", status: "supported", source: "runtime-probe" });
   }
-  if (model.thinking === true || /(?:thinking|pro|3\.5|3\.1)/i.test(model.name ?? "")) {
+  if (model.thinking === true || /(?:thinking|pro|3\.5|3\.1)/i.test(modelName)) {
     capabilities.push({ id: "request.reasoning-control", scope: "model", status: "conditional", source: "runtime-probe" });
   }
-  if (/flash|pro|gemini/i.test(model.name ?? "")) {
+  if (methods.has("generatecontent") && /(?:^|\/)gemini-/i.test(modelName)) {
     capabilities.push(
-      { id: "model.vision", scope: "model", status: "conditional", source: "model-family-inference" },
-      { id: "model.input.image", scope: "model", status: "conditional", source: "model-family-inference" },
-      { id: "model.multimodal", scope: "model", status: "conditional", source: "model-family-inference" },
+      { id: "model.vision", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.input.image", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.audio", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.input.audio", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.input.video", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.input.pdf", scope: "model", status: "supported", source: "runtime-docs" },
+      { id: "model.multimodal", scope: "model", status: "supported", source: "runtime-docs" },
     );
   }
   return capabilities;

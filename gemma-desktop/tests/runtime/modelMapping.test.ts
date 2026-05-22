@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createConfiguredRuntimeAdapters,
   createConfiguredRuntimeProviders,
+  mapModels,
   type RuntimeAdapterSettings,
 } from '../../src/main/modelMapping'
 
@@ -59,5 +60,47 @@ describe('desktop runtime provider mapping', () => {
       'omlx-openai',
       'gemini-api',
     ])
+  })
+
+  it('maps hosted Gemini multimodal capabilities into desktop attachment support', () => {
+    const models = mapModels([
+      {
+        runtime: {
+          id: 'gemini-api',
+          displayName: 'Gemini API',
+        },
+        loadedInstances: [],
+        models: [
+          {
+            id: 'gemini-3.5-flash',
+            runtimeId: 'gemini-api',
+            kind: 'llm',
+            metadata: {
+              displayName: 'Gemini 3.5 Flash',
+              inputTokenLimit: 1_048_576,
+              maxContextLength: 1_048_576,
+            },
+            capabilities: [
+              { id: 'inference.chat', status: 'supported' },
+              { id: 'model.input.image', status: 'supported' },
+              { id: 'model.input.audio', status: 'supported' },
+              { id: 'model.input.video', status: 'supported' },
+              { id: 'model.input.pdf', status: 'supported' },
+            ],
+          },
+        ],
+      },
+    ], null, [])
+
+    expect(models[0]).toMatchObject({
+      id: 'gemini-3.5-flash',
+      runtimeId: 'gemini-api',
+      contextLength: 1_048_576,
+      attachmentSupport: {
+        image: true,
+        audio: true,
+        video: true,
+      },
+    })
   })
 })

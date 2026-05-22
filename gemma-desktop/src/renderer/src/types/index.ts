@@ -1163,6 +1163,9 @@ export interface GemmaDesktopBridge {
     }): Promise<{ ok: true; terminal: TerminalAppInfo }>
   }
   attachments: {
+    captureScreen(input: {
+      sessionId: string
+    }): Promise<ImageAttachment | null>
     planPdfProcessing(input: {
       path?: string
       dataUrl?: string

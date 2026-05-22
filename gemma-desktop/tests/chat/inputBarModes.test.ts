@@ -224,6 +224,41 @@ describe('InputBar mode rendering', () => {
     expect(markup).not.toContain('loaded model visible on hover')
   })
 
+  it('only enables screen capture for image-capable primary models', () => {
+    const imageMarkup = renderToStaticMarkup(
+      createElement(InputBar, buildProps()),
+    )
+    const textOnlyModel: ModelSummary = {
+      ...model,
+      id: 'text-only-model',
+      name: 'Text Only Model',
+      attachmentSupport: {
+        image: false,
+        pdf: false,
+        audio: false,
+        video: false,
+      },
+    }
+    const textOnlyMarkup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        models: [textOnlyModel],
+        selectedModelId: textOnlyModel.id,
+        selectedRuntimeId: textOnlyModel.runtimeId,
+      })),
+    )
+
+    expect(imageMarkup).toContain('aria-label="Capture screen without Gemma Desktop"')
+    expect(imageMarkup).not.toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Capture screen without Gemma Desktop"/,
+    )
+    expect(textOnlyMarkup).toContain(
+      'Primary model &quot;text-only-model&quot; is not marked as supporting native image input',
+    )
+    expect(textOnlyMarkup).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Primary model &quot;text-only-model&quot; is not marked as supporting native image input/,
+    )
+  })
+
   it('renders the three-way spoken response switch in the composer controls', () => {
     const offMarkup = renderToStaticMarkup(
       createElement(InputBar, buildProps({

@@ -80,6 +80,12 @@ describe("Gemini API runtime adapter", () => {
     expect(inspection.models[0]?.capabilities.some((capability) =>
       capability.id === "request.tool-calling" && capability.status === "supported"
     )).toBe(true);
+    expect(inspection.models[0]?.capabilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "model.input.image", status: "supported" }),
+      expect.objectContaining({ id: "model.input.audio", status: "supported" }),
+      expect.objectContaining({ id: "model.input.video", status: "supported" }),
+      expect.objectContaining({ id: "model.input.pdf", status: "supported" }),
+    ]));
     expect(inspection.models[1]).toMatchObject({
       id: "text-embedding-004",
       kind: "embedding",

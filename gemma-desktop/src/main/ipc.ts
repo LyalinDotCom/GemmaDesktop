@@ -87,6 +87,7 @@ import {
   type ConversationKind,
 } from './tooling'
 import { isManagedPendingAttachmentPath } from './pendingAttachments'
+import { captureScreenAttachment } from './screenCaptureAttachments'
 import {
   buildPlanExitKickoffMessage,
   buildPlanExitHandoffMessage,
@@ -14754,6 +14755,56 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('links:open-target', async (_, target: string) => {
     return await openLinkTarget(target)
   })
+
+  ipcMain.handle(
+    'attachments:capture-screen',
+    async (
+      _,
+      input: {
+        sessionId?: string
+      } | undefined,
+    ) => {
+      const sessionId = input?.sessionId?.trim()
+      if (!sessionId) {
+        throw new Error('Session id is required to capture a screen attachment.')
+      }
+
+      const persisted = await getPersistedSession(sessionId)
+      const snapshot = liveSessions.get(sessionId)?.snapshot() ?? persisted?.snapshot
+      if (!snapshot) {
+        throw new Error(`Session not found: ${sessionId}`)
+      }
+
+      const config = getSessionConfig(snapshot)
+      if (config.conversationKind === 'research') {
+        throw new Error('Screen capture attachments are not available for Research conversations.')
+      }
+
+      const assetDirectory = await ensureSessionAssetDirectory(
+        sessionId,
+        snapshot.workingDirectory,
+      )
+      const attachment = await captureScreenAttachment({
+        assetDirectory,
+        getWindows: () => BrowserWindow.getAllWindows(),
+      })
+
+      if (attachment) {
+        appendDebugLog(sessionId, {
+          layer: 'ipc',
+          direction: 'main->renderer',
+          event: 'attachments.screen-capture.created',
+          summary: 'Captured the screen as a pending image attachment',
+          data: {
+            path: attachment.path,
+            size: attachment.size,
+          },
+        })
+      }
+
+      return attachment
+    },
+  )
 
   ipcMain.handle(
     'attachments:plan-pdf-processing',

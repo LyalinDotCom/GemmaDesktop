@@ -94,6 +94,9 @@ describe('preload bridge', () => {
     const system = bridge.system as {
       openEmojiPanel: () => Promise<unknown>
     }
+    const attachments = bridge.attachments as {
+      captureScreen: (input: { sessionId: string }) => Promise<unknown>
+    }
     const clipboard = bridge.clipboard as {
       writeText: (text: string) => Promise<void>
     }
@@ -117,6 +120,7 @@ describe('preload bridge', () => {
     })
     await environment.reloadModels({ sessionId: 'session-1' })
     await system.openEmojiPanel()
+    await attachments.captureScreen({ sessionId: 'session-1' })
     await clipboard.writeText('copied text')
 
     expect(exposeInMainWorld).toHaveBeenCalledWith('gemmaDesktopBridge', expect.anything())
@@ -151,6 +155,9 @@ describe('preload bridge', () => {
       sessionId: 'session-1',
     })
     expect(invoke).toHaveBeenCalledWith('system:open-emoji-panel')
+    expect(invoke).toHaveBeenCalledWith('attachments:capture-screen', {
+      sessionId: 'session-1',
+    })
     expect(clipboardWriteText).toHaveBeenCalledWith('copied text')
 
     const unsubscribeTerminal = terminalDrawer.onStateChanged(() => {})

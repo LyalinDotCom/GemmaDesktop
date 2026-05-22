@@ -100,6 +100,7 @@ const EXPECTED_IPC_CHANNELS = [
   'folders:pick-directory',
   'folders:open-path',
   'links:open-target',
+  'attachments:capture-screen',
   'attachments:plan-pdf-processing',
   'attachments:discard-pending',
   'files:save-text',
