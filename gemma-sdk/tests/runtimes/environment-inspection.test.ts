@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createOllamaNativeAdapter,
+  createOllamaOpenAICompatibleAdapter,
   createOllamaOpenAICompatibleModelDiscoveryProvider,
+  normalizeOllamaNativeBaseUrl,
 } from "@gemma-sdk/runtime-ollama";
 import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
 import { createMockServer } from "../helpers/mock-server.js";
@@ -14,6 +16,33 @@ describe("environment inspection", () => {
       await cleanup.pop()?.();
     }
     vi.restoreAllMocks();
+  });
+
+  it("normalizes common Ollama endpoint paste shapes", () => {
+    expect(normalizeOllamaNativeBaseUrl("100.104.166.87:11434/v1")).toBe(
+      "http://100.104.166.87:11434",
+    );
+    expect(normalizeOllamaNativeBaseUrl("ollama.local:11434/v1/chat/completions")).toBe(
+      "http://ollama.local:11434",
+    );
+    expect(normalizeOllamaNativeBaseUrl("http://127.0.0.1:11434/api/tags")).toBe(
+      "http://127.0.0.1:11434",
+    );
+    expect(normalizeOllamaNativeBaseUrl("https://ollama.example.com")).toBe(
+      "https://ollama.example.com",
+    );
+  });
+
+  it("rejects unsupported Ollama endpoint shapes with clear errors", () => {
+    expect(() => normalizeOllamaNativeBaseUrl("ftp://127.0.0.1:11434")).toThrow(
+      /must use http:\/\/ or https:\/\//,
+    );
+    expect(() => normalizeOllamaNativeBaseUrl("http://127.0.0.1:11434/proxy")).toThrow(
+      /only \/v1 and \/api paste paths can be normalized/,
+    );
+    expect(() => normalizeOllamaNativeBaseUrl("http://127.0.0.1:11434/v1?model=x")).toThrow(
+      /Remove query strings and fragments/,
+    );
   });
 
   it("distinguishes available models from loaded instances for Ollama native", async () => {
@@ -177,6 +206,68 @@ describe("environment inspection", () => {
         }),
       ]),
     );
+  });
+
+  it("accepts Ollama OpenAI-compatible /v1 endpoints without probing /v1 twice", async () => {
+    const server = await createMockServer((request) => {
+      switch (request.path) {
+        case "/v1/models":
+          return {
+            json: {
+              object: "list",
+              data: [{ id: "qwen3.6:35b", owned_by: "ollama" }],
+            },
+          };
+        case "/api/version":
+          return {
+            json: { version: "0.6.0" },
+          };
+        case "/api/tags":
+          return {
+            json: {
+              models: [
+                {
+                  name: "qwen3.6:35b",
+                  size: 123,
+                  digest: "def",
+                  details: {
+                    format: "gguf",
+                    family: "qwen",
+                    quantization_level: "Q4_K_M",
+                  },
+                },
+              ],
+            },
+          };
+        case "/api/ps":
+          return { json: { models: [] } };
+        case "/api/show":
+          return {
+            json: {
+              capabilities: ["completion"],
+              model_info: {
+                context_length: 131072,
+              },
+            },
+          };
+        default:
+          throw new Error(`Unhandled route: ${request.path}`);
+      }
+    });
+    cleanup.push(server.close);
+
+    const discovery = createOllamaOpenAICompatibleModelDiscoveryProvider({
+      baseUrl: `${server.url}/v1/`,
+    });
+    const adapter = createOllamaOpenAICompatibleAdapter({
+      baseUrl: `${server.url}/v1/`,
+    });
+    const inspection = await discovery.inspect();
+
+    expect(discovery.identity.endpoint).toBe(`${server.url}/v1`);
+    expect(adapter.identity.endpoint).toBe(`${server.url}/v1`);
+    expect(inspection.healthy).toBe(true);
+    expect(inspection.models.map((model) => model.id)).toEqual(["qwen3.6:35b"]);
   });
 
   it("does not mention llama.cpp router mode when the server endpoint is absent", async () => {

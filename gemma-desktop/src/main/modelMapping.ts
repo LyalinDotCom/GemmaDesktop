@@ -17,6 +17,7 @@ import {
   createOllamaNativeAdapter,
   createOllamaOpenAICompatibleAdapter,
   createOllamaOpenAICompatibleModelDiscoveryProvider,
+  normalizeOllamaNativeBaseUrl,
 } from '@gemma-sdk/runtime-ollama'
 import {
   buildLmStudioRequestOptionsRecord,
@@ -233,8 +234,11 @@ export function createConfiguredRuntimeAdapters(currentSettings: RuntimeAdapterS
 }
 
 export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapterSettings) {
+  const ollamaNativeEndpoint = normalizeOllamaNativeBaseUrl(
+    currentSettings.runtimes.ollama.endpoint,
+  )
   const ollamaOpenAI = createOllamaOpenAICompatibleAdapter({
-    baseUrl: currentSettings.runtimes.ollama.endpoint,
+    baseUrl: ollamaNativeEndpoint,
   })
   const lmStudioOpenAI = createLmStudioOpenAICompatibleAdapter({
     baseUrl: currentSettings.runtimes.lmstudio.endpoint,
@@ -254,7 +258,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
     inferenceAdapters: [
       ollamaOpenAI,
       createOllamaNativeAdapter({
-        baseUrl: currentSettings.runtimes.ollama.endpoint,
+        baseUrl: ollamaNativeEndpoint,
       }),
       lmStudioOpenAI,
       createLmStudioNativeAdapter({
@@ -266,7 +270,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
     ],
     modelDiscoveryProviders: [
       createOllamaOpenAICompatibleModelDiscoveryProvider({
-        baseUrl: currentSettings.runtimes.ollama.endpoint,
+        baseUrl: ollamaNativeEndpoint,
       }),
       lmStudioOpenAI,
       llamaCppServer,

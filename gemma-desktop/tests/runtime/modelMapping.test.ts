@@ -62,6 +62,38 @@ describe('desktop runtime provider mapping', () => {
     ])
   })
 
+  it('normalizes Ollama OpenAI-compatible endpoints to the native server root', () => {
+    const providers = createConfiguredRuntimeProviders({
+      ...settings(),
+      runtimes: {
+        ...settings().runtimes,
+        ollama: { endpoint: 'ollama.remote:11434/v1/chat/completions' },
+      },
+    })
+
+    expect(providers.inferenceAdapters
+      .filter((adapter) => adapter.identity.id.startsWith('ollama'))
+      .map((adapter) => adapter.identity.endpoint)).toEqual([
+      'http://ollama.remote:11434/v1',
+      'http://ollama.remote:11434',
+    ])
+    expect(providers.modelDiscoveryProviders[0]?.identity.endpoint).toBe(
+      'http://ollama.remote:11434/v1',
+    )
+  })
+
+  it('rejects unsupported Ollama endpoint paths before building providers', () => {
+    expect(() =>
+      createConfiguredRuntimeProviders({
+        ...settings(),
+        runtimes: {
+          ...settings().runtimes,
+          ollama: { endpoint: 'http://ollama.remote:11434/proxy' },
+        },
+      }),
+    ).toThrow(/Invalid Ollama endpoint/)
+  })
+
   it('maps hosted Gemini multimodal capabilities into desktop attachment support', () => {
     const models = mapModels([
       {

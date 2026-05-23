@@ -196,4 +196,26 @@ describe('main process architecture', () => {
     expect(integrationsSettingsBlock).toContain("clearPrimaryModelAvailabilityIssuesForRuntime('gemini-api')")
     expect(integrationsSettingsBlock).toContain('broadcastEnvironmentModelsChanged()')
   })
+
+  it('refreshes local runtime providers when runtime endpoints change', () => {
+    const ipcSource = readSource(ipcSourcePath)
+    const runtimesSettingsBlock = ipcSource.match(
+      /hasOwnProperty\.call\(settingsPatch, 'runtimes'\)[\s\S]*?await refreshKeepAwakeState\(\)/,
+    )?.[0]
+
+    expect(runtimesSettingsBlock).toContain(
+      'updateRuntimeProviders(createConfiguredRuntimeProviders(nextSettings))',
+    )
+    expect(runtimesSettingsBlock).toContain('broadcastEnvironmentModelsChanged()')
+  })
+
+  it('treats disabled optional helper work as skipped instead of stack-logged failures', () => {
+    const ipcSource = readSource(ipcSourcePath)
+
+    expect(ipcSource).toContain('isHelperModelDisabledError')
+    expect(ipcSource).toContain("logOptionalHelperTaskFailure('narration generation', error)")
+    expect(ipcSource).toContain("logOptionalHelperTaskFailure('thinking summary', error)")
+    expect(ipcSource).not.toContain("console.warn('[gemma-desktop] helper thinking summary failed:', error)")
+    expect(ipcSource).not.toContain("console.warn('[gemma-desktop] helper narration generation failed:', error)")
+  })
 })

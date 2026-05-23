@@ -46,6 +46,9 @@ import {
   type RegisteredTool,
 } from '@gemma-sdk/tools'
 import {
+  normalizeOllamaNativeBaseUrl,
+} from '@gemma-sdk/runtime-ollama'
+import {
   buildSkillContextBundles,
   defaultSkillRoots,
   discoverInstalledSkills,
@@ -755,6 +758,22 @@ function isHelperModelEnabled(
 
 function createHelperModelDisabledError(): Error {
   return new Error('Helper model is disabled in Settings.')
+}
+
+function isHelperModelDisabledError(error: unknown): boolean {
+  return error instanceof Error
+    && error.message === 'Helper model is disabled in Settings.'
+}
+
+function logOptionalHelperTaskFailure(taskLabel: string, error: unknown): void {
+  if (isHelperModelDisabledError(error)) {
+    console.warn(
+      `[gemma-desktop] helper ${taskLabel} skipped because the helper model is disabled in Settings.`,
+    )
+    return
+  }
+
+  console.warn(`[gemma-desktop] helper ${taskLabel} failed:`, error)
 }
 
 function isOllamaModelRuntime(runtimeId: string): boolean {
@@ -4258,12 +4277,28 @@ function normalizePositiveInteger(
 function normalizeOllamaRuntimeSettings(
   value: Partial<AppSettingsRecord['runtimes']['ollama']> | undefined,
   fallback: AppSettingsRecord['runtimes']['ollama'],
+  options: { rejectInvalidEndpoint?: boolean } = {},
 ): AppSettingsRecord['runtimes']['ollama'] {
+  let normalizedEndpoint = ''
+  if (typeof value?.endpoint === 'string' && value.endpoint.trim().length > 0) {
+    try {
+      normalizedEndpoint = normalizeOllamaNativeBaseUrl(value.endpoint)
+    } catch (error) {
+      if (options.rejectInvalidEndpoint) {
+        throw error
+      }
+      console.warn(
+        '[gemma-desktop] Ignoring invalid saved Ollama endpoint and using the previous endpoint:',
+        error,
+      )
+    }
+  }
+  const endpoint = normalizedEndpoint.length > 0
+    ? normalizedEndpoint
+    : fallback.endpoint
+
   return {
-    endpoint:
-      typeof value?.endpoint === 'string' && value.endpoint.trim().length > 0
-        ? value.endpoint.trim()
-        : fallback.endpoint,
+    endpoint,
     numParallel: normalizePositiveInteger(value?.numParallel, fallback.numParallel, 1),
     maxLoadedModels: normalizePositiveInteger(
       value?.maxLoadedModels,
@@ -4615,6 +4650,12 @@ async function saveSettings(
       ollama: normalizeOllamaRuntimeSettings(
         patch.runtimes?.ollama ?? current.runtimes.ollama,
         current.runtimes.ollama,
+        {
+          rejectInvalidEndpoint: Object.prototype.hasOwnProperty.call(
+            patch.runtimes?.ollama ?? {},
+            'endpoint',
+          ),
+        },
       ),
     },
     integrations: {
@@ -15249,7 +15290,7 @@ export function registerIpcHandlers(): void {
         helperRuntimeId: result.helperRuntimeId,
       }
     } catch (error) {
-      console.warn('[gemma-desktop] helper narration generation failed:', error)
+      logOptionalHelperTaskFailure('narration generation', error)
       return {
         text: task.fallbackText,
         helperModelId: null,
@@ -15295,7 +15336,7 @@ export function registerIpcHandlers(): void {
         helperRuntimeId: result.helperRuntimeId,
       }
     } catch (error) {
-      console.warn('[gemma-desktop] helper thinking summary failed:', error)
+      logOptionalHelperTaskFailure('thinking summary', error)
       return {
         summary: null,
         helperModelId: null,

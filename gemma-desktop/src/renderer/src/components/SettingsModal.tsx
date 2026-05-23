@@ -309,6 +309,13 @@ function formatDataSessionTime(timestamp: number): string {
   }).format(new Date(timestamp))
 }
 
+function formatSettingsUpdateError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message
+    .replace(/^Error invoking remote method '[^']+': Error:\s*/, '')
+    .replace(/^Error:\s*/, '')
+}
+
 export function SettingsModal({
   settings,
   models,
@@ -328,6 +335,7 @@ export function SettingsModal({
   const [local, setLocal] = useState(settings)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [dataBusy, setDataBusy] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [dataNotice, setDataNotice] = useState<string | null>(null)
@@ -340,9 +348,13 @@ export function SettingsModal({
   const contentScrollRef = useRef<HTMLDivElement>(null)
 
   const commitUpdate = (patch: Partial<AppSettings>): void => {
-    void Promise.resolve(onUpdate(patch)).catch((error) => {
-      console.error('Failed to update settings:', error)
-    })
+    setSettingsError(null)
+    void Promise.resolve(onUpdate(patch))
+      .then(() => setSettingsError(null))
+      .catch((error) => {
+        console.error('Failed to update settings:', error)
+        setSettingsError(formatSettingsUpdateError(error))
+      })
   }
 
   const handleToolPolicyToggle = (mode: AppToolPolicyMode, toolName: string) => {
@@ -661,6 +673,15 @@ export function SettingsModal({
           {/* Content */}
           <div ref={contentScrollRef} className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
             <div className="min-w-0 space-y-6 px-8 py-6">
+              {settingsError && (
+                <div
+                  role="alert"
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-200"
+                >
+                  {settingsError}
+                </div>
+              )}
+
               {activeTab === 'general' && (
                 <>
                   <SettingsSection title="Appearance" description="Theme preference.">
@@ -817,6 +838,8 @@ export function SettingsModal({
                           <code>maxLoadedModels={local.runtimes.ollama?.maxLoadedModels ?? 2}</code>
                           {', '}
                           <code>keepAlive={(local.runtimes.ollama?.keepAliveEnabled ?? true) ? 'on' : 'off'}</code>.
+                          {' '}
+                          Use <code>http://host:11434</code>; pasted <code>/v1</code> or <code>/api</code> paths are normalized.
                         </>
                       }
                     >

@@ -268,6 +268,13 @@ describe('SettingsModal layout', () => {
     expect(markup).not.toContain('title="Set gemma4:26b reasoning to off"')
   })
 
+  it('makes the Ollama endpoint format clear in settings', () => {
+    const markup = renderSettingsModal('ollama')
+
+    expect(markup).toContain('Use <code>http://host:11434</code>')
+    expect(markup).toContain('pasted <code>/v1</code> or <code>/api</code> paths are normalized')
+  })
+
   it('surfaces the Ollama keep-alive switch in the Ollama settings tab', () => {
     const markup = renderSettingsModal('ollama')
 

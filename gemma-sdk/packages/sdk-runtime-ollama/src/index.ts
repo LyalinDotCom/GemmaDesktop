@@ -43,6 +43,66 @@ export interface OllamaAdapterOptions {
 const DEFAULT_OLLAMA_RESPONSE_HEADER_TIMEOUT_MS = 300_000;
 const DEFAULT_OLLAMA_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
+export function normalizeOllamaNativeBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl
+    .trim()
+    .replace(/\/+$/, "");
+  if (!trimmed) {
+    throw new Error(
+      "Invalid Ollama endpoint. Use a server root like http://127.0.0.1:11434.",
+    );
+  }
+
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Use a server root like http://127.0.0.1:11434 or a host:port value like 127.0.0.1:11434.`,
+    );
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Ollama endpoints must use http:// or https://.`,
+    );
+  }
+  if (!parsed.hostname) {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Include a host, for example http://127.0.0.1:11434.`,
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Do not include credentials in the endpoint URL.`,
+    );
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Remove query strings and fragments; use only the Ollama server root.`,
+    );
+  }
+
+  const pathName = parsed.pathname.replace(/\/+$/, "");
+  const supportedPath =
+    pathName === ""
+    || pathName === "/v1"
+    || pathName.startsWith("/v1/")
+    || pathName === "/api"
+    || pathName.startsWith("/api/");
+  if (!supportedPath) {
+    throw new Error(
+      `Invalid Ollama endpoint "${baseUrl}". Use the Ollama server root like ${parsed.protocol}//${parsed.host}; only /v1 and /api paste paths can be normalized automatically.`,
+    );
+  }
+
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
 function headersToObject(headers: Headers): Record<string, string> {
   const entries: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -905,7 +965,7 @@ async function inspectOllamaModelInventory(input: {
 }
 
 export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): RuntimeAdapter {
-  const baseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const baseUrl = normalizeOllamaNativeBaseUrl(options.baseUrl ?? "http://127.0.0.1:11434");
   const responseHeaderTimeoutMs =
     typeof options.responseHeaderTimeoutMs === "number"
       && Number.isFinite(options.responseHeaderTimeoutMs)
@@ -1221,7 +1281,7 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
 export function createOllamaOpenAICompatibleModelDiscoveryProvider(
   options: OllamaAdapterOptions = {},
 ): ModelDiscoveryProvider {
-  const nativeBaseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const nativeBaseUrl = normalizeOllamaNativeBaseUrl(options.baseUrl ?? "http://127.0.0.1:11434");
   const identity: RuntimeIdentity = {
     id: "ollama-openai",
     family: "ollama",
@@ -1245,7 +1305,7 @@ export function createOllamaOpenAICompatibleModelDiscoveryProvider(
 }
 
 export function createOllamaOpenAICompatibleAdapter(options: OllamaAdapterOptions = {}): RuntimeAdapter {
-  const nativeBaseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
+  const nativeBaseUrl = normalizeOllamaNativeBaseUrl(options.baseUrl ?? "http://127.0.0.1:11434");
   const baseUrl = `${nativeBaseUrl}/v1`;
   const identity: RuntimeIdentity = {
     id: "ollama-openai",
