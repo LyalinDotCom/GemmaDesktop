@@ -192,12 +192,6 @@ export function buildModelTargetOptions(input: {
     })
   }
 
-  addTarget(input.modelSelection.mainModel)
-  addTarget(input.modelSelection.helperModel)
-  if (input.defaultModelSelection) {
-    addTarget(input.defaultModelSelection.mainModel)
-    addTarget(input.defaultModelSelection.helperModel)
-  }
   for (const model of input.models) {
     addTarget({
       modelId: model.id,

@@ -1,6 +1,6 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin as defaultInput, stdout as defaultOutput } from 'node:process';
-import { ensureOllamaRunning, inferAttachmentCapabilities, listGeminiModelInfos, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type GeminiModelInfo, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
+import { ensureOllamaRunning, inferAttachmentCapabilities, listGeminiModelInfos, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, normalizeGeminiApiBaseUrl, normalizeOllamaBaseUrl, normalizeOpenAICompatibleBaseUrl, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type GeminiModelInfo, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 import { createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, recordSessionModelSelection, sessionMessages, type DiagnosticContext, type StoredSession, type StoredSessionMessage } from './diagnostics.js';
 import { isLocalProvider, readModelPreference, writeModelPreference, type ModelPreference } from './modelPreferences.js';
@@ -312,6 +312,19 @@ export async function handleTuiLine(session: TuiSession, line: string, output: N
     return true;
   }
 
+  if (trimmed === '/endpoint') {
+    addHistory(session, 'settings', formatEndpointSettings(session));
+    flash(session, 'endpoints shown');
+    render(session, output);
+    return true;
+  }
+
+  if (trimmed.startsWith('/endpoint ')) {
+    await updateEndpoint(session, trimmed.slice('/endpoint '.length).trim());
+    render(session, output);
+    return true;
+  }
+
   if (trimmed === '/debug:prompt') {
     addHistory(session, 'status', session.runtime.systemPrompt ?? 'System prompt unavailable until runtime is ready.');
     flash(session, 'system prompt shown');
@@ -392,7 +405,8 @@ export async function handleTuiLine(session: TuiSession, line: string, output: N
   }
 
   if (trimmed.startsWith('/model ')) {
-    await selectSessionModel(session, trimmed.slice('/model '.length).trim());
+    const selection = parseModelCommand(session, trimmed.slice('/model '.length).trim());
+    await selectSessionModel(session, selection.model, selection.provider);
     render(session, output);
     return true;
   }
@@ -520,6 +534,10 @@ export function commands(): TuiCommand[] {
     { name: '/help', description: 'Show the compact TUI help hint.', usage: '/help' },
     { name: '/commands', description: 'Show this command palette.', usage: '/commands' },
     { name: '/model', description: 'Open the local model picker and switch models.', insertText: '/model ', usage: '/model' },
+    { name: '/model <provider> <model>', description: 'Switch provider and model from the command line.', insertText: '/model ', usage: '/model <provider> <model>', parameters: 'provider: ollama, lmstudio, or gemini' },
+    { name: '/endpoint', description: 'Show provider endpoints and endpoint command examples.', usage: '/endpoint' },
+    { name: '/endpoint <url>', description: 'Set the current provider endpoint for this session.', insertText: '/endpoint ', usage: '/endpoint <url>', parameters: 'url: server root, /v1 URL, or pasted chat-completions URL' },
+    { name: '/endpoint <provider> <url>', description: 'Set a provider endpoint without editing files.', insertText: '/endpoint ', usage: '/endpoint <provider> <url>', parameters: 'provider: ollama, lmstudio, or gemini' },
     { name: '/settings', description: 'Show runtime and TUI settings.', usage: '/settings [key value]' },
     { name: '/settings maxTurns <n|unlimited>', description: 'Update or clear the agent turn limit.', insertText: '/settings maxTurns ', usage: '/settings maxTurns <n|unlimited>', parameters: 'n: positive integer turn limit, or unlimited to clear it' },
     { name: '/think', description: 'Show or change reasoning mode.', usage: '/think [auto|on|off]' },
@@ -589,7 +607,11 @@ export async function listSessionModelInfos(session: TuiSession): Promise<Sessio
   const errors = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
-  throw new Error(errors.join('\n') || 'No model providers are available.');
+  throw new Error([
+    errors.join('\n') || 'No model providers are available.',
+    '',
+    endpointCommandHelp(session)
+  ].join('\n'));
 }
 
 async function listOllamaModelInfosWithAutostart(session: TuiSession): Promise<OllamaModelInfo[]> {
@@ -671,6 +693,209 @@ async function showModels(session: TuiSession, output: NodeJS.WritableStream): P
   addHistory(session, 'command', formatModelList(session.runtime.selectedModel ?? session.runtime.model, models, session.runtime.model));
   flash(session, 'models listed');
   render(session, output);
+}
+
+function parseModelCommand(session: TuiSession, value: string): { provider: CliOptions['provider']; model: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Usage: /model <model> or /model <provider> <model>');
+  }
+  const [first, ...rest] = trimmed.split(/\s+/);
+  const provider = providerFromToken(first);
+  if (provider) {
+    const model = rest.join(' ').trim();
+    if (!model) {
+      throw new Error('Usage: /model <provider> <model>');
+    }
+    return { provider, model };
+  }
+  const slashProvider = providerFromSlashPrefix(trimmed);
+  if (slashProvider) {
+    return slashProvider;
+  }
+  return { provider: session.provider, model: trimmed };
+}
+
+function providerFromSlashPrefix(value: string): { provider: CliOptions['provider']; model: string } | undefined {
+  for (const provider of providerTokens()) {
+    const prefix = `${provider}/`;
+    if (value.startsWith(prefix)) {
+      const model = value.slice(prefix.length).trim();
+      if (!model) {
+        throw new Error('Usage: /model <provider>/<model>');
+      }
+      return { provider, model };
+    }
+  }
+  return undefined;
+}
+
+async function updateEndpoint(session: TuiSession, value: string): Promise<void> {
+  const parsed = parseEndpointCommand(session, value);
+  if (!parsed) {
+    return;
+  }
+
+  setEndpointForProvider(session, parsed.provider, parsed.endpoint);
+  if (parsed.provider !== session.provider) {
+    addHistory(session, 'settings', [
+      'Endpoint',
+      `${providerDisplayName(parsed.provider)} endpoint set to ${formatEndpointValue(parsed.provider, parsed.endpoint)}`,
+      `current provider is ${session.provider}; use /model ${parsed.provider} <model> to switch.`
+    ].join('\n'));
+    flash(session, `${parsed.provider} endpoint set`);
+    return;
+  }
+
+  const runtimeOptions = runtimeOptionsForSession(session);
+  try {
+    session.runtime = await createRuntime(runtimeOptions, session.runtimeHostOptions);
+    addHistory(session, 'settings', [
+      'Endpoint',
+      `${providerDisplayName(parsed.provider)} endpoint set to ${formatEndpointValue(parsed.provider, parsed.endpoint)}`,
+      `runtime reloaded for ${session.runtime.selectedModel ?? session.runtime.model}.`
+    ].join('\n'));
+    flash(session, `${parsed.provider} endpoint set`);
+  } catch (error) {
+    session.runtime = pendingRuntime(runtimeOptions);
+    addHistory(session, 'error', [
+      'Endpoint',
+      `${providerDisplayName(parsed.provider)} endpoint set to ${formatEndpointValue(parsed.provider, parsed.endpoint)}, but the current model could not be loaded from it.`,
+      error instanceof Error ? error.message : String(error),
+      '',
+      endpointCommandHelp(session)
+    ].join('\n'));
+    flash(session, 'endpoint set; select a model');
+  }
+}
+
+function parseEndpointCommand(session: TuiSession, value: string): { provider: CliOptions['provider']; endpoint: string | undefined } | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    addHistory(session, 'error', endpointCommandHelp(session));
+    flash(session, 'endpoint update failed');
+    return undefined;
+  }
+
+  const [first, ...rest] = trimmed.split(/\s+/);
+  const provider = providerFromToken(first) ?? session.provider;
+  const endpointValue = providerFromToken(first) ? rest.join(' ').trim() : trimmed;
+  if (!endpointValue) {
+    addHistory(session, 'error', endpointCommandHelp(session));
+    flash(session, 'endpoint update failed');
+    return undefined;
+  }
+  if (endpointValue === 'default' || endpointValue === 'clear') {
+    return { provider, endpoint: undefined };
+  }
+
+  try {
+    return { provider, endpoint: normalizeEndpointForProvider(provider, endpointValue) };
+  } catch (error) {
+    addHistory(session, 'error', [
+      error instanceof Error ? error.message : String(error),
+      '',
+      endpointCommandHelp(session)
+    ].join('\n'));
+    flash(session, 'endpoint update failed');
+    return undefined;
+  }
+}
+
+function normalizeEndpointForProvider(provider: CliOptions['provider'], endpoint: string): string {
+  if (provider === 'ollama') {
+    return normalizeOllamaBaseUrl(endpoint);
+  }
+  if (provider === 'lmstudio') {
+    return normalizeOpenAICompatibleBaseUrl(endpoint);
+  }
+  return normalizeGeminiApiBaseUrl(endpoint);
+}
+
+function providerFromToken(value: string | undefined): CliOptions['provider'] | undefined {
+  if (value === 'ollama' || value === 'lmstudio' || value === 'gemini') {
+    return value;
+  }
+  if (value === 'lm-studio' || value === 'lm_studio') {
+    return 'lmstudio';
+  }
+  return undefined;
+}
+
+function providerTokens(): CliOptions['provider'][] {
+  return ['ollama', 'lmstudio', 'gemini'];
+}
+
+function setEndpointForProvider(session: TuiSession, provider: CliOptions['provider'], endpoint: string | undefined): void {
+  if (provider === 'ollama') {
+    session.ollamaUrl = endpoint;
+  } else if (provider === 'lmstudio') {
+    session.lmStudioUrl = endpoint;
+  } else {
+    session.geminiApiBaseUrl = endpoint;
+  }
+}
+
+function endpointForProvider(session: TuiSession, provider: CliOptions['provider']): string | undefined {
+  if (provider === 'ollama') {
+    return session.ollamaUrl;
+  }
+  if (provider === 'lmstudio') {
+    return session.lmStudioUrl;
+  }
+  return session.geminiApiBaseUrl;
+}
+
+function providerDisplayName(provider: CliOptions['provider']): string {
+  if (provider === 'lmstudio') return 'LM Studio';
+  if (provider === 'gemini') return 'Gemini API';
+  return 'Ollama';
+}
+
+function formatEndpointSettings(session: TuiSession): string {
+  return [
+    'Endpoints',
+    `current provider: ${session.provider}`,
+    `ollama: ${formatEndpointValue('ollama', session.ollamaUrl)}`,
+    `lmstudio: ${formatEndpointValue('lmstudio', session.lmStudioUrl)}`,
+    `gemini: ${formatEndpointValue('gemini', session.geminiApiBaseUrl)}`,
+    '',
+    'usage:',
+    '  /endpoint <url>',
+    '  /endpoint ollama http://100.104.166.87:11434',
+    '  /endpoint lmstudio http://host:1234/v1',
+    '  /endpoint gemini https://generativelanguage.googleapis.com/v1beta',
+    '  /endpoint <provider> default',
+    '',
+    'command-line:',
+    '  gemma --provider ollama --endpoint http://100.104.166.87:11434 --list-models',
+    '  GEMMA_PROVIDER=lmstudio GEMMA_ENDPOINT=http://host:1234 gemma --list-models'
+  ].join('\n');
+}
+
+function endpointCommandHelp(session: TuiSession): string {
+  return [
+    'Set the model endpoint without editing files:',
+    '  /endpoint <url>',
+    '  /endpoint ollama http://100.104.166.87:11434',
+    '  /endpoint lmstudio http://host:1234/v1',
+    '  /endpoint gemini https://generativelanguage.googleapis.com/v1beta',
+    '  /endpoint <provider> default',
+    '',
+    'Current endpoints:',
+    `  ollama: ${formatEndpointValue('ollama', endpointForProvider(session, 'ollama'))}`,
+    `  lmstudio: ${formatEndpointValue('lmstudio', endpointForProvider(session, 'lmstudio'))}`,
+    `  gemini: ${formatEndpointValue('gemini', endpointForProvider(session, 'gemini'))}`
+  ].join('\n');
+}
+
+function formatEndpointValue(provider: CliOptions['provider'], value: string | undefined): string {
+  if (value) {
+    return value;
+  }
+  if (provider === 'ollama') return 'default http://127.0.0.1:11434';
+  if (provider === 'lmstudio') return 'default http://127.0.0.1:1234';
+  return 'default https://generativelanguage.googleapis.com/v1beta';
 }
 
 async function showSessions(session: TuiSession): Promise<void> {
@@ -763,7 +988,7 @@ function formatModelList(currentModel: string, models: SessionModelInfo[], runti
     'Models',
     `current: ${currentModel}`,
     runtimeModel !== currentModel ? `runtime: ${runtimeModel}` : undefined,
-    'select: /model',
+    'select: /model <model> or /model <provider> <model>',
     '',
     ...models.map((model) => `${model.name === currentModel ? '*' : ' '} ${model.name}  ${model.provider}${model.provider === 'ollama' && model.sizeBytes ? `  ${formatBytes(model.sizeBytes)}` : ''}${model.provider === 'lmstudio' ? `  reasoning=${reasoningSupportValue(model.supportsReasoning)}` : ''}${model.supportsImage ? '  image' : ''}${model.supportsAudio ? '  audio' : ''}`)
   ].filter(Boolean).join('\n');

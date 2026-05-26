@@ -60,7 +60,7 @@ export class GeminiProvider implements ModelProvider {
 
   constructor(options: GeminiProviderOptions = {}) {
     this.apiKey = options.apiKey?.trim();
-    this.baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultBaseUrl);
+    this.baseUrl = normalizeGeminiApiBaseUrl(options.baseUrl ?? defaultBaseUrl);
     this.model = options.model ?? defaultModel;
     this.temperature = options.temperature;
     this.topP = options.topP;
@@ -113,7 +113,7 @@ export async function listGeminiModelInfos(
   if (!apiKey?.trim()) {
     return [];
   }
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedBaseUrl = normalizeGeminiApiBaseUrl(baseUrl);
   const models: GeminiModelInfo[] = [];
   let pageToken: string | undefined;
   do {
@@ -203,8 +203,52 @@ function extractText(response: GeminiGenerateResponse): string {
     .join('');
 }
 
-function normalizeBaseUrl(value: string): string {
-  return value.replace(/\/+$/, '');
+export function normalizeGeminiApiBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Gemini API base URL must not be empty.');
+  }
+  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `${defaultGeminiProtocol(trimmed)}://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withProtocol);
+  } catch {
+    throw new Error('Gemini API base URL must be a valid https URL.');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Gemini API base URL must use http or https.');
+  }
+  if (!url.hostname) {
+    throw new Error('Gemini API base URL must include a host.');
+  }
+  if (url.username || url.password) {
+    throw new Error('Gemini API base URL must not include credentials in the URL.');
+  }
+  if (url.search || url.hash) {
+    throw new Error('Gemini API base URL must not include query strings or fragments.');
+  }
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  const modelsIndex = segments.findIndex((segment) => segment.toLowerCase() === 'models');
+  if (modelsIndex >= 0) {
+    url.pathname = `/${segments.slice(0, modelsIndex).join('/')}`;
+  } else if (segments.length === 0 && url.hostname === 'generativelanguage.googleapis.com') {
+    url.pathname = '/v1beta';
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
+function defaultGeminiProtocol(value: string): 'http' | 'https' {
+  const host = (value.split(/[/?#]/, 1)[0] ?? '').replace(/^\[/, '').replace(/\]$/, '').split(':', 1)[0]?.toLowerCase() ?? '';
+  if (
+    host === 'localhost'
+    || host === '::1'
+    || host.endsWith('.local')
+    || /^(\d{1,3}\.){3}\d{1,3}$/.test(host)
+  ) {
+    return 'http';
+  }
+  return 'https';
 }
 
 function modelNameForUrl(modelId: string): string {

@@ -60,6 +60,12 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     help: false,
     version: false
   };
+  let endpointValue = env.GEMMA_ENDPOINT;
+  let endpointSourceIndex = endpointValue ? -2 : Number.NEGATIVE_INFINITY;
+  const providerEndpointSourceIndexes: Partial<Record<CliOptions['provider'], number>> = {};
+  if (env.OLLAMA_URL) providerEndpointSourceIndexes.ollama = -1;
+  if (env.LMSTUDIO_URL ?? env.LM_STUDIO_URL) providerEndpointSourceIndexes.lmstudio = -1;
+  if (env.GEMINI_API_BASE_URL) providerEndpointSourceIndexes.gemini = -1;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -70,17 +76,24 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       case '--model':
         options.model = readValue(argv, ++i, arg);
         break;
+      case '--endpoint':
+        endpointSourceIndex = i;
+        endpointValue = readValue(argv, ++i, arg);
+        break;
       case '--ollama-url':
+        providerEndpointSourceIndexes.ollama = i;
         options.ollamaUrl = readValue(argv, ++i, arg);
         break;
       case '--lmstudio-url':
       case '--lm-studio-url':
+        providerEndpointSourceIndexes.lmstudio = i;
         options.lmStudioUrl = readValue(argv, ++i, arg);
         break;
       case '--gemini-api-key':
         options.geminiApiKey = readValue(argv, ++i, arg);
         break;
       case '--gemini-api-base-url':
+        providerEndpointSourceIndexes.gemini = i;
         options.geminiApiBaseUrl = readValue(argv, ++i, arg);
         break;
       case '--prompt':
@@ -168,6 +181,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     }
   }
 
+  applyEndpointAlias(options, endpointValue, endpointSourceIndex, providerEndpointSourceIndexes);
   return options;
 }
 
@@ -196,6 +210,28 @@ function readEnvProvider(value: string | undefined): CliOptions['provider'] {
     return value;
   }
   return 'ollama';
+}
+
+function applyEndpointAlias(
+  options: CliOptions,
+  endpoint: string | undefined,
+  endpointSourceIndex: number,
+  providerEndpointSourceIndexes: Partial<Record<CliOptions['provider'], number>>
+): void {
+  if (!endpoint) {
+    return;
+  }
+  const providerEndpointSourceIndex = providerEndpointSourceIndexes[options.provider] ?? Number.NEGATIVE_INFINITY;
+  if (endpointSourceIndex < providerEndpointSourceIndex) {
+    return;
+  }
+  if (options.provider === 'ollama') {
+    options.ollamaUrl = endpoint;
+  } else if (options.provider === 'lmstudio') {
+    options.lmStudioUrl = endpoint;
+  } else {
+    options.geminiApiBaseUrl = endpoint;
+  }
 }
 
 function readReasoningMode(value: string, flag: string): CliOptions['reasoningMode'] {

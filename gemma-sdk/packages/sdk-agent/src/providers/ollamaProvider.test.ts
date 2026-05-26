@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StreamChunk } from '../types.js';
-import { defaultOllamaGenerationStartTimeoutMs, defaultOllamaStreamInactivityTimeoutMs, ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, OllamaProvider, prepareOllama } from './ollamaProvider.js';
+import { defaultOllamaGenerationStartTimeoutMs, defaultOllamaStreamInactivityTimeoutMs, ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, normalizeOllamaBaseUrl, OllamaProvider, prepareOllama } from './ollamaProvider.js';
 
 describe('OllamaProvider', () => {
   it('uses a long default stream inactivity timeout for local reasoning pauses', () => {
@@ -303,6 +303,15 @@ describe('listOllamaModels', () => {
       supportsReasoning: true,
       contextTokens: 262144
     });
+  });
+
+  it('normalizes common Ollama endpoint paste shapes back to the server root', () => {
+    expect(normalizeOllamaBaseUrl('100.104.166.87:11434')).toBe('http://100.104.166.87:11434');
+    expect(normalizeOllamaBaseUrl('http://ollama.local:11434/v1')).toBe('http://ollama.local:11434');
+    expect(normalizeOllamaBaseUrl('http://ollama.local:11434/v1/chat/completions')).toBe('http://ollama.local:11434');
+    expect(normalizeOllamaBaseUrl('https://proxy.local/ollama/v1/models')).toBe('https://proxy.local/ollama');
+    expect(normalizeOllamaBaseUrl('http://ollama.local:11434/api/tags')).toBe('http://ollama.local:11434');
+    expect(() => normalizeOllamaBaseUrl('file:///tmp/ollama')).toThrow('must use http or https');
   });
 });
 

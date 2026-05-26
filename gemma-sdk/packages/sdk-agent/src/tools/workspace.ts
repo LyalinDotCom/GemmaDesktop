@@ -2285,6 +2285,7 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
     let handedOff = false;
     let postExitTimer: NodeJS.Timeout | undefined;
     let handoffTimer: NodeJS.Timeout | undefined;
+    let handoffTimeoutElapsed = false;
 
     const finish = (result: ToolResult) => {
       if (settled) {
@@ -2354,6 +2355,8 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
         resetIdleTimer();
         if (shouldHandoffCommand(command, output)) {
           handoffRunningCommand('useful running output detected');
+        } else if (handoffTimeoutElapsed && output.trim() !== '') {
+          handoffRunningCommand(`still running after ${options.handoffTimeoutMs}ms`);
         }
       }
     };
@@ -2439,6 +2442,7 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
     let idleTimer = setTimeout(() => stopAsInteractive(`no output for ${options.idleTimeoutMs}ms`), options.idleTimeoutMs);
     if (options.runningCommands && options.handoffTimeoutMs && options.handoffTimeoutMs > 0) {
       handoffTimer = setTimeout(() => {
+        handoffTimeoutElapsed = true;
         if (looksLikeLongRunningCommand(command) || output.trim() !== '') {
           handoffRunningCommand(`still running after ${options.handoffTimeoutMs}ms`);
         }

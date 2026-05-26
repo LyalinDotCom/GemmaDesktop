@@ -932,6 +932,48 @@ describe('TUI commands', () => {
     expect(session.history.at(-1)?.text).toContain('mode set to off');
   });
 
+  it('shows and updates provider endpoints through slash command without editing config files', async () => {
+    const output = new BufferOutput();
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-tui-endpoint-'));
+    const session: TuiSession = {
+      runtime: {
+        provider,
+        skills: [],
+        tools: [],
+        cwd,
+        maxTurns: 8,
+        model: 'gemini-3.5-flash',
+        stream,
+        async run() {
+          return { answer: 'ok', turns: [], stats: { durationMs: 1, turns: 0, toolCalls: 0 } };
+        }
+      } satisfies Runtime,
+      provider: 'gemini',
+      reasoningMode: 'auto' as const,
+      contextTokens: 262_144,
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+      ollamaAutoStart: true,
+      history: [] as TuiHistoryEntry[],
+      scrollOffset: 0
+    };
+
+    await expect(handleTuiLine(session, '/endpoint', output)).resolves.toBe(true);
+    expect(session.history.at(-1)?.text).toContain('/endpoint ollama http://100.104.166.87:11434');
+
+    await expect(handleTuiLine(session, '/endpoint generativelanguage.googleapis.com', output)).resolves.toBe(true);
+    expect(session.geminiApiBaseUrl).toBe('https://generativelanguage.googleapis.com/v1beta');
+    expect(session.history.at(-1)?.text).toContain('runtime reloaded');
+
+    await expect(handleTuiLine(session, '/endpoint ollama 100.104.166.87:11434/v1/chat/completions', output)).resolves.toBe(true);
+    expect(session.ollamaUrl).toBe('http://100.104.166.87:11434');
+    expect(session.history.at(-1)?.text).toContain('current provider is gemini');
+
+    await expect(handleTuiLine(session, '/endpoint ftp://bad.local', output)).resolves.toBe(true);
+    expect(session.history.at(-1)?.text).toContain('must use http or https');
+  });
+
   it('scrolls history through slash command', async () => {
     const output = new BufferOutput();
     const session: TuiSession = {
@@ -1052,11 +1094,14 @@ describe('TUI commands', () => {
     expect(completeSlashInput('/settings')).toBe('/settings maxTurns ');
     expect(completeSlashInput('/settings m')).toBe('/settings maxTurns ');
     expect(completeSlashInput('/debug')).toBe('/debug:prompt ');
+    expect(completeSlashInput('/end')).toBe('/endpoint ');
     expect(completeSlashInput('/run')).toBe('/run ');
     expect(slashSuggestions('/settings')?.some((suggestion) => suggestion.name === '/settings maxTurns <n|unlimited>')).toBe(true);
     expect(slashSuggestions('/settings m')?.map((suggestion) => suggestion.name)).toEqual(['/settings maxTurns <n|unlimited>']);
+    expect(slashSuggestions('/endpoint')?.some((suggestion) => suggestion.name === '/endpoint <provider> <url>')).toBe(true);
     expect(slashSuggestions('/run')?.[0]?.parameters).toContain('shell command executed');
     expect(commands().some((command) => command.name === '/debug:prompt')).toBe(true);
+    expect(commands().some((command) => command.name === '/endpoint')).toBe(true);
     expect(commands().some((command) => command.name === '/models')).toBe(false);
   });
 

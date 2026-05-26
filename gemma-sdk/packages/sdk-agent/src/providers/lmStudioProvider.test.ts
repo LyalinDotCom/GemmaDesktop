@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeOpenAICompatibleBaseUrl } from './openAiCompatibleProvider.js';
 import { listLmStudioModelInfos, listLmStudioModels, LmStudioProvider } from './lmStudioProvider.js';
 
 describe('LmStudioProvider', () => {
@@ -164,6 +165,14 @@ describe('listLmStudioModels', () => {
 
     expect(calls).toEqual(['http://lmstudio.local/v1/models']);
     expect(models).toEqual(['a', 'z']);
+  });
+
+  it('normalizes common OpenAI-compatible endpoint paste shapes', async () => {
+    expect(normalizeOpenAICompatibleBaseUrl('lmstudio.local:1234')).toBe('http://lmstudio.local:1234/v1');
+    expect(normalizeOpenAICompatibleBaseUrl('http://lmstudio.local:1234/v1/chat/completions')).toBe('http://lmstudio.local:1234/v1');
+    expect(normalizeOpenAICompatibleBaseUrl('https://proxy.local/lmstudio/v1/models')).toBe('https://proxy.local/lmstudio/v1');
+    expect(normalizeOpenAICompatibleBaseUrl('http://ollama.local:11434/api/tags')).toBe('http://ollama.local:11434/v1');
+    expect(() => normalizeOpenAICompatibleBaseUrl('ftp://lmstudio.local')).toThrow('must use http or https');
   });
 
   it('returns display metadata for model picker rows', async () => {

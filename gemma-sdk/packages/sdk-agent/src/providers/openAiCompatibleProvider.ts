@@ -395,8 +395,70 @@ export async function listOpenAICompatibleModels(baseUrl: string, fetchImpl: typ
 }
 
 export function normalizeOpenAICompatibleBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
+  const url = parseProviderEndpointUrl(baseUrl, 'OpenAI-compatible endpoint');
+  const segments = pathSegments(url);
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+  const v1Index = lowerSegments.lastIndexOf('v1');
+  if (v1Index >= 0) {
+    url.pathname = `/${segments.slice(0, v1Index + 1).join('/')}`;
+    return serializeProviderEndpointUrl(url);
+  }
+
+  const nativeApiIndex = nativeOllamaApiIndex(lowerSegments);
+  if (nativeApiIndex >= 0) {
+    url.pathname = providerPath([...segments.slice(0, nativeApiIndex), 'v1']);
+    return serializeProviderEndpointUrl(url);
+  }
+
+  url.pathname = providerPath([...segments, 'v1']);
+  return serializeProviderEndpointUrl(url);
+}
+
+export function parseProviderEndpointUrl(value: string, label = 'Provider endpoint'): URL {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withProtocol);
+  } catch {
+    throw new Error(`${label} must be a valid http(s) URL or host:port value.`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`${label} must use http or https.`);
+  }
+  if (!url.hostname) {
+    throw new Error(`${label} must include a host.`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`${label} must not include credentials in the URL.`);
+  }
+  if (url.search || url.hash) {
+    throw new Error(`${label} must not include query strings or fragments.`);
+  }
+  return url;
+}
+
+export function pathSegments(url: URL): string[] {
+  return url.pathname.split('/').map((segment) => segment.trim()).filter(Boolean);
+}
+
+export function serializeProviderEndpointUrl(url: URL): string {
+  const pathname = url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${pathname === '/' ? '' : pathname}`;
+}
+
+function providerPath(segments: string[]): string {
+  return `/${segments.filter(Boolean).join('/')}`;
+}
+
+function nativeOllamaApiIndex(lowerSegments: string[]): number {
+  return lowerSegments.findIndex((segment, index) =>
+    segment === 'api'
+    && ['chat', 'copy', 'delete', 'embeddings', 'generate', 'pull', 'ps', 'show', 'tags'].includes(lowerSegments[index + 1] ?? '')
+  );
 }
 
 async function toModelMessages(messages: ChatMessage[]): Promise<ModelMessage[]> {

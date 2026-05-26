@@ -6,6 +6,7 @@ import {
   type SettingsTab,
 } from '../../src/renderer/src/components/SettingsModal'
 import {
+  buildModelTargetOptions,
   formatModelTargetOptionLabel,
   groupModelTargetOptions,
   ModelTargetPicker,
@@ -227,6 +228,32 @@ describe('SettingsModal layout', () => {
     ])
     expect(groups[2]?.options.map(formatModelTargetOptionLabel)).toEqual([
       'Gemma 4 26B - Ollama - OpenAI-compatible inference',
+    ])
+  })
+
+  it('does not inject configured or default helper models that are absent from inventory', () => {
+    const options = buildModelTargetOptions({
+      models: [
+        modelOption('gemma4:31b', 'Gemma 4 31B', 'ollama-openai', 'Ollama', 'OpenAI-compatible inference'),
+        modelOption('qwen3.6:35b', 'Qwen3.6 35B', 'ollama-openai', 'Ollama', 'OpenAI-compatible inference'),
+      ].map((option) => ({
+        id: option.modelId,
+        name: option.label,
+        runtimeId: option.runtimeId,
+        runtimeName: option.providerLabel,
+        status: 'available' as const,
+      })),
+      modelSelection: {
+        mainModel: { modelId: 'gemma4:31b', runtimeId: 'ollama-openai' },
+        helperModel: { modelId: 'gemma4:e4b', runtimeId: 'ollama-openai' },
+        helperModelEnabled: false,
+      },
+      defaultModelSelection: DEFAULT_MODEL_SELECTION_SETTINGS,
+    })
+
+    expect(options.map((option) => option.modelId)).toEqual([
+      'gemma4:31b',
+      'qwen3.6:35b',
     ])
   })
 

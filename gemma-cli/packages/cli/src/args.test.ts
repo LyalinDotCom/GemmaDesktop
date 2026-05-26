@@ -45,6 +45,38 @@ describe('parseArgs', () => {
     });
   });
 
+  it('maps generic endpoint flags to the selected provider', () => {
+    expect(parseArgs(['--provider', 'ollama', '--endpoint', 'http://ollama.remote:11434'], {})).toMatchObject({
+      provider: 'ollama',
+      ollamaUrl: 'http://ollama.remote:11434'
+    });
+    expect(parseArgs(['--endpoint', 'http://lm.remote:1234', '--provider', 'lmstudio'], {})).toMatchObject({
+      provider: 'lmstudio',
+      lmStudioUrl: 'http://lm.remote:1234'
+    });
+    expect(parseArgs(['--provider', 'gemini', '--endpoint', 'https://gemini.local/v1beta'], {})).toMatchObject({
+      provider: 'gemini',
+      geminiApiBaseUrl: 'https://gemini.local/v1beta'
+    });
+  });
+
+  it('maps GEMMA_ENDPOINT to GEMMA_PROVIDER unless a specific endpoint is configured', () => {
+    expect(parseArgs([], { GEMMA_PROVIDER: 'lmstudio', GEMMA_ENDPOINT: 'http://lm.remote:1234' })).toMatchObject({
+      provider: 'lmstudio',
+      lmStudioUrl: 'http://lm.remote:1234'
+    });
+    expect(parseArgs([], { GEMMA_ENDPOINT: 'http://generic:11434', OLLAMA_URL: 'http://specific:11434' })).toMatchObject({
+      provider: 'ollama',
+      ollamaUrl: 'http://specific:11434'
+    });
+    expect(parseArgs(['--endpoint', 'http://cli:11434'], { OLLAMA_URL: 'http://env:11434' })).toMatchObject({
+      ollamaUrl: 'http://cli:11434'
+    });
+    expect(parseArgs(['--endpoint', 'http://cli:11434', '--ollama-url', 'http://specific:11434'], {})).toMatchObject({
+      ollamaUrl: 'http://specific:11434'
+    });
+  });
+
   it('parses reasoning mode', () => {
     expect(parseArgs(['--think', 'off'], {})).toMatchObject({
       reasoningMode: 'off'

@@ -203,6 +203,7 @@ Options:
   --skill <name>            Load a skill from ~/.gemmacli/skills or .gemma/skills. Repeatable.
   --provider <name>         ollama, lmstudio, or gemini. Defaults to ollama.
   --model <name>            Model name. Ollama defaults to gemma4:26b; Gemini defaults to gemini-3.5-flash.
+  --endpoint <url>          Endpoint alias for the selected provider. Accepts roots, /v1 URLs, and pasted chat-completions URLs.
   --ollama-url <url>        Ollama base URL. Defaults to http://127.0.0.1:11434.
   --lmstudio-url <url>      LM Studio base URL. Defaults to http://127.0.0.1:1234.
   --gemini-api-key <key>    Gemini API key. Defaults to GEMINI_API_KEY.
@@ -232,7 +233,12 @@ Scenarios:
 ${scenarios.map((scenario) => `  ${scenario.id.padEnd(18)} ${scenario.description}`).join('\n')}
 
 TUI commands:
-  /model, /run <command>, /skills, /stats, /status, /help, /quit
+  /model, /endpoint, /run <command>, /skills, /stats, /status, /help, /quit
+
+Examples:
+  gemma --provider ollama --endpoint http://100.104.166.87:11434 --list-models
+  gemma --provider lmstudio --endpoint http://host:1234/v1 --model google/gemma-4-26b-a4b
+  GEMMA_PROVIDER=ollama GEMMA_ENDPOINT=100.104.166.87:11434 gemma
 
 ACP methods:
   initialize, session/new, session/prompt, models/list, skills/list

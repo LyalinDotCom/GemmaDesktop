@@ -18,6 +18,7 @@ describe('main', () => {
 
     expect(lines.join('\n')).toContain('No prompt/scenario/acp starts the TUI by default.');
     expect(lines.join('\n')).toContain('--json-stream');
+    expect(lines.join('\n')).toContain('--endpoint <url>');
     expect(lines.join('\n')).toContain('--version');
     expect(lines.join('\n')).toContain('~/.gemmacli/skills');
   });

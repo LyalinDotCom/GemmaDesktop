@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { OpenAICompatibleLocalProvider, listOpenAICompatibleModels, normalizeOpenAICompatibleBaseUrl } from './openAiCompatibleProvider.js';
+import { OpenAICompatibleLocalProvider, listOpenAICompatibleModels, normalizeOpenAICompatibleBaseUrl, parseProviderEndpointUrl, pathSegments, serializeProviderEndpointUrl } from './openAiCompatibleProvider.js';
 import type { GenerateOptions, ModelProvider, StreamChunk } from '../types.js';
 
 export interface OllamaProviderOptions {
@@ -138,7 +138,7 @@ export async function listOllamaModelInfos(baseUrl = defaultBaseUrl, fetchImpl: 
 }
 
 export async function getOllamaModelCapabilities(model: string, baseUrl = defaultBaseUrl, fetchImpl: typeof fetch = fetch): Promise<OllamaModelCapabilities> {
-  const response = await fetchImpl(`${normalizeOllamaRootBaseUrl(baseUrl)}/api/show`, {
+  const response = await fetchImpl(`${normalizeOllamaBaseUrl(baseUrl)}/api/show`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model })
@@ -161,9 +161,23 @@ function isGemmaCliInternalModel(model: string): boolean {
   return model.startsWith('gemma-cli/');
 }
 
-function normalizeOllamaRootBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  return /\/v1$/i.test(trimmed) ? trimmed.slice(0, -3) : trimmed;
+export function normalizeOllamaBaseUrl(baseUrl: string): string {
+  const url = parseProviderEndpointUrl(baseUrl, 'Ollama endpoint');
+  const segments = pathSegments(url);
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+  const v1Index = lowerSegments.lastIndexOf('v1');
+  if (v1Index >= 0) {
+    url.pathname = `/${segments.slice(0, v1Index).join('/')}`;
+    return serializeProviderEndpointUrl(url);
+  }
+  const nativeApiIndex = lowerSegments.findIndex((segment, index) =>
+    segment === 'api'
+    && ['chat', 'copy', 'delete', 'embeddings', 'generate', 'pull', 'ps', 'show', 'tags'].includes(lowerSegments[index + 1] ?? '')
+  );
+  if (nativeApiIndex >= 0) {
+    url.pathname = `/${segments.slice(0, nativeApiIndex).join('/')}`;
+  }
+  return serializeProviderEndpointUrl(url);
 }
 
 function extractOllamaShowContextTokens(body: OllamaShowResponse): number | undefined {

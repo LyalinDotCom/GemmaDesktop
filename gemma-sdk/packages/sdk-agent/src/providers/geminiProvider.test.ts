@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GeminiProvider, listGeminiModelInfos } from './geminiProvider.js';
+import { GeminiProvider, listGeminiModelInfos, normalizeGeminiApiBaseUrl } from './geminiProvider.js';
 
 describe('GeminiProvider', () => {
   it('lists Gemini multimodal support from model metadata', async () => {
@@ -76,6 +76,14 @@ describe('GeminiProvider', () => {
         ]
       }]
     });
+  });
+
+  it('normalizes Gemini API base URLs from host and copied endpoint shapes', () => {
+    expect(normalizeGeminiApiBaseUrl('generativelanguage.googleapis.com')).toBe('https://generativelanguage.googleapis.com/v1beta');
+    expect(normalizeGeminiApiBaseUrl('localhost:8080/v1beta/models')).toBe('http://localhost:8080/v1beta');
+    expect(normalizeGeminiApiBaseUrl('https://gemini.local/v1beta/models')).toBe('https://gemini.local/v1beta');
+    expect(normalizeGeminiApiBaseUrl('http://localhost:8080/v1beta/models/gemini-3.5-flash:streamGenerateContent')).toBe('http://localhost:8080/v1beta');
+    expect(() => normalizeGeminiApiBaseUrl('ftp://gemini.local')).toThrow('must use http or https');
   });
 });
 

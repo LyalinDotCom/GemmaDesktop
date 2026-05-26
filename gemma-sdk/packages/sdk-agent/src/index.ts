@@ -3,9 +3,10 @@ export type { AgentEnvironment, AgentOptions, AgentSystemPromptOptions } from '.
 export { assertContentSupported, buildPromptContentWithMedia, contentToText, inferAttachmentCapabilities, inferMimeTypeFromPath, resolveBinaryAssetForRequest, resolveImageAssetForRequest } from './content.js';
 export { buildGemma4Prompt, buildGemmaThinkingInstructions, modelProfileFor, normalizeGemmaModelOutput, parseGemmaNativeToolCall, renderGemmaNativeToolDeclarations, shouldEnableProviderReasoning } from './modelProfiles.js';
 export type { ModelProfile, ModelProfileFamily } from './modelProfiles.js';
+export { normalizeOpenAICompatibleBaseUrl } from './providers/openAiCompatibleProvider.js';
 export { listLmStudioModelInfos, listLmStudioModels, LmStudioProvider } from './providers/lmStudioProvider.js';
-export { GeminiProvider, listGeminiModelInfos, listGeminiModels } from './providers/geminiProvider.js';
-export { ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, OllamaProvider, prepareOllama } from './providers/ollamaProvider.js';
+export { GeminiProvider, listGeminiModelInfos, listGeminiModels, normalizeGeminiApiBaseUrl } from './providers/geminiProvider.js';
+export { ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, normalizeOllamaBaseUrl, OllamaProvider, prepareOllama } from './providers/ollamaProvider.js';
 export { createWorkspaceTools } from './tools/workspace.js';
 export { findScenario, scenarios } from './scenarios.js';
 export { detectSkillsForPrompt, listInstalledSkills, loadSkills, mergeSkills, skillsToSystemContext } from './skills.js';
