@@ -87,13 +87,18 @@ async function resolveWorkspaceTarget(
   return null
 }
 
+function isGeneratedDiagnosticPath(matchedPath: string): boolean {
+  const parts = path.resolve(matchedPath).split(path.sep).filter(Boolean)
+  return parts.some((part, index) => part === '.npm' && parts[index + 1] === '_logs')
+}
+
 async function inferFromText(
   text: string,
 ): Promise<{ workingDirectory: string; matchedPath: string } | null> {
   const candidates = extractAbsolutePathCandidates(text)
   for (const candidate of candidates) {
     const resolved = await resolveWorkspaceTarget(candidate)
-    if (resolved) {
+    if (resolved && !isGeneratedDiagnosticPath(resolved.matchedPath)) {
       return resolved
     }
   }
@@ -115,6 +120,10 @@ export async function inferConversationWorkingDirectory(input: {
     currentMessageMatch
     && path.resolve(currentMessageMatch.workingDirectory) !== currentWorkingDirectory
   ) {
+    if (currentWorkingDirectory !== defaultWorkingDirectory) {
+      return null
+    }
+
     return {
       ...currentMessageMatch,
       source: 'current_message',

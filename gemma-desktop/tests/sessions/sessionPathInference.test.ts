@@ -110,6 +110,65 @@ describe('session path inference', () => {
     expect(inferred).toBeNull()
   })
 
+  it('does not move an already rooted project to a path pasted from terminal diagnostics', async () => {
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const currentDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-current-'))
+    const npmLogsDirectory = path.join(defaultDirectory, '.npm', '_logs')
+    const npmLogFile = path.join(npmLogsDirectory, '2026-06-03T22_42_41_219Z-debug-0.log')
+    cleanup.push(defaultDirectory, currentDirectory)
+    await mkdir(npmLogsDirectory, { recursive: true })
+    await writeFile(npmLogFile, 'verbose cwd /tmp/project\n', 'utf8')
+
+    const inferred = await inferConversationWorkingDirectory({
+      currentWorkingDirectory: currentDirectory,
+      defaultWorkingDirectory: defaultDirectory,
+      currentMessageText: [
+        'npm error Missing script: "dev"',
+        `npm error A complete log of this run can be found in: ${npmLogFile}`,
+      ].join('\n'),
+      appMessages: [],
+    })
+
+    expect(inferred).toBeNull()
+  })
+
+  it('does not move an already rooted project to a child folder from the current message', async () => {
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const currentDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-current-'))
+    const nestedDirectory = path.join(currentDirectory, 'test-project', 'sim02')
+    const packageFile = path.join(nestedDirectory, 'package.json')
+    cleanup.push(defaultDirectory, currentDirectory)
+    await mkdir(nestedDirectory, { recursive: true })
+    await writeFile(packageFile, '{}\n', 'utf8')
+
+    const inferred = await inferConversationWorkingDirectory({
+      currentWorkingDirectory: currentDirectory,
+      defaultWorkingDirectory: defaultDirectory,
+      currentMessageText: `Why does ${packageFile} not have a dev script?`,
+      appMessages: [],
+    })
+
+    expect(inferred).toBeNull()
+  })
+
+  it('ignores npm diagnostic logs even when the session is still in the default workspace', async () => {
+    const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
+    const npmLogsDirectory = path.join(defaultDirectory, '.npm', '_logs')
+    const npmLogFile = path.join(npmLogsDirectory, '2026-06-03T22_42_41_219Z-debug-0.log')
+    cleanup.push(defaultDirectory)
+    await mkdir(npmLogsDirectory, { recursive: true })
+    await writeFile(npmLogFile, 'verbose cwd /tmp/project\n', 'utf8')
+
+    const inferred = await inferConversationWorkingDirectory({
+      currentWorkingDirectory: defaultDirectory,
+      defaultWorkingDirectory: defaultDirectory,
+      currentMessageText: `A complete log of this run can be found in: ${npmLogFile}`,
+      appMessages: [],
+    })
+
+    expect(inferred).toBeNull()
+  })
+
   it('uses the parent directory for a not-yet-created file path when the folder exists', async () => {
     const defaultDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-default-'))
     const projectDirectory = await mkdtemp(path.join(os.tmpdir(), 'gemma-desktop-project-'))
