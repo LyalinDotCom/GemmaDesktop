@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Camera,
   Cpu,
@@ -306,6 +306,7 @@ export function DoctorPanel({
   >(null)
   const [installingSpeech, setInstallingSpeech] = useState(false)
   const [testingReadAloud, setTestingReadAloud] = useState(false)
+  const contentScrollRef = useRef<HTMLDivElement>(null)
 
   const loadReport = async (initialLoad = false) => {
     if (initialLoad) setLoading(true)
@@ -346,6 +347,10 @@ export function DoctorPanel({
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
+
+  useEffect(() => {
+    contentScrollRef.current?.scrollTo({ top: 0 })
+  }, [activeTab])
 
   if (!open) return null
 
@@ -459,7 +464,7 @@ export function DoctorPanel({
 
   return (
     <div className="absolute inset-x-0 bottom-0 top-12 z-[55] flex items-center justify-center overflow-hidden bg-black/40 px-4 py-6 backdrop-blur-sm sm:px-6">
-      <div className="no-drag flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="no-drag flex h-[min(78vh,760px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-200">
@@ -518,8 +523,8 @@ export function DoctorPanel({
           </nav>
 
           {/* Content */}
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-            <div className="space-y-6 px-6 py-5">
+          <div ref={contentScrollRef} className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="min-w-0 space-y-6 px-6 py-5">
               {loading && !report ? (
                 <div className="flex min-h-[200px] items-center justify-center">
                   <div className="flex items-center gap-2 text-sm text-zinc-500">

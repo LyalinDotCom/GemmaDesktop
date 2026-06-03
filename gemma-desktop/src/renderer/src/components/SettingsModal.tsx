@@ -534,13 +534,20 @@ export function SettingsModal({
     })
   }
 
-  const updateGeminiApiSettings = (patch: Partial<AppGeminiApiSettings>) => {
+  const updateLocalGeminiApiSettings = (patch: Partial<AppGeminiApiSettings>) => {
     const integrations = {
       ...local.integrations,
       geminiApi: { ...local.integrations.geminiApi, ...patch },
     }
     setLocal({ ...local, integrations })
-    commitUpdate({ integrations })
+  }
+
+  const updateLocalGeminiCliModel = (model: string) => {
+    const integrations = {
+      ...local.integrations,
+      geminiCli: { ...local.integrations.geminiCli, model },
+    }
+    setLocal({ ...local, integrations })
   }
 
   const updateGeminiApiProfile = (
@@ -1552,7 +1559,8 @@ export function SettingsModal({
                         spellCheck={false}
                         placeholder="AIza..."
                         value={local.integrations.geminiApi.apiKey}
-                        onChange={(e) => updateGeminiApiSettings({ apiKey: e.target.value })}
+                        onChange={(e) => updateLocalGeminiApiSettings({ apiKey: e.target.value })}
+                        onBlur={() => commitUpdate({ integrations: local.integrations })}
                         className="pr-9 font-mono text-xs"
                       />
                       <button
@@ -1577,7 +1585,8 @@ export function SettingsModal({
                     <TextInput
                       type="text"
                       value={local.integrations.geminiApi.model}
-                      onChange={(e) => updateGeminiApiSettings({ model: e.target.value })}
+                      onChange={(e) => updateLocalGeminiApiSettings({ model: e.target.value })}
+                      onBlur={() => commitUpdate({ integrations: local.integrations })}
                       className="font-mono text-xs"
                     />
                   </SettingsField>
@@ -1769,14 +1778,8 @@ export function SettingsModal({
                         type="text"
                         spellCheck={false}
                         value={local.integrations.geminiCli.model}
-                        onChange={(e) => {
-                          const integrations = {
-                            ...local.integrations,
-                            geminiCli: { ...local.integrations.geminiCli, model: e.target.value },
-                          }
-                          setLocal({ ...local, integrations })
-                          commitUpdate({ integrations })
-                        }}
+                        onChange={(e) => updateLocalGeminiCliModel(e.target.value)}
+                        onBlur={() => commitUpdate({ integrations: local.integrations })}
                         className="font-mono text-xs"
                       />
                     </SettingsField>
