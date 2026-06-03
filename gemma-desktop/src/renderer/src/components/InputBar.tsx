@@ -172,6 +172,7 @@ export interface InputBarProps {
   assistantNarrationAvailable?: boolean
   assistantNarrationDisabledReason?: string | null
   onToggleAssistantNarration?: () => void
+  showMainModelLabel?: boolean
 }
 
 interface SpeechCaptureRefs {
@@ -357,6 +358,7 @@ export function InputBar({
   assistantNarrationAvailable = true,
   assistantNarrationDisabledReason = null,
   onToggleAssistantNarration,
+  showMainModelLabel = false,
 }: InputBarProps) {
   const [text, setText] = useState(initialDraftText)
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
@@ -2690,6 +2692,12 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
           )}
         </div>
       </div>
+
+      {showMainModelLabel && (
+        <div className="mt-1.5 flex justify-end px-2 text-[11px] leading-none text-zinc-400/70">
+          {selectedModelLabel}
+        </div>
+      )}
 
       {isDragOver && (
         <div className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">

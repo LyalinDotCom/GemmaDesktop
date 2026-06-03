@@ -2278,6 +2278,7 @@ export function App() {
       readAloudPlayback={readAloudPlayer.playbackControls}
       presentation="floating"
       layout="expanded"
+      showMainModelLabel
     />
   ) : null
   const globalChatHomeHistoryVisible = true

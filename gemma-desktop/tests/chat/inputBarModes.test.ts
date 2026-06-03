@@ -350,6 +350,26 @@ describe('InputBar mode rendering', () => {
     expect(markup).toContain('title="Context: ~0 / 32768 tokens (0%)"')
   })
 
+  it('shows the model label below the floating composer only when requested', () => {
+    const defaultMarkup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        presentation: 'floating',
+      })),
+    )
+    const labeledMarkup = renderToStaticMarkup(
+      createElement(InputBar, buildProps({
+        presentation: 'floating',
+        showMainModelLabel: true,
+      })),
+    )
+
+    expect(defaultMarkup).not.toContain('text-zinc-400/70')
+    expect(labeledMarkup).toContain('gemma4:26b')
+    expect(labeledMarkup).not.toContain('Main model:')
+    expect(labeledMarkup).toContain('justify-end px-2 text-[11px]')
+    expect(labeledMarkup).toContain('text-zinc-400/70')
+  })
+
   it('caps both default and floating composers at two lines with internal scrolling', () => {
     const floatingMarkup = renderToStaticMarkup(
       createElement(InputBar, buildProps({
