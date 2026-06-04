@@ -1,6 +1,6 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin as defaultInput, stdout as defaultOutput } from 'node:process';
-import { ensureOllamaRunning, inferAttachmentCapabilities, listGeminiModelInfos, listInstalledSkills, listLmStudioModelInfos, listOllamaModelInfos, normalizeGeminiApiBaseUrl, normalizeOllamaBaseUrl, normalizeOpenAICompatibleBaseUrl, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type GeminiModelInfo, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
+import { ensureOllamaRunning, inferAttachmentCapabilities, listGeminiModelInfos, listInstalledSkills, listLiteRtLmModelInfos, listLlamaCppModelInfos, listLmStudioModelInfos, listOllamaModelInfos, normalizeGeminiApiBaseUrl, normalizeOllamaBaseUrl, normalizeOpenAICompatibleBaseUrl, type AgentRunResult, type AgentToolStartEvent, type AgentTurn, type AgentTurnEvent, type ChatMessage, type GeminiModelInfo, type LiteRtLmModelInfo, type LlamaCppModelInfo, type LmStudioModelInfo, type ModelProvider, type OllamaModelInfo, type Tool, type ToolCall, type ToolResult, type WorkspacePermissionRequest } from '@gemma-sdk/agent';
 import type { CliOptions } from './args.js';
 import { createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, recordSessionModelSelection, sessionMessages, type DiagnosticContext, type StoredSession, type StoredSessionMessage } from './diagnostics.js';
 import { isLocalProvider, readModelPreference, writeModelPreference, type ModelPreference } from './modelPreferences.js';
@@ -24,6 +24,8 @@ export interface TuiSession {
   provider: CliOptions['provider'];
   ollamaUrl?: string;
   lmStudioUrl?: string;
+  llamaCppUrl?: string;
+  liteRtLmUrl?: string;
   geminiApiKey?: string;
   geminiApiBaseUrl?: string;
   contextTokens?: number;
@@ -74,7 +76,7 @@ export interface ToolProgressState {
   seenTurnIndexes: Set<number>;
 }
 
-export type SessionModelInfo = OllamaModelInfo | LmStudioModelInfo | GeminiModelInfo;
+export type SessionModelInfo = OllamaModelInfo | LmStudioModelInfo | LlamaCppModelInfo | LiteRtLmModelInfo | GeminiModelInfo;
 
 export interface SessionModelSelection {
   provider: SessionModelInfo['provider'];
@@ -117,6 +119,8 @@ export async function runTui(options: CliOptions, input = defaultInput, output =
     provider: startupOptions.provider,
     ollamaUrl: options.ollamaUrl,
     lmStudioUrl: options.lmStudioUrl,
+    llamaCppUrl: options.llamaCppUrl,
+    liteRtLmUrl: options.liteRtLmUrl,
     geminiApiKey: options.geminiApiKey,
     geminiApiBaseUrl: options.geminiApiBaseUrl,
     contextTokens: options.contextTokens,
@@ -232,6 +236,8 @@ function cliOptionsFromSession(session: TuiSession, overrides: Partial<CliOption
     model: overrides.model ?? session.runtime.selectedModel ?? session.runtime.model,
     ollamaUrl: overrides.ollamaUrl ?? session.ollamaUrl,
     lmStudioUrl: overrides.lmStudioUrl ?? session.lmStudioUrl,
+    llamaCppUrl: overrides.llamaCppUrl ?? session.llamaCppUrl,
+    liteRtLmUrl: overrides.liteRtLmUrl ?? session.liteRtLmUrl,
     geminiApiKey: overrides.geminiApiKey ?? session.geminiApiKey,
     geminiApiBaseUrl: overrides.geminiApiBaseUrl ?? session.geminiApiBaseUrl,
     prompt: undefined,
@@ -534,10 +540,10 @@ export function commands(): TuiCommand[] {
     { name: '/help', description: 'Show the compact TUI help hint.', usage: '/help' },
     { name: '/commands', description: 'Show this command palette.', usage: '/commands' },
     { name: '/model', description: 'Open the local model picker and switch models.', insertText: '/model ', usage: '/model' },
-    { name: '/model <provider> <model>', description: 'Switch provider and model from the command line.', insertText: '/model ', usage: '/model <provider> <model>', parameters: 'provider: ollama, lmstudio, or gemini' },
+    { name: '/model <provider> <model>', description: 'Switch provider and model from the command line.', insertText: '/model ', usage: '/model <provider> <model>', parameters: 'provider: ollama, lmstudio, llamacpp, litertlm, or gemini' },
     { name: '/endpoint', description: 'Show provider endpoints and endpoint command examples.', usage: '/endpoint' },
     { name: '/endpoint <url>', description: 'Set the current provider endpoint for this session.', insertText: '/endpoint ', usage: '/endpoint <url>', parameters: 'url: server root, /v1 URL, or pasted chat-completions URL' },
-    { name: '/endpoint <provider> <url>', description: 'Set a provider endpoint without editing files.', insertText: '/endpoint ', usage: '/endpoint <provider> <url>', parameters: 'provider: ollama, lmstudio, or gemini' },
+    { name: '/endpoint <provider> <url>', description: 'Set a provider endpoint without editing files.', insertText: '/endpoint ', usage: '/endpoint <provider> <url>', parameters: 'provider: ollama, lmstudio, llamacpp, litertlm, or gemini' },
     { name: '/settings', description: 'Show runtime and TUI settings.', usage: '/settings [key value]' },
     { name: '/settings maxTurns <n|unlimited>', description: 'Update or clear the agent turn limit.', insertText: '/settings maxTurns ', usage: '/settings maxTurns <n|unlimited>', parameters: 'n: positive integer turn limit, or unlimited to clear it' },
     { name: '/think', description: 'Show or change reasoning mode.', usage: '/think [auto|on|off]' },
@@ -597,6 +603,8 @@ export async function listSessionModelInfos(session: TuiSession): Promise<Sessio
   const providers: Array<Promise<SessionModelInfo[]>> = [
     listOllamaModelInfosWithAutostart(session),
     listLmStudioModelInfos(session.lmStudioUrl),
+    listLlamaCppModelInfos(session.llamaCppUrl),
+    listLiteRtLmModelInfos(session.liteRtLmUrl),
     listGeminiModelInfos(session.geminiApiKey, session.geminiApiBaseUrl)
   ];
   const results = await Promise.allSettled(providers);
@@ -640,6 +648,8 @@ export async function selectSessionModel(session: TuiSession, model: string, pro
     model,
     ollamaUrl: session.ollamaUrl,
     lmStudioUrl: session.lmStudioUrl,
+    llamaCppUrl: session.llamaCppUrl,
+    liteRtLmUrl: session.liteRtLmUrl,
     geminiApiKey: session.geminiApiKey,
     geminiApiBaseUrl: session.geminiApiBaseUrl,
     prompt: undefined,
@@ -806,24 +816,30 @@ function normalizeEndpointForProvider(provider: CliOptions['provider'], endpoint
   if (provider === 'ollama') {
     return normalizeOllamaBaseUrl(endpoint);
   }
-  if (provider === 'lmstudio') {
+  if (provider === 'lmstudio' || provider === 'llamacpp' || provider === 'litertlm') {
     return normalizeOpenAICompatibleBaseUrl(endpoint);
   }
   return normalizeGeminiApiBaseUrl(endpoint);
 }
 
 function providerFromToken(value: string | undefined): CliOptions['provider'] | undefined {
-  if (value === 'ollama' || value === 'lmstudio' || value === 'gemini') {
+  if (value === 'ollama' || value === 'lmstudio' || value === 'llamacpp' || value === 'litertlm' || value === 'gemini') {
     return value;
   }
   if (value === 'lm-studio' || value === 'lm_studio') {
     return 'lmstudio';
   }
+  if (value === 'llama.cpp' || value === 'llama-cpp' || value === 'llama_cpp') {
+    return 'llamacpp';
+  }
+  if (value === 'litert-lm' || value === 'litert_lm' || value === 'litert') {
+    return 'litertlm';
+  }
   return undefined;
 }
 
 function providerTokens(): CliOptions['provider'][] {
-  return ['ollama', 'lmstudio', 'gemini'];
+  return ['ollama', 'lmstudio', 'llamacpp', 'litertlm', 'gemini'];
 }
 
 function setEndpointForProvider(session: TuiSession, provider: CliOptions['provider'], endpoint: string | undefined): void {
@@ -831,6 +847,10 @@ function setEndpointForProvider(session: TuiSession, provider: CliOptions['provi
     session.ollamaUrl = endpoint;
   } else if (provider === 'lmstudio') {
     session.lmStudioUrl = endpoint;
+  } else if (provider === 'llamacpp') {
+    session.llamaCppUrl = endpoint;
+  } else if (provider === 'litertlm') {
+    session.liteRtLmUrl = endpoint;
   } else {
     session.geminiApiBaseUrl = endpoint;
   }
@@ -843,11 +863,19 @@ function endpointForProvider(session: TuiSession, provider: CliOptions['provider
   if (provider === 'lmstudio') {
     return session.lmStudioUrl;
   }
+  if (provider === 'llamacpp') {
+    return session.llamaCppUrl;
+  }
+  if (provider === 'litertlm') {
+    return session.liteRtLmUrl;
+  }
   return session.geminiApiBaseUrl;
 }
 
 function providerDisplayName(provider: CliOptions['provider']): string {
   if (provider === 'lmstudio') return 'LM Studio';
+  if (provider === 'llamacpp') return 'llama.cpp';
+  if (provider === 'litertlm') return 'LiteRT-LM';
   if (provider === 'gemini') return 'Gemini API';
   return 'Ollama';
 }
@@ -858,17 +886,22 @@ function formatEndpointSettings(session: TuiSession): string {
     `current provider: ${session.provider}`,
     `ollama: ${formatEndpointValue('ollama', session.ollamaUrl)}`,
     `lmstudio: ${formatEndpointValue('lmstudio', session.lmStudioUrl)}`,
+    `llamacpp: ${formatEndpointValue('llamacpp', session.llamaCppUrl)}`,
+    `litertlm: ${formatEndpointValue('litertlm', session.liteRtLmUrl)}`,
     `gemini: ${formatEndpointValue('gemini', session.geminiApiBaseUrl)}`,
     '',
     'usage:',
     '  /endpoint <url>',
     '  /endpoint ollama http://100.104.166.87:11434',
     '  /endpoint lmstudio http://host:1234/v1',
+    '  /endpoint llamacpp http://127.0.0.1:8080',
+    '  /endpoint litertlm http://127.0.0.1:9379',
     '  /endpoint gemini https://generativelanguage.googleapis.com/v1beta',
     '  /endpoint <provider> default',
     '',
     'command-line:',
     '  gemma --provider ollama --endpoint http://100.104.166.87:11434 --list-models',
+    '  gemma --provider litertlm --endpoint http://127.0.0.1:9379 --list-models',
     '  GEMMA_PROVIDER=lmstudio GEMMA_ENDPOINT=http://host:1234 gemma --list-models'
   ].join('\n');
 }
@@ -879,12 +912,16 @@ function endpointCommandHelp(session: TuiSession): string {
     '  /endpoint <url>',
     '  /endpoint ollama http://100.104.166.87:11434',
     '  /endpoint lmstudio http://host:1234/v1',
+    '  /endpoint llamacpp http://127.0.0.1:8080',
+    '  /endpoint litertlm http://127.0.0.1:9379',
     '  /endpoint gemini https://generativelanguage.googleapis.com/v1beta',
     '  /endpoint <provider> default',
     '',
     'Current endpoints:',
     `  ollama: ${formatEndpointValue('ollama', endpointForProvider(session, 'ollama'))}`,
     `  lmstudio: ${formatEndpointValue('lmstudio', endpointForProvider(session, 'lmstudio'))}`,
+    `  llamacpp: ${formatEndpointValue('llamacpp', endpointForProvider(session, 'llamacpp'))}`,
+    `  litertlm: ${formatEndpointValue('litertlm', endpointForProvider(session, 'litertlm'))}`,
     `  gemini: ${formatEndpointValue('gemini', endpointForProvider(session, 'gemini'))}`
   ].join('\n');
 }
@@ -895,6 +932,8 @@ function formatEndpointValue(provider: CliOptions['provider'], value: string | u
   }
   if (provider === 'ollama') return 'default http://127.0.0.1:11434';
   if (provider === 'lmstudio') return 'default http://127.0.0.1:1234';
+  if (provider === 'llamacpp') return 'default http://127.0.0.1:8080';
+  if (provider === 'litertlm') return 'default http://127.0.0.1:9379';
   return 'default https://generativelanguage.googleapis.com/v1beta';
 }
 
@@ -924,6 +963,8 @@ async function resumeStoredSession(session: TuiSession, selector: string): Promi
     model: diagnostics.session.model,
     ollamaUrl: diagnostics.session.ollamaUrl ?? session.ollamaUrl,
     lmStudioUrl: diagnostics.session.lmStudioUrl ?? session.lmStudioUrl,
+    llamaCppUrl: diagnostics.session.llamaCppUrl ?? session.llamaCppUrl,
+    liteRtLmUrl: diagnostics.session.liteRtLmUrl ?? session.liteRtLmUrl,
     geminiApiBaseUrl: diagnostics.session.geminiApiBaseUrl ?? session.geminiApiBaseUrl,
     geminiApiKey: session.geminiApiKey,
     history: sessionMessages(diagnostics.session)
@@ -935,6 +976,8 @@ async function resumeStoredSession(session: TuiSession, selector: string): Promi
   session.provider = runtimeOptions.provider;
   session.ollamaUrl = runtimeOptions.ollamaUrl;
   session.lmStudioUrl = runtimeOptions.lmStudioUrl;
+  session.llamaCppUrl = runtimeOptions.llamaCppUrl;
+  session.liteRtLmUrl = runtimeOptions.liteRtLmUrl;
   session.geminiApiKey = runtimeOptions.geminiApiKey;
   session.geminiApiBaseUrl = runtimeOptions.geminiApiBaseUrl;
   session.history = storedSessionHistoryToTuiEntries(diagnostics.session.history);
@@ -1286,6 +1329,8 @@ function formatStatus(session: TuiSession): string {
     `  directory: ${session.runtime.cwd}`,
     `  ollamaUrl: ${session.ollamaUrl ?? 'http://127.0.0.1:11434'}`,
     `  lmStudioUrl: ${session.lmStudioUrl ?? 'http://127.0.0.1:1234'}`,
+    `  llamaCppUrl: ${session.llamaCppUrl ?? 'http://127.0.0.1:8080'}`,
+    `  liteRtLmUrl: ${session.liteRtLmUrl ?? 'http://127.0.0.1:9379'}`,
     `  geminiApiBaseUrl: ${session.geminiApiBaseUrl ?? 'https://generativelanguage.googleapis.com/v1beta'}`,
     '',
     'Generation',
@@ -1687,6 +1732,8 @@ function runtimeOptionsForSession(session: TuiSession, overrides: Partial<Pick<C
     model: session.runtime.selectedModel ?? session.runtime.model,
     ollamaUrl: session.ollamaUrl,
     lmStudioUrl: session.lmStudioUrl,
+    llamaCppUrl: session.llamaCppUrl,
+    liteRtLmUrl: session.liteRtLmUrl,
     geminiApiKey: session.geminiApiKey,
     geminiApiBaseUrl: session.geminiApiBaseUrl,
     prompt: undefined,

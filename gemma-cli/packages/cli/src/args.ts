@@ -1,10 +1,12 @@
 import type { ChatMessage } from '@gemma-sdk/agent';
 
 export interface CliOptions {
-  provider: 'ollama' | 'lmstudio' | 'gemini';
+  provider: 'ollama' | 'lmstudio' | 'llamacpp' | 'litertlm' | 'gemini';
   model?: string;
   ollamaUrl?: string;
   lmStudioUrl?: string;
+  llamaCppUrl?: string;
+  liteRtLmUrl?: string;
   geminiApiKey?: string;
   geminiApiBaseUrl?: string;
   prompt?: string;
@@ -39,6 +41,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     model: env.GEMMA_MODEL,
     ollamaUrl: env.OLLAMA_URL,
     lmStudioUrl: env.LMSTUDIO_URL ?? env.LM_STUDIO_URL,
+    llamaCppUrl: env.LLAMACPP_URL ?? env.LLAMA_CPP_URL,
+    liteRtLmUrl: env.LITERTLM_URL ?? env.LITERT_LM_URL,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiApiBaseUrl: env.GEMINI_API_BASE_URL,
     skills: [],
@@ -65,6 +69,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   const providerEndpointSourceIndexes: Partial<Record<CliOptions['provider'], number>> = {};
   if (env.OLLAMA_URL) providerEndpointSourceIndexes.ollama = -1;
   if (env.LMSTUDIO_URL ?? env.LM_STUDIO_URL) providerEndpointSourceIndexes.lmstudio = -1;
+  if (env.LLAMACPP_URL ?? env.LLAMA_CPP_URL) providerEndpointSourceIndexes.llamacpp = -1;
+  if (env.LITERTLM_URL ?? env.LITERT_LM_URL) providerEndpointSourceIndexes.litertlm = -1;
   if (env.GEMINI_API_BASE_URL) providerEndpointSourceIndexes.gemini = -1;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -88,6 +94,16 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       case '--lm-studio-url':
         providerEndpointSourceIndexes.lmstudio = i;
         options.lmStudioUrl = readValue(argv, ++i, arg);
+        break;
+      case '--llamacpp-url':
+      case '--llama-cpp-url':
+        providerEndpointSourceIndexes.llamacpp = i;
+        options.llamaCppUrl = readValue(argv, ++i, arg);
+        break;
+      case '--litertlm-url':
+      case '--litert-lm-url':
+        providerEndpointSourceIndexes.litertlm = i;
+        options.liteRtLmUrl = readValue(argv, ++i, arg);
         break;
       case '--gemini-api-key':
         options.geminiApiKey = readValue(argv, ++i, arg);
@@ -199,17 +215,27 @@ function readOptionalValue(argv: string[], index: number): string | undefined {
 }
 
 function readProvider(value: string): CliOptions['provider'] {
-  if (value === 'ollama' || value === 'lmstudio' || value === 'gemini') {
+  if (value === 'ollama' || value === 'lmstudio' || value === 'llamacpp' || value === 'litertlm' || value === 'gemini') {
     return value;
   }
-  throw new Error('--provider must be ollama, lmstudio, or gemini.');
+  if (value === 'llama.cpp' || value === 'llama-cpp' || value === 'llama_cpp') {
+    return 'llamacpp';
+  }
+  if (value === 'litert-lm' || value === 'litert_lm' || value === 'litert') {
+    return 'litertlm';
+  }
+  throw new Error('--provider must be ollama, lmstudio, llamacpp, litertlm, or gemini.');
 }
 
 function readEnvProvider(value: string | undefined): CliOptions['provider'] {
-  if (value === 'lmstudio' || value === 'gemini') {
-    return value;
+  if (!value) {
+    return 'ollama';
   }
-  return 'ollama';
+  try {
+    return readProvider(value);
+  } catch {
+    return 'ollama';
+  }
 }
 
 function applyEndpointAlias(
@@ -229,6 +255,10 @@ function applyEndpointAlias(
     options.ollamaUrl = endpoint;
   } else if (options.provider === 'lmstudio') {
     options.lmStudioUrl = endpoint;
+  } else if (options.provider === 'llamacpp') {
+    options.llamaCppUrl = endpoint;
+  } else if (options.provider === 'litertlm') {
+    options.liteRtLmUrl = endpoint;
   } else {
     options.geminiApiBaseUrl = endpoint;
   }

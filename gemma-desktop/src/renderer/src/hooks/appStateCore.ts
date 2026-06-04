@@ -403,6 +403,7 @@ const defaultSettings: AppSettings = {
     },
     lmstudio: { endpoint: 'http://127.0.0.1:1234', maxConcurrentPredictions: 4 },
     llamacpp: { endpoint: 'http://127.0.0.1:8080' },
+    litertlm: { endpoint: 'http://127.0.0.1:9379' },
     omlx: { endpoint: 'http://127.0.0.1:8000', apiKey: '' },
   },
   integrations: {

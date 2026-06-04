@@ -385,7 +385,7 @@ export interface ModelSummary {
   status: 'loaded' | 'available' | 'loading'
   attachmentSupport?: AttachmentSupport
   runtimeConfig?: {
-    provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
+    provider: 'ollama' | 'lmstudio' | 'llamacpp' | 'litertlm' | 'omlx' | 'gemini'
     baseParameters?: Record<string, unknown>
     baseParametersText?: string
     requestedOptions?: Record<string, number>
@@ -654,6 +654,7 @@ export interface AppSettings {
       maxConcurrentPredictions: number
     }
     llamacpp: { endpoint: string }
+    litertlm: { endpoint: string }
     omlx: { endpoint: string; apiKey: string }
   }
   integrations: {

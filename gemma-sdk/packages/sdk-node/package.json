@@ -14,6 +14,7 @@
     "@gemma-sdk/core": "0.1.0",
     "@gemma-sdk/harness": "0.1.0",
     "@gemma-sdk/runtime-llamacpp": "0.1.0",
+    "@gemma-sdk/runtime-litertlm": "0.1.0",
     "@gemma-sdk/runtime-lmstudio": "0.1.0",
     "@gemma-sdk/runtime-omlx": "0.1.0",
     "@gemma-sdk/runtime-gemini": "0.1.0",

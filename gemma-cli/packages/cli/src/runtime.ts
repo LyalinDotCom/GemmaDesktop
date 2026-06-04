@@ -14,8 +14,12 @@ import {
   GeminiProvider,
   inferAttachmentCapabilities,
   listGeminiModelInfos,
+  listLiteRtLmModelInfos,
+  listLlamaCppModelInfos,
   listLmStudioModelInfos,
   LmStudioProvider,
+  LiteRtLmProvider,
+  LlamaCppProvider,
   loadSkills,
   mergeSkills,
   OllamaProvider,
@@ -139,6 +143,8 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
   const providerCapabilities = await resolveProviderAttachmentCapabilities(options.provider, selectedModel, {
     ollamaUrl: options.ollamaUrl,
     lmStudioUrl: options.lmStudioUrl,
+    llamaCppUrl: options.llamaCppUrl,
+    liteRtLmUrl: options.liteRtLmUrl,
     geminiApiKey: options.geminiApiKey,
     geminiApiBaseUrl: options.geminiApiBaseUrl
   });
@@ -164,6 +170,24 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
             topK: options.topK,
             reasoning: providerCapabilities.supportsReasoning
           })
+        : options.provider === 'llamacpp'
+          ? new LlamaCppProvider({
+              model,
+              baseUrl: options.llamaCppUrl,
+              contextTokens,
+              temperature: options.temperature,
+              topP: options.topP,
+              maxTokens: options.maxTokens
+            })
+          : options.provider === 'litertlm'
+            ? new LiteRtLmProvider({
+                model,
+                baseUrl: options.liteRtLmUrl,
+                contextTokens,
+                temperature: options.temperature,
+                topP: options.topP,
+                maxTokens: options.maxTokens
+              })
         : new OllamaProvider({
             model,
             baseUrl: options.ollamaUrl,
@@ -316,7 +340,7 @@ function isStreamingProvider(provider: ModelProvider): provider is StreamingMode
 async function resolveProviderAttachmentCapabilities(
   provider: CliOptions['provider'],
   model: string,
-  options: { ollamaUrl?: string; lmStudioUrl?: string; geminiApiKey?: string; geminiApiBaseUrl?: string }
+  options: { ollamaUrl?: string; lmStudioUrl?: string; llamaCppUrl?: string; liteRtLmUrl?: string; geminiApiKey?: string; geminiApiBaseUrl?: string }
 ): Promise<{ displayName?: string; supportsImage?: boolean; supportsAudio?: boolean; supportsPdf?: boolean; supportsReasoning?: boolean; contextTokens?: number }> {
   try {
     if (provider === 'ollama') {
@@ -330,6 +354,26 @@ async function resolveProviderAttachmentCapabilities(
         supportsImage: exact?.supportsImage,
         supportsAudio: false,
         supportsReasoning: exact?.supportsReasoning
+      };
+    }
+    if (provider === 'llamacpp') {
+      const infos = await listLlamaCppModelInfos(options.llamaCppUrl);
+      const exact = infos.find((info) => info.name === model);
+      return {
+        displayName: exact?.displayName,
+        supportsImage: false,
+        supportsAudio: false,
+        supportsReasoning: true
+      };
+    }
+    if (provider === 'litertlm') {
+      const infos = await listLiteRtLmModelInfos(options.liteRtLmUrl);
+      const exact = infos.find((info) => info.name === model);
+      return {
+        displayName: exact?.displayName,
+        supportsImage: false,
+        supportsAudio: false,
+        supportsReasoning: true
       };
     }
     if (provider === 'gemini') {

@@ -6,6 +6,7 @@ import {
   normalizeOllamaNativeBaseUrl,
 } from "@gemma-sdk/runtime-ollama";
 import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
+import { createLiteRtLmOpenAICompatibleAdapter } from "@gemma-sdk/runtime-litertlm";
 import { createMockServer } from "../helpers/mock-server.js";
 
 describe("environment inspection", () => {
@@ -356,5 +357,58 @@ describe("environment inspection", () => {
         status: "loaded",
       }),
     ]);
+  });
+
+  it("detects LiteRT-LM OpenAI-compatible servers from /v1/models", async () => {
+    const server = await createMockServer((request) => {
+      switch (request.path) {
+        case "/health":
+          return { status: 200, text: "ok" };
+        case "/v1/models":
+          return {
+            json: {
+              object: "list",
+              data: [
+                {
+                  id: "gemma4-12b",
+                  object: "model",
+                  owned_by: "litertlm",
+                },
+              ],
+            },
+          };
+        default:
+          throw new Error(`Unhandled route: ${request.path}`);
+      }
+    });
+    cleanup.push(server.close);
+
+    const inspection = await createLiteRtLmOpenAICompatibleAdapter({ baseUrl: server.url }).inspect();
+
+    expect(inspection.runtime.id).toBe("litertlm-openai");
+    expect(inspection.runtime.family).toBe("litertlm");
+    expect(inspection.reachable).toBe(true);
+    expect(inspection.healthy).toBe(true);
+    expect(inspection.models).toEqual([
+      expect.objectContaining({
+        id: "gemma4-12b",
+        runtimeId: "litertlm-openai",
+        availability: "visible",
+      }),
+    ]);
+    expect(inspection.loadedInstances).toEqual([]);
+    expect(inspection.diagnosis.join(" ")).toContain("litert-lm serve");
+  });
+
+  it("reports unreachable LiteRT-LM endpoints without endpoint-first diagnosis noise", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("LiteRT-LM endpoint unavailable"));
+
+    const inspection = await createLiteRtLmOpenAICompatibleAdapter({
+      baseUrl: "http://127.0.0.1:65533",
+    }).inspect();
+
+    expect(inspection.reachable).toBe(false);
+    expect(inspection.models).toEqual([]);
+    expect(inspection.diagnosis).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { findScenario, listGeminiModels, listLmStudioModels, listOllamaModels, scenarios } from '@gemma-sdk/agent';
+import { findScenario, listGeminiModels, listLiteRtLmModels, listLlamaCppModels, listLmStudioModels, listOllamaModels, scenarios } from '@gemma-sdk/agent';
 import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from '@gemma-sdk/agent';
 import { runAcp } from './acp.js';
 import { parseArgs } from './args.js';
@@ -201,11 +201,13 @@ Options:
   -p, --prompt <text>       Prompt to run.
   -s, --scenario <id>       Fixed harmless scenario to run.
   --skill <name>            Load a skill from ~/.gemmacli/skills or .gemma/skills. Repeatable.
-  --provider <name>         ollama, lmstudio, or gemini. Defaults to ollama.
+  --provider <name>         ollama, lmstudio, llamacpp, litertlm, or gemini. Defaults to ollama.
   --model <name>            Model name. Ollama defaults to gemma4:26b; Gemini defaults to gemini-3.5-flash.
   --endpoint <url>          Endpoint alias for the selected provider. Accepts roots, /v1 URLs, and pasted chat-completions URLs.
   --ollama-url <url>        Ollama base URL. Defaults to http://127.0.0.1:11434.
   --lmstudio-url <url>      LM Studio base URL. Defaults to http://127.0.0.1:1234.
+  --llamacpp-url <url>      llama.cpp server base URL. Defaults to http://127.0.0.1:8080.
+  --litertlm-url <url>      LiteRT-LM server base URL. Defaults to http://127.0.0.1:9379.
   --gemini-api-key <key>    Gemini API key. Defaults to GEMINI_API_KEY.
   --gemini-api-base-url <url> Gemini API base URL. Defaults to https://generativelanguage.googleapis.com/v1beta.
   --cwd <path>              Workspace root for tools. Defaults to current directory.
@@ -225,7 +227,7 @@ Options:
   --json-stream             Print JSONL progress events and final result for headless runs.
   --resume [session-id]     Resume latest session or an ID prefix from .gemmacli/sessions.
   --list-sessions           List resumable sessions for this workspace.
-  --list-models             List models for the selected Ollama, LM Studio, or Gemini provider.
+  --list-models             List models for the selected Ollama, LM Studio, llama.cpp, LiteRT-LM, or Gemini provider.
   -v, --version             Print the Gemma CLI version.
   -h, --help                Show help.
 
@@ -238,6 +240,8 @@ TUI commands:
 Examples:
   gemma --provider ollama --endpoint http://100.104.166.87:11434 --list-models
   gemma --provider lmstudio --endpoint http://host:1234/v1 --model google/gemma-4-26b-a4b
+  gemma --provider llamacpp --endpoint http://127.0.0.1:8080 --list-models
+  gemma --provider litertlm --endpoint http://127.0.0.1:9379 --model gemma4-12b,gpu,32768
   GEMMA_PROVIDER=ollama GEMMA_ENDPOINT=100.104.166.87:11434 gemma
 
 ACP methods:
@@ -258,13 +262,19 @@ async function listModels(options: ReturnType<typeof parseArgs>): Promise<string
   if (options.provider === 'lmstudio') {
     return listLmStudioModels(options.lmStudioUrl);
   }
+  if (options.provider === 'llamacpp') {
+    return listLlamaCppModels(options.llamaCppUrl);
+  }
+  if (options.provider === 'litertlm') {
+    return listLiteRtLmModels(options.liteRtLmUrl);
+  }
   if (options.provider === 'ollama') {
     return listOllamaModels(options.ollamaUrl);
   }
   if (options.provider === 'gemini') {
     return listGeminiModels(options.geminiApiKey, options.geminiApiBaseUrl);
   }
-  throw new Error('--list-models is only available for ollama, lmstudio, and gemini providers.');
+  throw new Error('--list-models is only available for ollama, lmstudio, llamacpp, litertlm, and gemini providers.');
 }
 
 function formatError(error: unknown): Record<string, unknown> {

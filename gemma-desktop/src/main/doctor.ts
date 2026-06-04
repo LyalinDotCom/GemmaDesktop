@@ -49,7 +49,7 @@ export interface DoctorModelSummary {
   quantization?: string
   contextLength?: number
   runtimeConfig?: {
-    provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
+    provider: 'ollama' | 'lmstudio' | 'llamacpp' | 'litertlm' | 'omlx' | 'gemini'
     baseParameters?: Record<string, unknown>
     baseParametersText?: string
     requestedOptions?: Record<string, number>
@@ -234,8 +234,9 @@ const TOOL_COMMANDS: ToolCommandSpec[] = [
 const RUNTIME_SORT_ORDER: Record<string, number> = {
   ollama: 0,
   lmstudio: 1,
-  omlx: 2,
-  llamacpp: 3,
+  llamacpp: 2,
+  litertlm: 3,
+  omlx: 4,
 }
 
 const MODEL_STATUS_SCORE: Record<DoctorModelSummary['status'], number> = {
@@ -308,6 +309,7 @@ function normalizeRuntimeFamilyId(runtimeId: string): string {
   if (runtimeId.startsWith('ollama')) return 'ollama'
   if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
   if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
+  if (runtimeId.startsWith('litertlm')) return 'litertlm'
   if (runtimeId.startsWith('omlx')) return 'omlx'
   if (runtimeId === 'gemini-api') return 'gemini'
   return runtimeId
@@ -321,6 +323,8 @@ function runtimeFamilyLabel(familyId: string, fallback: string): string {
       return 'LM Studio'
     case 'llamacpp':
       return 'llama.cpp Server'
+    case 'litertlm':
+      return 'LiteRT-LM'
     case 'omlx':
       return 'oMLX'
     case 'gemini':
@@ -524,6 +528,46 @@ function mapDoctorModel(
               (loadedConfig as Record<string, unknown>).num_ctx,
             ),
           }
+          : runtime.runtime.id === 'llamacpp-server'
+            ? {
+                provider: 'llamacpp' as const,
+                loadedOptions:
+                  Object.keys(loadedConfig).length > 0
+                    ? loadedConfig
+                    : undefined,
+                nominalContextLength: coerceNumber(
+                  meta.contextLength,
+                  meta.contextWindow,
+                  meta.context_size,
+                  meta.num_ctx,
+                  meta.maxContextLength,
+                  meta.max_context_length,
+                ),
+                loadedContextLength: coerceNumber(
+                  (loadedConfig as Record<string, unknown>).context_length,
+                  (loadedConfig as Record<string, unknown>).num_ctx,
+                ),
+              }
+          : runtime.runtime.id === 'litertlm-openai'
+            ? {
+                provider: 'litertlm' as const,
+                loadedOptions:
+                  Object.keys(loadedConfig).length > 0
+                    ? loadedConfig
+                    : undefined,
+                nominalContextLength: coerceNumber(
+                  meta.contextLength,
+                  meta.contextWindow,
+                  meta.context_size,
+                  meta.num_ctx,
+                  meta.maxContextLength,
+                  meta.max_context_length,
+                ),
+                loadedContextLength: coerceNumber(
+                  (loadedConfig as Record<string, unknown>).context_length,
+                  (loadedConfig as Record<string, unknown>).num_ctx,
+                ),
+              }
           : runtime.runtime.id === 'omlx-openai'
             ? {
                 provider: 'omlx' as const,
@@ -991,6 +1035,14 @@ function runtimeStartupHint(runtimeId: string): string {
     return 'Open LM Studio and enable its local server so Gemma Desktop can reach the runtime endpoint.'
   }
 
+  if (runtimeId === 'llamacpp') {
+    return 'Start llama.cpp with llama-server and make sure its configured local endpoint is reachable from Gemma Desktop.'
+  }
+
+  if (runtimeId === 'litertlm') {
+    return 'Start LiteRT-LM with `litert-lm serve` and make sure its configured local endpoint is reachable from Gemma Desktop.'
+  }
+
   return 'Start the runtime and make sure its configured local endpoint is reachable from Gemma Desktop.'
 }
 
@@ -1044,9 +1096,11 @@ function buildDoctorIssues(input: {
   }
 
   const primaryRuntimes = input.runtimes.filter((runtime) =>
-    runtime.id === 'ollama' || runtime.id === 'lmstudio' || runtime.id === 'omlx',
+    runtime.id === 'ollama' || runtime.id === 'lmstudio' || runtime.id === 'llamacpp' || runtime.id === 'litertlm' || runtime.id === 'omlx',
   )
-  const requiredRuntimeIssues = primaryRuntimes.filter((runtime) => runtime.id !== 'omlx')
+  const requiredRuntimeIssues = primaryRuntimes.filter((runtime) =>
+    runtime.id === 'ollama' || runtime.id === 'lmstudio',
+  )
   const runningPrimaryRuntimes = primaryRuntimes.filter(
     (runtime) => runtime.status === 'running',
   )
@@ -1055,7 +1109,7 @@ function buildDoctorIssues(input: {
     issues.push(doctorIssue(
       'error',
       'No compatible runtime is healthy',
-      'Gemma Desktop could not confirm a healthy Ollama, LM Studio, or oMLX endpoint. Start one of them and make sure its local server is reachable from the app.',
+      'Gemma Desktop could not confirm a healthy Ollama, LM Studio, llama.cpp, LiteRT-LM, or oMLX endpoint. Start one of them and make sure its local server is reachable from the app.',
     ))
   }
 

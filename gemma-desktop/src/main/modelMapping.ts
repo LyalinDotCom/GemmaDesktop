@@ -4,6 +4,9 @@ import {
   createLlamaCppServerAdapter,
 } from '@gemma-sdk/runtime-llamacpp'
 import {
+  createLiteRtLmOpenAICompatibleAdapter,
+} from '@gemma-sdk/runtime-litertlm'
+import {
   createLmStudioNativeAdapter,
   createLmStudioOpenAICompatibleAdapter,
 } from '@gemma-sdk/runtime-lmstudio'
@@ -45,6 +48,7 @@ export interface RuntimeAdapterSettings {
     ollama: { endpoint: string }
     lmstudio: { endpoint: string }
     llamacpp: { endpoint: string }
+    litertlm: { endpoint: string }
     omlx: { endpoint: string; apiKey: string }
   }
   integrations?: {
@@ -74,7 +78,7 @@ export type MappedRuntimeSummary = {
 }
 
 export type MappedModelRuntimeConfig = {
-  provider: 'ollama' | 'lmstudio' | 'omlx' | 'gemini'
+  provider: 'ollama' | 'lmstudio' | 'llamacpp' | 'litertlm' | 'omlx' | 'gemini'
   baseParameters?: Record<string, unknown>
   baseParametersText?: string
   requestedOptions?: Record<string, number>
@@ -246,6 +250,9 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
   const llamaCppServer = createLlamaCppServerAdapter({
     baseUrl: currentSettings.runtimes.llamacpp.endpoint,
   })
+  const liteRtLmOpenAI = createLiteRtLmOpenAICompatibleAdapter({
+    baseUrl: currentSettings.runtimes.litertlm.endpoint,
+  })
   const omlxOpenAI = createOmlxOpenAICompatibleAdapter({
     baseUrl: currentSettings.runtimes.omlx.endpoint,
     apiKey: currentSettings.runtimes.omlx.apiKey.trim() || undefined,
@@ -265,6 +272,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
         baseUrl: currentSettings.runtimes.lmstudio.endpoint,
       }),
       llamaCppServer,
+      liteRtLmOpenAI,
       omlxOpenAI,
       geminiApi,
     ],
@@ -274,6 +282,7 @@ export function createConfiguredRuntimeProviders(currentSettings: RuntimeAdapter
       }),
       lmStudioOpenAI,
       llamaCppServer,
+      liteRtLmOpenAI,
       omlxOpenAI,
       geminiApi,
     ],
@@ -463,14 +472,34 @@ export function mapModels(
                   nominalContextLength,
                   loadedContextLength,
                 }
-              : m.runtimeId === 'gemini-api'
+              : m.runtimeId === 'llamacpp-server'
                 ? {
-                    provider: 'gemini' as const,
-                    requestedOptions: geminiRequestedOptions,
+                    provider: 'llamacpp' as const,
+                    loadedOptions:
+                      Object.keys(loadedConfig).length > 0
+                        ? loadedConfig
+                        : undefined,
                     nominalContextLength,
                     loadedContextLength,
                   }
-                : undefined
+                : m.runtimeId === 'litertlm-openai'
+                  ? {
+                      provider: 'litertlm' as const,
+                      loadedOptions:
+                        Object.keys(loadedConfig).length > 0
+                          ? loadedConfig
+                          : undefined,
+                      nominalContextLength,
+                      loadedContextLength,
+                    }
+                  : m.runtimeId === 'gemini-api'
+                    ? {
+                        provider: 'gemini' as const,
+                        requestedOptions: geminiRequestedOptions,
+                        nominalContextLength,
+                        loadedContextLength,
+                      }
+                    : undefined
       const optimizationTags = deriveOptimizationTags({
         runtimeId: m.runtimeId,
         modelId: m.id,

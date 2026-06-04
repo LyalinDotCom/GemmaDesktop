@@ -19,6 +19,7 @@ const RUNTIME_PREFERENCE: Record<string, string[]> = {
   lmstudio: ['lmstudio-openai', 'lmstudio-native'],
   ollama: ['ollama-openai', 'ollama-native'],
   llamacpp: ['llamacpp-server'],
+  litertlm: ['litertlm-openai'],
   omlx: ['omlx-openai'],
 }
 
@@ -45,6 +46,7 @@ export function runtimeFamilyFromId(runtimeId: string): string {
   if (runtimeId.startsWith('lmstudio')) return 'lmstudio'
   if (runtimeId.startsWith('ollama')) return 'ollama'
   if (runtimeId.startsWith('llamacpp')) return 'llamacpp'
+  if (runtimeId.startsWith('litertlm')) return 'litertlm'
   if (runtimeId.startsWith('omlx')) return 'omlx'
   return runtimeId
 }
@@ -57,6 +59,8 @@ function runtimeLabelForFamily(family: string, fallback: string): string {
       return 'Ollama'
     case 'llamacpp':
       return 'llama.cpp'
+    case 'litertlm':
+      return 'LiteRT-LM'
     case 'omlx':
       return 'oMLX'
     default:

@@ -58,6 +58,14 @@ describe('parseArgs', () => {
       provider: 'gemini',
       geminiApiBaseUrl: 'https://gemini.local/v1beta'
     });
+    expect(parseArgs(['--provider', 'llamacpp', '--endpoint', 'http://llama.local:8080'], {})).toMatchObject({
+      provider: 'llamacpp',
+      llamaCppUrl: 'http://llama.local:8080'
+    });
+    expect(parseArgs(['--provider', 'litertlm', '--endpoint', 'http://litert.local:9379'], {})).toMatchObject({
+      provider: 'litertlm',
+      liteRtLmUrl: 'http://litert.local:9379'
+    });
   });
 
   it('maps GEMMA_ENDPOINT to GEMMA_PROVIDER unless a specific endpoint is configured', () => {
@@ -74,6 +82,14 @@ describe('parseArgs', () => {
     });
     expect(parseArgs(['--endpoint', 'http://cli:11434', '--ollama-url', 'http://specific:11434'], {})).toMatchObject({
       ollamaUrl: 'http://specific:11434'
+    });
+    expect(parseArgs([], { GEMMA_PROVIDER: 'llamacpp', GEMMA_ENDPOINT: 'http://llama.remote:8080' })).toMatchObject({
+      provider: 'llamacpp',
+      llamaCppUrl: 'http://llama.remote:8080'
+    });
+    expect(parseArgs([], { GEMMA_PROVIDER: 'litertlm', GEMMA_ENDPOINT: 'http://litert.remote:9379' })).toMatchObject({
+      provider: 'litertlm',
+      liteRtLmUrl: 'http://litert.remote:9379'
     });
   });
 
@@ -107,8 +123,11 @@ describe('parseArgs', () => {
   });
 
   it('rejects unknown providers', () => {
-    expect(() => parseArgs(['--provider', 'other'], {})).toThrow('--provider must be ollama, lmstudio, or gemini');
-    expect(() => parseArgs(['--provider', 'remote-ai'], {})).toThrow('--provider must be ollama, lmstudio, or gemini');
+    expect(() => parseArgs(['--provider', 'other'], {})).toThrow('--provider must be ollama, lmstudio, llamacpp, litertlm, or gemini');
+    expect(() => parseArgs(['--provider', 'remote-ai'], {})).toThrow('--provider must be ollama, lmstudio, llamacpp, litertlm, or gemini');
+    expect(parseArgs([], { GEMMA_PROVIDER: 'remote-ai' })).toMatchObject({
+      provider: 'ollama'
+    });
   });
 
   it('parses LM Studio provider and endpoint', () => {
@@ -117,6 +136,17 @@ describe('parseArgs', () => {
       lmStudioUrl: 'http://localhost:1234'
     });
     expect(parseArgs(['--provider', 'lmstudio'], {}).maxTurns).toBeUndefined();
+  });
+
+  it('parses llama.cpp and LiteRT-LM provider endpoints', () => {
+    expect(parseArgs(['--provider', 'llama-cpp', '--llamacpp-url', 'http://localhost:8080'], {})).toMatchObject({
+      provider: 'llamacpp',
+      llamaCppUrl: 'http://localhost:8080'
+    });
+    expect(parseArgs(['--provider', 'litert-lm', '--litertlm-url', 'http://localhost:9379'], {})).toMatchObject({
+      provider: 'litertlm',
+      liteRtLmUrl: 'http://localhost:9379'
+    });
   });
 
   it('keeps explicit max turn limits for local providers', () => {

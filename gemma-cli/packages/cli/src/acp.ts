@@ -1,6 +1,6 @@
 import { createRuntime, type Runtime } from './runtime.js';
 import type { CliOptions } from './args.js';
-import { listGeminiModels, listLmStudioModels, listOllamaModels } from '@gemma-sdk/agent';
+import { listGeminiModels, listLiteRtLmModels, listLlamaCppModels, listLmStudioModels, listOllamaModels } from '@gemma-sdk/agent';
 import { cliVersion } from './version.js';
 
 interface JsonRpcRequest {
@@ -71,6 +71,12 @@ export class AcpRuntime {
 async function listModels(options: CliOptions): Promise<string[]> {
   if (options.provider === 'lmstudio') {
     return listLmStudioModels(options.lmStudioUrl);
+  }
+  if (options.provider === 'llamacpp') {
+    return listLlamaCppModels(options.llamaCppUrl);
+  }
+  if (options.provider === 'litertlm') {
+    return listLiteRtLmModels(options.liteRtLmUrl);
   }
   if (options.provider === 'gemini') {
     return listGeminiModels(options.geminiApiKey, options.geminiApiBaseUrl);

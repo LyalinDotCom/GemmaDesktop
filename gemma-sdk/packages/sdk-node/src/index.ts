@@ -40,6 +40,7 @@ import {
 } from "@gemma-sdk/core";
 import { HarnessRunner } from "@gemma-sdk/harness";
 import { createLlamaCppServerAdapter } from "@gemma-sdk/runtime-llamacpp";
+import { createLiteRtLmOpenAICompatibleAdapter } from "@gemma-sdk/runtime-litertlm";
 import { createLmStudioNativeAdapter, createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
 import { createOmlxOpenAICompatibleAdapter } from "@gemma-sdk/runtime-omlx";
 import {
@@ -1292,6 +1293,7 @@ function createDefaultInferenceAdapters(): RuntimeAdapter[] {
     createLmStudioOpenAICompatibleAdapter(),
     createLmStudioNativeAdapter(),
     createLlamaCppServerAdapter(),
+    createLiteRtLmOpenAICompatibleAdapter(),
     createOmlxOpenAICompatibleAdapter(),
   ];
 }
@@ -1301,6 +1303,7 @@ function createDefaultModelDiscoveryProviders(): ModelDiscoveryProvider[] {
     createOllamaOpenAICompatibleModelDiscoveryProvider(),
     createLmStudioOpenAICompatibleAdapter(),
     createLlamaCppServerAdapter(),
+    createLiteRtLmOpenAICompatibleAdapter(),
     createOmlxOpenAICompatibleAdapter(),
   ];
 }

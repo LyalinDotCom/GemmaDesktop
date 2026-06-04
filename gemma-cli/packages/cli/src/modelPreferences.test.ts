@@ -20,6 +20,9 @@ describe('model preferences', () => {
   it('recognizes only local model providers', () => {
     expect(isLocalProvider('ollama')).toBe(true);
     expect(isLocalProvider('lmstudio')).toBe(true);
+    expect(isLocalProvider('llamacpp')).toBe(true);
+    expect(isLocalProvider('litertlm')).toBe(true);
+    expect(isLocalProvider('gemini')).toBe(true);
     expect(isLocalProvider('remote')).toBe(false);
   });
 });

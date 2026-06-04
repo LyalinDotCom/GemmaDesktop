@@ -34,6 +34,9 @@ export function getLocalRuntimeDisplayName(runtimeId: string): string {
   if (runtimeId === 'llamacpp' || runtimeId === 'llamacpp-server') {
     return 'llama.cpp server'
   }
+  if (runtimeId === 'litertlm-openai') {
+    return 'LiteRT-LM'
+  }
   if (runtimeId === 'omlx-openai') {
     return 'oMLX'
   }
@@ -52,6 +55,9 @@ function getLocalRuntimeRecoveryHint(runtimeId: string): string {
   }
   if (runtimeId === 'llamacpp' || runtimeId === 'llamacpp-server') {
     return 'Start the llama.cpp server, then retry or switch this session to another runtime.'
+  }
+  if (runtimeId === 'litertlm-openai') {
+    return 'Start LiteRT-LM with `litert-lm serve`, then retry or switch this session to another runtime.'
   }
   if (runtimeId === 'omlx-openai') {
     return 'Start oMLX, load the model there, then retry or switch this session to another runtime.'

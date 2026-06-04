@@ -87,6 +87,10 @@ export function describeMemoryModelStack(
       return 'LM Studio provider-native'
     case 'lmstudio-openai':
       return 'LM Studio OpenAI-compatible'
+    case 'llamacpp-server':
+      return 'llama.cpp server'
+    case 'litertlm-openai':
+      return 'LiteRT-LM OpenAI-compatible'
     case 'omlx-openai':
       return 'oMLX OpenAI-compatible'
     case 'gemini-api':

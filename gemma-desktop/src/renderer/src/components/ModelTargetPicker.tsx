@@ -32,6 +32,7 @@ export function providerLabelForRuntime(
   if (runtimeId.startsWith('ollama')) return 'Ollama'
   if (runtimeId.startsWith('lmstudio')) return 'LM Studio'
   if (runtimeId.startsWith('llamacpp')) return 'llama.cpp'
+  if (runtimeId.startsWith('litertlm')) return 'LiteRT-LM'
   if (runtimeId.startsWith('omlx')) return 'oMLX'
   if (runtimeId === 'gemini-api') return 'Gemini API'
   return runtimeName?.trim() || runtimeId

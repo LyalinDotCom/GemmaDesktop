@@ -103,6 +103,9 @@ function makeSettings(): AppSettings {
       llamacpp: {
         endpoint: 'http://127.0.0.1:8080',
       },
+      litertlm: {
+        endpoint: 'http://127.0.0.1:9379',
+      },
       omlx: {
         endpoint: 'http://127.0.0.1:8000',
         apiKey: '',

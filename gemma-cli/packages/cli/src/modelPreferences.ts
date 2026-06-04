@@ -54,7 +54,7 @@ export async function writeModelPreference(cwd: string, provider: LocalModelProv
 }
 
 export function isLocalProvider(provider: unknown): provider is LocalModelProvider {
-  return provider === 'ollama' || provider === 'lmstudio' || provider === 'gemini';
+  return provider === 'ollama' || provider === 'lmstudio' || provider === 'llamacpp' || provider === 'litertlm' || provider === 'gemini';
 }
 
 function preferencePath(cwd: string): string {

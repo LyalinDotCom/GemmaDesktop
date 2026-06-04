@@ -71,7 +71,7 @@ export function filterModels(picker: ModelPickerState): SessionModelInfo[] {
   return picker.models.filter((model) => [
     model.name,
     model.provider,
-    model.provider === 'lmstudio' || model.provider === 'gemini' ? model.displayName : undefined,
+    model.provider !== 'ollama' ? model.displayName : undefined,
     model.provider === 'lmstudio' ? model.selectedVariant : undefined
   ]
     .filter(Boolean)
@@ -80,7 +80,7 @@ export function filterModels(picker: ModelPickerState): SessionModelInfo[] {
 
 function modelDetail(model: SessionModelInfo): string {
   const size = model.provider === 'ollama' && model.sizeBytes ? formatBytes(model.sizeBytes) : '';
-  const display = (model.provider === 'lmstudio' || model.provider === 'gemini') && model.displayName && model.displayName !== model.name ? model.displayName : '';
+  const display = model.provider !== 'ollama' && model.displayName && model.displayName !== model.name ? model.displayName : '';
   const variant = model.provider === 'lmstudio' && model.selectedVariant && model.selectedVariant !== model.name ? model.selectedVariant : '';
   const loaded = model.provider === 'lmstudio' && model.loadedInstanceId ? `loaded ${model.loadedInstanceId}` : '';
   const details = [
@@ -93,7 +93,7 @@ function modelDetail(model: SessionModelInfo): string {
     model.name.includes('coder') ? 'code' : '',
     model.supportsImage ? 'image' : '',
     model.supportsAudio ? 'audio' : '',
-    model.provider === 'lmstudio' || model.provider === 'gemini' ? reasoningDetail(model.supportsReasoning) : '',
+    model.provider !== 'ollama' ? reasoningDetail(model.supportsReasoning) : '',
     model.name.includes('whisper') ? 'audio' : '',
     loaded
   ].filter(Boolean);

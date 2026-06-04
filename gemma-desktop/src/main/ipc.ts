@@ -788,11 +788,15 @@ function isOmlxModelRuntime(runtimeId: string): boolean {
   return runtimeId === 'omlx-openai'
 }
 
+function isLiteRtLmModelRuntime(runtimeId: string): boolean {
+  return runtimeId === 'litertlm-openai'
+}
+
 function isGeminiModelRuntime(runtimeId: string): boolean {
   return runtimeId === 'gemini-api'
 }
 
-function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx' | 'gemini' | 'other' {
+function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'litertlm' | 'omlx' | 'gemini' | 'other' {
   if (isOllamaModelRuntime(runtimeId)) {
     return 'ollama'
   }
@@ -801,6 +805,9 @@ function getModelRuntimeFamily(runtimeId: string): 'ollama' | 'lmstudio' | 'omlx
   }
   if (isOmlxModelRuntime(runtimeId)) {
     return 'omlx'
+  }
+  if (isLiteRtLmModelRuntime(runtimeId)) {
+    return 'litertlm'
   }
   if (isGeminiModelRuntime(runtimeId)) {
     return 'gemini'
@@ -826,6 +833,9 @@ function getEndpointForModelTarget(
   }
   if (target.runtimeId === 'llamacpp-server') {
     return currentSettings.runtimes.llamacpp.endpoint
+  }
+  if (isLiteRtLmModelRuntime(target.runtimeId)) {
+    return currentSettings.runtimes.litertlm.endpoint
   }
   return null
 }
@@ -1173,6 +1183,7 @@ type AppSettingsRecord = {
     }
     lmstudio: { endpoint: string; maxConcurrentPredictions: number }
     llamacpp: { endpoint: string }
+    litertlm: { endpoint: string }
     omlx: { endpoint: string; apiKey: string }
   }
   integrations: {
@@ -4241,6 +4252,7 @@ function getDefaultSettings(): AppSettingsRecord {
       },
       lmstudio: { endpoint: 'http://127.0.0.1:1234', maxConcurrentPredictions: 4 },
       llamacpp: { endpoint: 'http://127.0.0.1:8080' },
+      litertlm: { endpoint: 'http://127.0.0.1:9379' },
       omlx: { endpoint: 'http://127.0.0.1:8000', apiKey: '' },
     },
     integrations: {
@@ -4505,6 +4517,7 @@ async function loadSettings(): Promise<AppSettingsRecord> {
       ),
       lmstudio: { ...defaults.runtimes.lmstudio, ...(reusable.runtimes?.lmstudio ?? {}) },
       llamacpp: { ...defaults.runtimes.llamacpp, ...(reusable.runtimes?.llamacpp ?? {}) },
+      litertlm: { ...defaults.runtimes.litertlm, ...(reusable.runtimes?.litertlm ?? {}) },
       omlx: { ...defaults.runtimes.omlx, ...(reusable.runtimes?.omlx ?? {}) },
     },
     integrations: {
@@ -7182,6 +7195,9 @@ function runtimeFamilyFromRuntimeId(runtimeId: string): string {
   }
   if (runtimeId.startsWith('llamacpp')) {
     return 'llamacpp'
+  }
+  if (runtimeId.startsWith('litertlm')) {
+    return 'litertlm'
   }
   if (runtimeId.startsWith('omlx')) {
     return 'omlx'

@@ -95,6 +95,7 @@ export type SettingsTab =
   | 'ollama'
   | 'lmstudio'
   | 'llamacpp'
+  | 'litertlm'
   | 'omlx'
   | 'gemini'
   | 'notifications'
@@ -112,6 +113,7 @@ const TAB_ENTRIES: ReadonlyArray<readonly [SettingsTab, string]> = [
   ['ollama', 'Ollama'],
   ['lmstudio', 'LM Studio'],
   ['llamacpp', 'llama.cpp'],
+  ['litertlm', 'LiteRT-LM'],
   ['omlx', 'oMLX'],
   ['gemini', 'Gemini Hosted'],
   ['notifications', 'Notifications'],
@@ -1203,7 +1205,7 @@ export function SettingsModal({
               {activeTab === 'llamacpp' && (
                 <SettingsSection
                   title="llama.cpp Runtime"
-                  description="Gemma Desktop can use a running llama.cpp server when it exposes the server API."
+                  description="Gemma Desktop can use a running llama.cpp server when it exposes the server API. It does not start llama.cpp."
                 >
                   <SettingsField label="Endpoint">
                     <TextInput
@@ -1213,6 +1215,29 @@ export function SettingsModal({
                         const runtimes = {
                           ...local.runtimes,
                           llamacpp: { ...local.runtimes.llamacpp, endpoint: e.target.value },
+                        }
+                        setLocal({ ...local, runtimes })
+                      }}
+                      onBlur={() => commitUpdate({ runtimes: local.runtimes })}
+                      className="font-mono text-xs"
+                    />
+                  </SettingsField>
+                </SettingsSection>
+              )}
+
+              {activeTab === 'litertlm' && (
+                <SettingsSection
+                  title="LiteRT-LM Runtime"
+                  description="External LiteRT-LM servers are detected when reachable. Start LiteRT-LM separately with litert-lm serve."
+                >
+                  <SettingsField label="Endpoint">
+                    <TextInput
+                      type="text"
+                      value={local.runtimes.litertlm?.endpoint ?? ''}
+                      onChange={(e) => {
+                        const runtimes = {
+                          ...local.runtimes,
+                          litertlm: { ...local.runtimes.litertlm, endpoint: e.target.value },
                         }
                         setLocal({ ...local, runtimes })
                       }}

@@ -12,6 +12,7 @@ function settings(): RuntimeAdapterSettings {
       ollama: { endpoint: 'http://localhost:11435' },
       lmstudio: { endpoint: 'http://localhost:1235' },
       llamacpp: { endpoint: 'http://localhost:8081' },
+      litertlm: { endpoint: 'http://localhost:9379' },
       omlx: { endpoint: 'http://localhost:8001', apiKey: 'test-key' },
     },
   }
@@ -27,6 +28,7 @@ describe('desktop runtime provider mapping', () => {
       'lmstudio-openai',
       'lmstudio-native',
       'llamacpp-server',
+      'litertlm-openai',
       'omlx-openai',
       'gemini-api',
     ])
@@ -36,6 +38,7 @@ describe('desktop runtime provider mapping', () => {
       'http://localhost:1235/v1',
       'http://localhost:1235',
       'http://localhost:8081',
+      'http://localhost:9379',
       'http://localhost:8001/v1',
       'https://generativelanguage.googleapis.com/v1beta',
     ])
@@ -50,6 +53,7 @@ describe('desktop runtime provider mapping', () => {
       'lmstudio-openai',
       'lmstudio-native',
       'llamacpp-server',
+      'litertlm-openai',
       'omlx-openai',
       'gemini-api',
     ])
@@ -57,6 +61,7 @@ describe('desktop runtime provider mapping', () => {
       'ollama-openai',
       'lmstudio-openai',
       'llamacpp-server',
+      'litertlm-openai',
       'omlx-openai',
       'gemini-api',
     ])

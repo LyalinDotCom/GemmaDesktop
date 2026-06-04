@@ -88,6 +88,8 @@ export function formatSettings(session: TuiSession): string {
     `model: ${session.runtime.model}`,
     `ollamaUrl: ${session.ollamaUrl ?? 'http://127.0.0.1:11434'}`,
     `lmStudioUrl: ${session.lmStudioUrl ?? 'http://127.0.0.1:1234'}`,
+    `llamaCppUrl: ${session.llamaCppUrl ?? 'http://127.0.0.1:8080'}`,
+    `liteRtLmUrl: ${session.liteRtLmUrl ?? 'http://127.0.0.1:9379'}`,
     `geminiApiBaseUrl: ${session.geminiApiBaseUrl ?? 'https://generativelanguage.googleapis.com/v1beta'}`,
     `cwd: ${session.runtime.cwd}`,
     `maxTurns: ${formatMaxTurns(session.runtime.maxTurns)}`,
