@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-dmg:
@@ -49,8 +49,10 @@ jobs:
           console.log(`${match[1]}.${match[2]}.${runNumber}`)
           NODE
           )"
+          RELEASE_TAG="gemma-desktop-v${INSTALLER_VERSION}"
           echo "GEMMA_DESKTOP_INSTALLER_VERSION=${INSTALLER_VERSION}" >> "${GITHUB_ENV}"
           echo "version=${INSTALLER_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Build DMG
         run: npm --workspace gemma-desktop run dist
@@ -62,3 +64,43 @@ jobs:
           path: gemma-desktop/dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.installer-version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.installer-version.outputs.version }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          dmg_files=(gemma-desktop/dist/*.dmg)
+
+          if [ "${#dmg_files[@]}" -ne 1 ]; then
+            printf 'Expected exactly one DMG, found %s:\n' "${#dmg_files[@]}"
+            printf ' - %s\n' "${dmg_files[@]}"
+            exit 1
+          fi
+
+          release_notes="$(cat <<NOTES
+          Unsigned macOS test build for Gemma Desktop ${RELEASE_VERSION}.
+
+          Source commit: ${GITHUB_SHA}
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          macOS may warn before opening because this build is not signed or notarized yet.
+          NOTES
+          )"
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${dmg_files[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${RELEASE_TAG}" "${dmg_files[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "Gemma Desktop ${RELEASE_VERSION}" \
+              --notes "${release_notes}" \
+              --prerelease \
+              --latest=false
+          fi
