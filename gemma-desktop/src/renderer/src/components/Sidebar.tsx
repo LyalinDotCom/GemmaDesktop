@@ -715,7 +715,7 @@ export function Sidebar({
     : 'No project selected'
   const quickCreateMenuClassName = quickCreateMenuPinned
     ? 'pointer-events-auto translate-y-0 opacity-100'
-    : 'pointer-events-none translate-y-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'
+    : 'pointer-events-none -translate-y-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100'
   const filteredConversationIcons = useMemo(() => {
     const query = renameIconSearch.trim().toLowerCase()
     if (!query) {
@@ -1681,50 +1681,143 @@ export function Sidebar({
         )}
 
         {currentView === 'chat' ? (
-          <div className="no-drag px-4 pr-12">
+          <div className="no-drag px-4">
             <div className="flex justify-center">
               {modeToolbar}
             </div>
-            <div className="mt-3">
-              <label htmlFor="sidebar-session-search" className="sr-only">
-                Search open conversations
-              </label>
-              <div
-                className="flex items-center gap-1.5 rounded-full bg-zinc-900/[0.045] px-3 py-1.5 text-sm transition-colors focus-within:bg-zinc-900/[0.07] dark:bg-white/[0.06] dark:focus-within:bg-white/[0.09]"
-              >
-                <Search
-                  size={13}
-                  className="flex-shrink-0 text-zinc-400 dark:text-zinc-500"
-                />
-                <input
-                  id="sidebar-session-search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
+            <div className="mt-3 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <label htmlFor="sidebar-session-search" className="sr-only">
+                  Search open conversations
+                </label>
+                <div
+                  className="flex items-center gap-1.5 rounded-full bg-zinc-900/[0.045] px-3 py-1.5 text-sm transition-colors focus-within:bg-zinc-900/[0.07] dark:bg-white/[0.06] dark:focus-within:bg-white/[0.09]"
+                >
+                  <Search
+                    size={13}
+                    className="flex-shrink-0 text-zinc-400 dark:text-zinc-500"
+                  />
+                  <input
+                    id="sidebar-session-search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape' && searchQuery.trim().length > 0) {
+                        event.preventDefault()
+                        clearSearch()
+                      }
+                    }}
+                    placeholder="Search"
+                    className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  />
+                  {searchStatus === 'searching' ? (
+                    <Loader2
+                      size={13}
+                      className="flex-shrink-0 animate-spin text-zinc-400 dark:text-zinc-500"
+                    />
+                  ) : searchQuery.trim().length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={clearSearch}
+                      className="rounded-full p-0.5 text-zinc-400 transition-colors hover:bg-zinc-900/10 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/10 dark:hover:text-zinc-200"
+                      title="Clear search"
+                      aria-label="Clear search"
+                    >
+                      <X size={12} />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="group relative flex-shrink-0">
+                <div
+                  role="menu"
+                  aria-label="Quick create"
+                  className={`absolute right-0 top-full z-[65] mt-2 w-60 transition-all duration-200 ease-out ${quickCreateMenuClassName}`}
+                >
+                  <div className="rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_18px_40px_-28px_rgba(24,24,27,0.52)] backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 dark:shadow-[0_22px_44px_-30px_rgba(0,0,0,0.86)]">
+                    <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                      Quick create
+                    </div>
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (!activeProject) {
+                            return
+                          }
+
+                          setQuickCreateMenuPinned(false)
+                          onCreateSessionInProject(activeProject.path)
+                        }}
+                        disabled={quickCreateConversationDisabled}
+                        title={quickCreateConversationTitle}
+                        aria-label={quickCreateConversationTitle}
+                        className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800"
+                      >
+                        <span className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                          <Plus size={13} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                            Add conversation
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-zinc-500 dark:text-zinc-400">
+                            {quickCreateConversationHint}
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setQuickCreateMenuPinned(false)
+                          onCreateProject()
+                        }}
+                        disabled={conversationCreationPending}
+                        title="Open a project folder"
+                        aria-label="Open a project folder"
+                        className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800"
+                      >
+                        <span className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                          <FolderOpen size={13} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                            Open project
+                          </span>
+                          <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                            Pick a folder and open its latest or first conversation
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setQuickCreateMenuPinned((prev) => !prev)
+                  }}
                   onKeyDown={(event) => {
-                    if (event.key === 'Escape' && searchQuery.trim().length > 0) {
-                      event.preventDefault()
-                      clearSearch()
+                    if (event.key === 'Escape') {
+                      setQuickCreateMenuPinned(false)
                     }
                   }}
-                  placeholder="Search"
-                  className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
-                />
-                {searchStatus === 'searching' ? (
-                  <Loader2
-                    size={13}
-                    className="flex-shrink-0 animate-spin text-zinc-400 dark:text-zinc-500"
-                  />
-                ) : searchQuery.trim().length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={clearSearch}
-                    className="rounded-full p-0.5 text-zinc-400 transition-colors hover:bg-zinc-900/10 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/10 dark:hover:text-zinc-200"
-                    title="Clear search"
-                    aria-label="Clear search"
-                  >
-                    <X size={12} />
-                  </button>
-                ) : null}
+                  disabled={conversationCreationPending}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-zinc-200 bg-white/95 text-zinc-700 shadow-[0_12px_28px_-20px_rgba(24,24,27,0.46)] backdrop-blur transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 hover:border-zinc-300 hover:bg-white hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 dark:focus-visible:ring-zinc-600 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white"
+                  title="Quick create"
+                  aria-label="Quick create"
+                  aria-haspopup="menu"
+                  aria-expanded={quickCreateMenuPinned}
+                >
+                  <Plus size={15} />
+                </button>
               </div>
             </div>
           </div>
@@ -2003,99 +2096,8 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="no-drag px-3 pb-3 pt-2">
-        {currentView === 'chat' ? (
-          <div className="group relative flex justify-end">
-            <div
-              role="menu"
-              aria-label="Quick create"
-              className={`absolute bottom-full right-1 w-60 pb-2 transition-all duration-200 ease-out ${quickCreateMenuClassName}`}
-            >
-              <div className="rounded-2xl border border-zinc-200 bg-white/95 p-1.5 shadow-[0_18px_40px_-28px_rgba(24,24,27,0.52)] backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 dark:shadow-[0_22px_44px_-30px_rgba(0,0,0,0.86)]">
-                <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-                  Quick create
-                </div>
-                <div className="space-y-1">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (!activeProject) {
-                        return
-                      }
-
-                      setQuickCreateMenuPinned(false)
-                      onCreateSessionInProject(activeProject.path)
-                    }}
-                    disabled={quickCreateConversationDisabled}
-                    title={quickCreateConversationTitle}
-                    aria-label={quickCreateConversationTitle}
-                    className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800"
-                  >
-                    <span className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <Plus size={13} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        Add conversation
-                      </span>
-                      <span className="mt-0.5 block truncate text-xs text-zinc-500 dark:text-zinc-400">
-                        {quickCreateConversationHint}
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setQuickCreateMenuPinned(false)
-                      onCreateProject()
-                    }}
-                    disabled={conversationCreationPending}
-                    title="Open a project folder"
-                    aria-label="Open a project folder"
-                    className="flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800"
-                  >
-                    <span className="mt-0.5 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <FolderOpen size={13} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        Open project
-                      </span>
-                      <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
-                        Pick a folder and open its latest or first conversation
-                      </span>
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                setQuickCreateMenuPinned((prev) => !prev)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setQuickCreateMenuPinned(false)
-                }
-              }}
-              disabled={conversationCreationPending}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white/95 text-zinc-700 shadow-[0_16px_34px_-22px_rgba(24,24,27,0.46)] backdrop-blur transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 hover:border-zinc-300 hover:bg-white hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 dark:focus-visible:ring-zinc-600 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white"
-              title="Quick create"
-              aria-label="Quick create"
-              aria-haspopup="menu"
-              aria-expanded={quickCreateMenuPinned}
-            >
-              <Plus size={18} />
-            </button>
-          </div>
-        ) : createActionLabel && createActionHint && (
+      {currentView !== 'chat' && createActionLabel && createActionHint && (
+        <div className="no-drag px-3 pb-3 pt-2">
           <div className="group relative flex justify-end">
             <div className="pointer-events-none absolute bottom-full right-0 mb-2 translate-y-1 opacity-0 transition-all duration-200 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
                 <div className="rounded-xl border border-zinc-200 bg-white/95 px-3 py-2 text-right shadow-[0_14px_36px_-26px_rgba(24,24,27,0.42)] backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 dark:shadow-[0_18px_42px_-30px_rgba(0,0,0,0.82)]">
@@ -2117,8 +2119,8 @@ export function Sidebar({
               <Plus size={18} />
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-1 px-3 py-2">
         <button

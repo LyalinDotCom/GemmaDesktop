@@ -117,6 +117,7 @@ const DEFAULT_NOTIFICATION_PERMISSION_STATE: NotificationPermissionState = {
 }
 
 const SIDEBAR_DEFAULT_WIDTH = 320
+const SIDEBAR_COLLAPSED_RAIL_WIDTH = 40
 const SIDEBAR_MIN_WIDTH = 240
 const SIDEBAR_MAX_WIDTH = 480
 const RIGHT_DOCK_DEFAULT_WIDTH = 520
@@ -321,7 +322,7 @@ export function App() {
     !state.settingsOpen && !state.skillsOpen && !doctorOpen
   const terminalDrawerBusy = terminalDrawerState.status === 'running'
   const sidebarResize = useResizeHandle({
-    initialWidth: state.sidebarOpen ? SIDEBAR_DEFAULT_WIDTH : 0,
+    initialWidth: SIDEBAR_DEFAULT_WIDTH,
     minWidth: SIDEBAR_MIN_WIDTH,
     maxWidth: SIDEBAR_MAX_WIDTH,
     direction: 'right',
@@ -2372,7 +2373,7 @@ export function App() {
   const globalChatSwitchBar = !assistantHomeVisible ? (
     <div
       className="no-drag pointer-events-none fixed right-0 top-0 z-[95] h-12"
-      style={{ left: state.sidebarOpen ? sidebarResize.width : 0 }}
+      style={{ left: state.sidebarOpen ? sidebarResize.width : SIDEBAR_COLLAPSED_RAIL_WIDTH }}
     >
       <GlobalChatSwitchBar
         pinnedToDock={globalChatPinnedToDock}
@@ -2464,176 +2465,190 @@ export function App() {
       {/* Zone 1: Sidebar */}
       <div
         className="relative flex-shrink-0 overflow-hidden"
-        style={{ width: state.sidebarOpen ? sidebarResize.width : 0 }}
+        style={{ width: state.sidebarOpen ? sidebarResize.width : SIDEBAR_COLLAPSED_RAIL_WIDTH }}
       >
-        {/* Sidebar resize handle */}
-        {state.sidebarOpen && (
-          <div
-            className="absolute right-0 top-0 z-[61] h-full w-1 cursor-col-resize select-none"
-            {...sidebarResize.handleProps}
-          />
+        {state.sidebarOpen ? (
+          <>
+            {/* Sidebar resize handle */}
+            <div
+              className="absolute right-0 top-0 z-[61] h-full w-1 cursor-col-resize select-none"
+              {...sidebarResize.handleProps}
+            />
+            <Sidebar
+              sessions={state.sessions}
+              sidebarState={state.sidebar}
+              activeSessionId={state.activeSessionId}
+              onSelectSession={(sessionId) => {
+                dispatch({ type: 'SET_VIEW', view: 'chat' })
+                setAssistantHomeVisible(false)
+                void selectSession(sessionId)
+              }}
+              onCreateProject={() => {
+                void handleCreateProject()
+              }}
+              onCreateSessionInProject={(projectPath) => {
+                void createConversationWithDefaults(projectPath)
+              }}
+              conversationCreationPending={creatingSession}
+              onOpenProject={handleOpenProject}
+              onCloseProject={(projectPath) => {
+                void handleCloseProject(projectPath)
+              }}
+              onDeleteSession={deleteSession}
+              onRenameSession={renameSession}
+              onCloseProcess={handleCloseBackgroundProcess}
+              onOpenProcessPreview={handleOpenProcessPreview}
+              onPinSession={(sessionId) => {
+                void pinSession(sessionId)
+              }}
+              onUnpinSession={(sessionId) => {
+                void unpinSession(sessionId)
+              }}
+              onFlagFollowUp={(sessionId) => {
+                void flagFollowUp(sessionId)
+              }}
+              onUnflagFollowUp={(sessionId) => {
+                void unflagFollowUp(sessionId)
+              }}
+              onMovePinnedSession={(sessionId, toIndex) => {
+                void movePinnedSession(sessionId, toIndex)
+              }}
+              onMoveProjectSession={(sessionId, toIndex) => {
+                void setSessionOrder(sessionId, toIndex)
+              }}
+              onClearSessionOrder={(sessionId) => {
+                void clearSessionOrder(sessionId)
+              }}
+              onMoveProject={(projectPath, toIndex) => {
+                void setProjectOrder(projectPath, toIndex)
+              }}
+              onClearProjectOrder={(projectPath) => {
+                void clearProjectOrder(projectPath)
+              }}
+              automations={state.automations}
+              activeAutomationId={state.activeAutomationId}
+              onSelectAutomation={(automationId) => {
+                dispatch({ type: 'SET_VIEW', view: 'automations' })
+                setAssistantHomeVisible(false)
+                setRightDockView('automations')
+                void selectAutomation(automationId)
+              }}
+              onNewAutomation={() => {
+                openNewAutomationPanel()
+              }}
+              currentView={state.currentView}
+              onOpenSettings={() => {
+                openSettings('general')
+              }}
+              onOpenDoctor={() => setDoctorOpen(true)}
+              doctorOpen={doctorOpen}
+              preferredTerminalId={state.settings.terminal.preferredAppId}
+              onOpenSkills={() => dispatch({ type: 'TOGGLE_SKILLS' })}
+              selectedSkillCount={
+                state.activeSession ? new Set(state.activeSession.selectedSkillIds).size : 0
+              }
+              onCollapse={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+              systemStats={state.systemStats}
+              models={state.models}
+              modelSelection={state.settings.modelSelection}
+              defaultModelSelection={ramAwareDefaultModelSelection}
+              modelAvailabilityIssues={state.bootstrapState.modelAvailabilityIssues}
+              modelTokenUsage={state.modelTokenUsage}
+              activeModelId={state.activeSession?.modelId ?? null}
+              activeRuntimeId={state.activeSession?.runtimeId ?? null}
+              helperModelId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperModelId : null}
+              helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
+              modelSelectionDisabledReason={modelSelectionDisabledReason}
+              reloadModelsDisabledReason={modelReloadDisabledReason}
+              onUpdateModelSelection={async (modelSelection) => {
+                if (modelSelectionDisabledReason) {
+                  throw new Error(modelSelectionDisabledReason)
+                }
+                const updated = await window.gemmaDesktopBridge.settings.update({
+                  modelSelection,
+                })
+                dispatch({ type: 'SET_SETTINGS', settings: updated })
+              }}
+              onLoadModelSelection={async (modelSelection) => {
+                if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
+                  return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
+                }
+
+                const result = await window.gemmaDesktopBridge.settings.update({
+                  modelSelection,
+                  [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
+                } as unknown as Partial<typeof state.settings>) as unknown
+                const updatedSettings = await window.gemmaDesktopBridge.settings.get()
+                dispatch({ type: 'SET_SETTINGS', settings: updatedSettings })
+
+                if (
+                  result
+                  && typeof result === 'object'
+                  && typeof (result as Partial<LoadDefaultModelsResult>).ok === 'boolean'
+                  && typeof (result as Partial<LoadDefaultModelsResult>).message === 'string'
+                  && Array.isArray((result as Partial<LoadDefaultModelsResult>).targets)
+                ) {
+                  return result as LoadDefaultModelsResult
+                }
+
+                return {
+                  ok: false,
+                  message: 'Gemma Desktop needs an app restart before the model loader can run.',
+                  selection: modelSelection,
+                  targets: [],
+                  unloaded: [],
+                  loaded: [],
+                  skipped: [],
+                  errors: [{
+                    action: 'prepare',
+                    ok: false,
+                    error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Selected Models again.',
+                  }],
+                }
+              }}
+              onReloadModels={async () => {
+                if (window.gemmaDesktopBridge.environment.reloadModels) {
+                  return await window.gemmaDesktopBridge.environment.reloadModels({
+                    sessionId: state.activeSessionId,
+                  })
+                }
+
+                const modelSelection = state.settings.modelSelection
+
+                if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
+                  return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
+                }
+
+                return {
+                  ok: false,
+                  message: 'Gemma Desktop needs an app restart before the model reloader can run.',
+                  selection: modelSelection,
+                  targets: [],
+                  unloaded: [],
+                  loaded: [],
+                  skipped: [],
+                  errors: [{
+                    action: 'prepare',
+                    ok: false,
+                    error: 'The running main process did not recognize the model-reload request. Restart Gemma Desktop and try again.',
+                  }],
+                }
+              }}
+            />
+          </>
+        ) : (
+          <div className="drag-region flex h-full w-full items-center justify-center">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+              className="no-drag inline-flex h-8 w-8 items-center justify-center rounded-xl border border-zinc-200 bg-white/90 text-zinc-500 shadow-[0_12px_28px_-22px_rgba(24,24,27,0.5)] transition-colors hover:border-zinc-300 hover:bg-white hover:text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+              title="Open sidebar"
+              aria-label="Open sidebar"
+            >
+              <PanelLeftOpen size={15} />
+            </button>
+          </div>
         )}
-        <Sidebar
-          sessions={state.sessions}
-          sidebarState={state.sidebar}
-          activeSessionId={state.activeSessionId}
-          onSelectSession={(sessionId) => {
-            dispatch({ type: 'SET_VIEW', view: 'chat' })
-            setAssistantHomeVisible(false)
-            void selectSession(sessionId)
-          }}
-          onCreateProject={() => {
-            void handleCreateProject()
-          }}
-          onCreateSessionInProject={(projectPath) => {
-            void createConversationWithDefaults(projectPath)
-          }}
-          conversationCreationPending={creatingSession}
-          onOpenProject={handleOpenProject}
-          onCloseProject={(projectPath) => {
-            void handleCloseProject(projectPath)
-          }}
-          onDeleteSession={deleteSession}
-          onRenameSession={renameSession}
-          onCloseProcess={handleCloseBackgroundProcess}
-          onOpenProcessPreview={handleOpenProcessPreview}
-          onPinSession={(sessionId) => {
-            void pinSession(sessionId)
-          }}
-          onUnpinSession={(sessionId) => {
-            void unpinSession(sessionId)
-          }}
-          onFlagFollowUp={(sessionId) => {
-            void flagFollowUp(sessionId)
-          }}
-          onUnflagFollowUp={(sessionId) => {
-            void unflagFollowUp(sessionId)
-          }}
-          onMovePinnedSession={(sessionId, toIndex) => {
-            void movePinnedSession(sessionId, toIndex)
-          }}
-          onMoveProjectSession={(sessionId, toIndex) => {
-            void setSessionOrder(sessionId, toIndex)
-          }}
-          onClearSessionOrder={(sessionId) => {
-            void clearSessionOrder(sessionId)
-          }}
-          onMoveProject={(projectPath, toIndex) => {
-            void setProjectOrder(projectPath, toIndex)
-          }}
-          onClearProjectOrder={(projectPath) => {
-            void clearProjectOrder(projectPath)
-          }}
-          automations={state.automations}
-          activeAutomationId={state.activeAutomationId}
-          onSelectAutomation={(automationId) => {
-            dispatch({ type: 'SET_VIEW', view: 'automations' })
-            setAssistantHomeVisible(false)
-            setRightDockView('automations')
-            void selectAutomation(automationId)
-          }}
-          onNewAutomation={() => {
-            openNewAutomationPanel()
-          }}
-          currentView={state.currentView}
-          onOpenSettings={() => {
-            openSettings('general')
-          }}
-          onOpenDoctor={() => setDoctorOpen(true)}
-          doctorOpen={doctorOpen}
-          preferredTerminalId={state.settings.terminal.preferredAppId}
-          onOpenSkills={() => dispatch({ type: 'TOGGLE_SKILLS' })}
-          selectedSkillCount={
-            state.activeSession ? new Set(state.activeSession.selectedSkillIds).size : 0
-          }
-          onCollapse={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-          systemStats={state.systemStats}
-          models={state.models}
-          modelSelection={state.settings.modelSelection}
-          defaultModelSelection={ramAwareDefaultModelSelection}
-          modelAvailabilityIssues={state.bootstrapState.modelAvailabilityIssues}
-          modelTokenUsage={state.modelTokenUsage}
-          activeModelId={state.activeSession?.modelId ?? null}
-          activeRuntimeId={state.activeSession?.runtimeId ?? null}
-          helperModelId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperModelId : null}
-          helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
-          modelSelectionDisabledReason={modelSelectionDisabledReason}
-          reloadModelsDisabledReason={modelReloadDisabledReason}
-          onUpdateModelSelection={async (modelSelection) => {
-            if (modelSelectionDisabledReason) {
-              throw new Error(modelSelectionDisabledReason)
-            }
-            const updated = await window.gemmaDesktopBridge.settings.update({
-              modelSelection,
-            })
-            dispatch({ type: 'SET_SETTINGS', settings: updated })
-          }}
-          onLoadModelSelection={async (modelSelection) => {
-            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
-              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
-            }
-
-            const result = await window.gemmaDesktopBridge.settings.update({
-              modelSelection,
-              [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
-            } as unknown as Partial<typeof state.settings>) as unknown
-            const updatedSettings = await window.gemmaDesktopBridge.settings.get()
-            dispatch({ type: 'SET_SETTINGS', settings: updatedSettings })
-
-            if (
-              result
-              && typeof result === 'object'
-              && typeof (result as Partial<LoadDefaultModelsResult>).ok === 'boolean'
-              && typeof (result as Partial<LoadDefaultModelsResult>).message === 'string'
-              && Array.isArray((result as Partial<LoadDefaultModelsResult>).targets)
-            ) {
-              return result as LoadDefaultModelsResult
-            }
-
-            return {
-              ok: false,
-              message: 'Gemma Desktop needs an app restart before the model loader can run.',
-              selection: modelSelection,
-              targets: [],
-              unloaded: [],
-              loaded: [],
-              skipped: [],
-              errors: [{
-                action: 'prepare',
-                ok: false,
-                error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Selected Models again.',
-              }],
-            }
-          }}
-          onReloadModels={async () => {
-            if (window.gemmaDesktopBridge.environment.reloadModels) {
-              return await window.gemmaDesktopBridge.environment.reloadModels({
-                sessionId: state.activeSessionId,
-              })
-            }
-
-            const modelSelection = state.settings.modelSelection
-
-            if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
-              return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
-            }
-
-            return {
-              ok: false,
-              message: 'Gemma Desktop needs an app restart before the model reloader can run.',
-              selection: modelSelection,
-              targets: [],
-              unloaded: [],
-              loaded: [],
-              skipped: [],
-              errors: [{
-                action: 'prepare',
-                ok: false,
-                error: 'The running main process did not recognize the model-reload request. Restart Gemma Desktop and try again.',
-              }],
-            }
-          }}
-        />
       </div>
 
       {/* Main content area */}
@@ -2652,17 +2667,6 @@ export function App() {
             />
           </div>
         </div>
-
-        {/* Toggle sidebar button when collapsed */}
-        {!state.sidebarOpen && (
-          <button
-            onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-            className="no-drag fixed left-[76px] top-3.5 z-[60] rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-            title="Open sidebar"
-          >
-            <PanelLeftOpen size={16} />
-          </button>
-        )}
 
         {notificationPermission.promptPending
           && notificationPermission.status === 'default' && (

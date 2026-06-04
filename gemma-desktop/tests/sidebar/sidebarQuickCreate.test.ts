@@ -97,6 +97,17 @@ describe('Sidebar quick create menu', () => {
     expect(markup).toContain('Pick a folder and open its latest or first conversation')
   })
 
+  it('keeps quick create beside search and opens the menu downward', () => {
+    const markup = renderSidebar({})
+
+    expect(markup.indexOf('placeholder="Search"')).toBeLessThan(
+      markup.indexOf('aria-label="Quick create"'),
+    )
+    expect(markup).toContain('top-full')
+    expect(markup).toContain('h-8 w-8')
+    expect(markup).not.toContain('absolute bottom-full right-1 w-60')
+  })
+
   it('prompts for a selected project before enabling conversation creation', () => {
     const markup = renderSidebar({
       sessions: [makeSession({ workingDirectory: '' })],
