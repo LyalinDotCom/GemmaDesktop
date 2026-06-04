@@ -6,6 +6,7 @@ export interface PackagingVersionInput {
 
 export interface ResolvePackagedVersionInput extends PackagingVersionInput {
   incrementInstallerVersion: boolean
+  explicitVersion?: string
 }
 
 export function parseNumericVersion(version: string): {

@@ -1,0 +1,64 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    name: Build unsigned macOS DMG
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Derive installer version
+        id: installer-version
+        shell: bash
+        run: |
+          INSTALLER_VERSION="$(node - <<'NODE'
+          const pkg = require('./gemma-desktop/package.json')
+          const match = /^(\d+)\.(\d+)(?:\.(\d+))?$/.exec(String(pkg.version))
+          if (!match) {
+            throw new Error(`Unsupported gemma-desktop version: ${pkg.version}`)
+          }
+          const runNumber = process.env.GITHUB_RUN_NUMBER
+          if (!/^\d+$/.test(String(runNumber))) {
+            throw new Error(`Unsupported GitHub run number: ${runNumber}`)
+          }
+          console.log(`${match[1]}.${match[2]}.${runNumber}`)
+          NODE
+          )"
+          echo "GEMMA_DESKTOP_INSTALLER_VERSION=${INSTALLER_VERSION}" >> "${GITHUB_ENV}"
+          echo "version=${INSTALLER_VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build DMG
+        run: npm --workspace gemma-desktop run dist
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gemma-Desktop-${{ steps.installer-version.outputs.version }}-macOS-DMG
+          path: gemma-desktop/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14

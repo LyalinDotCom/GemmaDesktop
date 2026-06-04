@@ -60,6 +60,10 @@ function deriveInstallerVersion(input) {
 }
 
 function resolvePackagedVersion(input) {
+  if (input.explicitVersion) {
+    return formatNumericVersion(parseNumericVersion(input.explicitVersion))
+  }
+
   if (!input.incrementInstallerVersion) {
     return formatNumericVersion(parseNumericVersion(input.rootVersion))
   }

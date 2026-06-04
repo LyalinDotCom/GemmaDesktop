@@ -137,6 +137,7 @@ function writeStagePackageJson(rootPackageJson, options = {}) {
     productName: rootPackageJson.productName,
     distDir,
     incrementInstallerVersion: options.incrementInstallerVersion === true,
+    explicitVersion: options.explicitInstallerVersion,
   })
   const stagePackageJson = {
     name: rootPackageJson.name,
@@ -181,6 +182,7 @@ function copyStageAssets() {
 function main() {
   const rootPackageJson = readJson(sourcePackageJsonPath)
   const incrementInstallerVersion = process.argv.includes('--increment-installer-version')
+  const explicitInstallerVersion = String(process.env.GEMMA_DESKTOP_INSTALLER_VERSION ?? '').trim() || undefined
 
   resetDir(stageRoot)
   ensureDir(stageNodeModules)
@@ -189,6 +191,7 @@ function main() {
   copyStageAssets()
   const packagedVersion = writeStagePackageJson(rootPackageJson, {
     incrementInstallerVersion,
+    explicitInstallerVersion,
   })
   writeStageConfig()
 

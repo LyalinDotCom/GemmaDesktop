@@ -39,6 +39,16 @@ describe('resolvePackagedVersion', () => {
       incrementInstallerVersion: true,
     })).toBe('0.1.1')
   })
+
+  it('uses an explicit installer version when provided by CI', () => {
+    expect(resolvePackagedVersion({
+      rootVersion: '0.1.0',
+      productName: 'Gemma Desktop',
+      distDir: '/does/not/matter',
+      incrementInstallerVersion: true,
+      explicitVersion: '0.1.452',
+    })).toBe('0.1.452')
+  })
 })
 
 describe('deriveInstallerVersion', () => {
