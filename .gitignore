@@ -40,6 +40,12 @@ pnpm-debug.log*
 !.env.example
 !.env.sample
 
+# Signing credentials and certificate requests
+*.p12
+*.p8
+*.certSigningRequest
+*.cer
+
 # Local runtime / benchmark data
 .gemma/
 .gemmacli/

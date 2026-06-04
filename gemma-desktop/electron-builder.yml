@@ -31,6 +31,13 @@ nodeGypRebuild: false
 mac:
   icon: resources/icon.icns
   category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  extendInfo:
+    NSCameraUsageDescription: Gemma Desktop uses the camera only when you choose to attach a camera image.
+    NSMicrophoneUsageDescription: Gemma Desktop uses the microphone only when you use speech input.
   target:
     - dmg
     - zip

@@ -11,12 +11,17 @@ permissions:
 
 jobs:
   build-dmg:
-    name: Build unsigned macOS DMG
+    name: Build signed macOS DMG
     runs-on: macos-latest
     timeout-minutes: 45
 
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
     steps:
       - name: Checkout
@@ -54,8 +59,63 @@ jobs:
           echo "version=${INSTALLER_VERSION}" >> "${GITHUB_OUTPUT}"
           echo "tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
 
+      - name: Prepare macOS signing credentials
+        shell: bash
+        run: |
+          required_secrets=(CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER)
+          missing=()
+
+          for secret_name in "${required_secrets[@]}"; do
+            if [ -z "${!secret_name:-}" ]; then
+              missing+=("${secret_name}")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required macOS signing GitHub secrets:\n'
+            printf ' - %s\n' "${missing[@]}"
+            printf '\nSee docs/macos-signing.md for setup instructions.\n'
+            exit 1
+          fi
+
+          api_key_dir="${RUNNER_TEMP}/appstoreconnect"
+          api_key_path="${api_key_dir}/AuthKey_${APPLE_API_KEY_ID}.p8"
+
+          mkdir -p "${api_key_dir}"
+          printf '%s' "${APPLE_API_KEY_P8}" > "${api_key_path}"
+          chmod 600 "${api_key_path}"
+          echo "APPLE_API_KEY=${api_key_path}" >> "${GITHUB_ENV}"
+
       - name: Build DMG
         run: npm --workspace gemma-desktop run dist
+
+      - name: Verify macOS signing and notarization
+        shell: bash
+        run: |
+          app_paths=()
+          while IFS= read -r -d '' app_path; do
+            app_paths+=("${app_path}")
+          done < <(find gemma-desktop/dist -maxdepth 3 -type d -name "Gemma Desktop.app" -print0)
+
+          if [ "${#app_paths[@]}" -ne 1 ]; then
+            printf 'Expected exactly one packaged app, found %s:\n' "${#app_paths[@]}"
+            printf ' - %s\n' "${app_paths[@]}"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          dmg_files=(gemma-desktop/dist/*.dmg)
+
+          if [ "${#dmg_files[@]}" -ne 1 ]; then
+            printf 'Expected exactly one DMG, found %s:\n' "${#dmg_files[@]}"
+            printf ' - %s\n' "${dmg_files[@]}"
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "${app_paths[0]}"
+          codesign --display --verbose=4 "${app_paths[0]}"
+          xcrun stapler validate "${app_paths[0]}"
+          spctl --assess --type execute --verbose=4 "${app_paths[0]}"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v7
@@ -82,12 +142,12 @@ jobs:
           fi
 
           release_notes="$(cat <<NOTES
-          Unsigned macOS test build for Gemma Desktop ${RELEASE_VERSION}.
+          Signed and notarized macOS test build for Gemma Desktop ${RELEASE_VERSION}.
 
           Source commit: ${GITHUB_SHA}
           Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          macOS may warn before opening because this build is not signed or notarized yet.
+          The packaged app passed codesign, stapler, and Gatekeeper assessment in CI before this release was created.
           NOTES
           )"
 
