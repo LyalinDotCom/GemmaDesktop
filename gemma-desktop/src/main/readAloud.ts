@@ -58,8 +58,9 @@ const READ_ALOUD_REMOTE_ASSETS = [
   },
 ] as const
 
-const READ_ALOUD_WORKER_SOURCE = `
+export const READ_ALOUD_WORKER_SOURCE = `
 const path = require('node:path')
+const { createRequire } = require('node:module')
 const { parentPort } = require('node:worker_threads')
 
 let tts = null
@@ -80,13 +81,15 @@ parentPort.on('message', async (message) => {
 
   try {
     if (message.type === 'load') {
+      if (!message.moduleBasePath || typeof message.moduleBasePath !== 'string') {
+        throw new Error('Read aloud worker did not receive an app module base path.')
+      }
+      const appRequire = createRequire(message.moduleBasePath)
       // kokoro-js checks __dirname when loading bundled voice files. Worker
       // eval scripts get their own __dirname, so point it back at kokoro-js.
-      globalThis.__dirname = path.dirname(require.resolve('kokoro-js'))
-      const [{ env }, { KokoroTTS }] = await Promise.all([
-        import('@huggingface/transformers'),
-        import('kokoro-js'),
-      ])
+      globalThis.__dirname = path.dirname(appRequire.resolve('kokoro-js'))
+      const { env } = appRequire('@huggingface/transformers')
+      const { KokoroTTS } = appRequire('kokoro-js')
       env.allowRemoteModels = false
       env.localModelPath = path.dirname(message.assetRoot) + path.sep
       env.cacheDir = message.cacheDir
@@ -832,6 +835,7 @@ class WorkerBackedReadAloudModel implements ReadAloudModel {
       type: 'load',
       assetRoot,
       cacheDir,
+      moduleBasePath: __filename,
       modelId: READ_ALOUD_MODEL_ID,
       dtype: READ_ALOUD_MODEL_DTYPE,
       backend: READ_ALOUD_BACKEND,

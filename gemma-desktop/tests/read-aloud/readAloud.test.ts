@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
@@ -33,6 +34,7 @@ vi.mock('@huggingface/transformers', () => ({
 }))
 
 import {
+  READ_ALOUD_WORKER_SOURCE,
   ReadAloudService,
   buildReadAloudCacheKey,
   pruneReadAloudCache,
@@ -77,6 +79,51 @@ async function makePreparedAssetRoot(cacheRoot: string) {
   await fs.writeFile(path.join(assetRoot, 'tokenizer_config.json'), '{}')
   await fs.writeFile(path.join(assetRoot, 'onnx', 'model_quantized.onnx'), Buffer.alloc(16))
   return assetRoot
+}
+
+async function makeFakeReadAloudWorkerApp() {
+  const appRoot = await makeTempDir()
+  await fs.mkdir(path.join(appRoot, 'node_modules', '@huggingface', 'transformers'), {
+    recursive: true,
+  })
+  await fs.mkdir(path.join(appRoot, 'node_modules', 'kokoro-js'), {
+    recursive: true,
+  })
+  await fs.writeFile(path.join(appRoot, 'package.json'), '{}')
+  await fs.writeFile(
+    path.join(appRoot, 'node_modules', '@huggingface', 'transformers', 'package.json'),
+    JSON.stringify({ name: '@huggingface/transformers', main: 'index.js' }),
+  )
+  await fs.writeFile(
+    path.join(appRoot, 'node_modules', '@huggingface', 'transformers', 'index.js'),
+    [
+      'exports.env = {',
+      '  allowRemoteModels: true,',
+      '  localModelPath: "",',
+      '  cacheDir: "",',
+      '}',
+    ].join('\n'),
+  )
+  await fs.writeFile(
+    path.join(appRoot, 'node_modules', 'kokoro-js', 'package.json'),
+    JSON.stringify({ name: 'kokoro-js', main: 'index.js' }),
+  )
+  await fs.writeFile(
+    path.join(appRoot, 'node_modules', 'kokoro-js', 'index.js'),
+    [
+      'exports.KokoroTTS = class KokoroTTS {',
+      '  static async from_pretrained(modelId, options) {',
+      '    return {',
+      '      async generate() {',
+      '        return { audio: new Float32Array([0]), sampling_rate: 24000 }',
+      '      }',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+
+  return appRoot
 }
 
 function makeTestWavBuffer(durationMs: number, sampleRate = 24_000) {
@@ -205,6 +252,42 @@ describe('read aloud cache helpers', () => {
       cacheDir: path.join(cacheRoot, 'read-aloud', 'cache'),
       bundledBytes: 22,
     }))
+  })
+})
+
+describe('read aloud worker module resolution', () => {
+  it('resolves Kokoro dependencies from the packaged app module base path', async () => {
+    const appRoot = await makeFakeReadAloudWorkerApp()
+    const cacheRoot = await makeTempDir()
+    const assetRoot = await makePreparedAssetRoot(cacheRoot)
+    const worker = new Worker(READ_ALOUD_WORKER_SOURCE, {
+      eval: true,
+      name: 'gemma-read-aloud-worker-test',
+    })
+
+    try {
+      const responsePromise = new Promise<unknown>((resolve, reject) => {
+        worker.once('message', resolve)
+        worker.once('error', reject)
+      })
+      worker.postMessage({
+        id: 1,
+        type: 'load',
+        assetRoot,
+        cacheDir: path.join(cacheRoot, 'cache'),
+        moduleBasePath: path.join(appRoot, 'package.json'),
+        modelId: READ_ALOUD_MODEL_ID,
+        dtype: READ_ALOUD_MODEL_DTYPE,
+        backend: 'wasm',
+      })
+
+      await expect(responsePromise).resolves.toEqual({
+        id: 1,
+        ok: true,
+      })
+    } finally {
+      await worker.terminate()
+    }
   })
 })
 
