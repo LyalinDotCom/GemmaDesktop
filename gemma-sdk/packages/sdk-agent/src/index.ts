@@ -27,6 +27,7 @@ export type {
   ModelProvider,
   StreamChunk,
   StreamingModelProvider,
+  TokenUsage,
   Tool,
   ToolCall,
   ToolResult,

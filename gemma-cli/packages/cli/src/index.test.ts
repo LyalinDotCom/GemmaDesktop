@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createJsonStreamReporter, main } from './index.js';
+import { createJsonStreamReporter, main, resolvedCliSettings } from './index.js';
+import { parseArgs } from './args.js';
 import { cliVersionText } from './version.js';
 
 describe('main', () => {
@@ -39,6 +40,21 @@ describe('main', () => {
     expect(lines).toEqual([cliVersionText()]);
   });
 
+  it('reports resolved headless settings from normal CLI defaults', () => {
+    expect(resolvedCliSettings(parseArgs(['--prompt', 'hello']))).toMatchObject({
+      maxTurns: 'unlimited',
+      maxTokens: 'provider settings',
+      contextTokens: 262_144,
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+      reasoningMode: 'auto'
+    });
+    expect(resolvedCliSettings(parseArgs(['--prompt', 'hello', '--think', 'off']))).toMatchObject({
+      reasoningMode: 'off'
+    });
+  });
+
   it('formats headless JSON stream progress as JSONL events', async () => {
     const lines: string[] = [];
     const reporter = createJsonStreamReporter({
@@ -55,7 +71,11 @@ describe('main', () => {
       chunk: {
         thinking: 'thinking through the next tool',
         content: '{"tool":"write_file"',
-        done: false
+        done: true,
+        usage: {
+          outputTokens: 12,
+          totalTokens: 20
+        }
       }
     });
     await runOptions.onToolStart?.({
@@ -81,6 +101,10 @@ describe('main', () => {
     const events = lines.map((line) => JSON.parse(line) as Record<string, any>);
     expect(events.map((event) => event.type)).toEqual(['model_start', 'model_activity', 'tool_start', 'tool_result']);
     expect(events[1].data.thinkingPreview).toContain('thinking through');
+    expect(events[1].data.usage).toMatchObject({
+      outputTokens: 12,
+      totalTokens: 20
+    });
     expect(events[2].data.args.content).toMatchObject({
       chars: 300,
       preview: expect.stringContaining('x')

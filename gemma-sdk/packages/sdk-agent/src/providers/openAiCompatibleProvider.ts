@@ -1,8 +1,8 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, streamText, type JSONValue, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, streamText, type JSONValue, type LanguageModelUsage, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 import { contentToText, resolveBinaryAssetForRequest, resolveImageAssetForRequest } from '../content.js';
 import { shouldEnableProviderReasoning } from '../modelProfiles.js';
-import type { ChatMessage, ContentPart, GenerateOptions, ModelProvider, StreamChunk } from '../types.js';
+import type { ChatMessage, ContentPart, GenerateOptions, ModelProvider, StreamChunk, TokenUsage } from '../types.js';
 
 export interface OpenAICompatibleLocalProviderOptions {
   providerName: string;
@@ -35,8 +35,8 @@ interface OpenAICompatibleModelsResponse {
   }>;
 }
 
-const defaultGenerationStartTimeoutMs = 120_000;
-const defaultStreamInactivityTimeoutMs = 30_000;
+const defaultGenerationStartTimeoutMs = 15 * 60_000;
+const defaultStreamInactivityTimeoutMs = 15 * 60_000;
 const whitespaceOnlyContentStallLimitChars = 4096;
 const streamCancelTimeoutMs = 250;
 
@@ -318,11 +318,14 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
         return withRaw({ content: streamPartText(part), done: false }, part, options);
       case 'reasoning-delta':
         return withRaw({ thinking: streamPartText(part), done: false }, part, options);
-      case 'finish':
+      case 'finish': {
+        const usage = normalizeLanguageModelUsage(part.totalUsage);
         return withRaw({
           done: true,
-          doneReason: part.rawFinishReason ?? part.finishReason
+          doneReason: part.rawFinishReason ?? part.finishReason,
+          ...(usage ? { usage } : {})
         }, part, options);
+      }
       case 'abort':
         throw new Error(`${this.displayName} OpenAI-compatible stream was aborted${part.reason ? `: ${part.reason}` : ''}.`);
       case 'error':
@@ -526,6 +529,21 @@ function streamPartText(part: LocalTextStreamPart): string {
   const value = (part as unknown as { text?: unknown; delta?: unknown }).text
     ?? (part as unknown as { text?: unknown; delta?: unknown }).delta;
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeLanguageModelUsage(usage: LanguageModelUsage | undefined): TokenUsage | undefined {
+  if (!usage) {
+    return undefined;
+  }
+  const normalized = {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens,
+    totalTokens: usage.totalTokens
+  } satisfies TokenUsage;
+  return Object.values(normalized).some((value) => typeof value === 'number')
+    ? normalized
+    : undefined;
 }
 
 function withRaw(chunk: StreamChunk, raw: unknown, options: GenerateOptions): StreamChunk {

@@ -48,7 +48,8 @@ describe('model profiles', () => {
     expect(shouldEnableProviderReasoning('google/gemma-4-26b-a4b', { reasoningMode: 'off' }, true)).toBe(false);
     expect(shouldEnableProviderReasoning('qwen2.5-coder', {}, true)).toBe(false);
     expect(shouldEnableProviderReasoning('qwen2.5-coder', { reasoningMode: 'on' }, true)).toBe(true);
-    expect(shouldEnableProviderReasoning('qwen2.5-coder', { reasoningMode: 'on' }, false)).toBe(true);
+    expect(shouldEnableProviderReasoning('qwen2.5-coder', { reasoningMode: 'on' }, false)).toBe(false);
+    expect(shouldEnableProviderReasoning('google/gemma-4-31b', { reasoningMode: 'on' }, false)).toBe(false);
     expect(shouldEnableProviderReasoning('google/gemma-4-26b-a4b', {}, false)).toBe(false);
   });
 

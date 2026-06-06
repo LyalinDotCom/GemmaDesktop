@@ -74,6 +74,9 @@ export function shouldEnableProviderReasoning(
   if (options.reasoningMode === 'off') {
     return false;
   }
+  if (providerSupportsReasoning === false) {
+    return false;
+  }
   if (options.reasoningMode === 'on') {
     return true;
   }

@@ -1,4 +1,8 @@
-import { OpenAICompatibleLocalProvider, listOpenAICompatibleModels } from './openAiCompatibleProvider.js';
+import {
+  OpenAICompatibleLocalProvider,
+  listOpenAICompatibleModels,
+  normalizeOpenAICompatibleBaseUrl
+} from './openAiCompatibleProvider.js';
 import type { GenerateOptions, ModelProvider, StreamChunk } from '../types.js';
 
 export interface LmStudioProviderOptions {
@@ -22,6 +26,18 @@ export interface LmStudioModelInfo {
   supportsImage?: boolean;
   supportsAudio?: boolean;
   supportsReasoning?: boolean;
+}
+
+interface LmStudioNativeModelsResponse {
+  data?: Array<{
+    id?: string;
+    display_name?: string;
+    selected_variant?: string;
+    loaded_instance_id?: string;
+    capabilities?: unknown;
+    max_context_length?: number;
+    loaded_context_length?: number;
+  }>;
 }
 
 const defaultBaseUrl = 'http://127.0.0.1:1234';
@@ -65,9 +81,61 @@ export async function listLmStudioModels(baseUrl = defaultBaseUrl, fetchImpl: ty
 
 export async function listLmStudioModelInfos(baseUrl = defaultBaseUrl, fetchImpl: typeof fetch = fetch): Promise<LmStudioModelInfo[]> {
   const models = await listOpenAICompatibleModels(baseUrl, fetchImpl, 'LM Studio');
-  return models.map((model) => ({
-    name: model.id,
-    provider: 'lmstudio' as const,
-    displayName: model.id
-  }));
+  const nativeModels = await listLmStudioNativeModelInfos(baseUrl, fetchImpl);
+  const nativeById = new Map(nativeModels.map((model) => [model.name, model]));
+  return models.map((model) => {
+    const native = nativeById.get(model.id);
+    return {
+      name: model.id,
+      provider: 'lmstudio' as const,
+      displayName: native?.displayName ?? model.id,
+      ...(native?.selectedVariant !== undefined ? { selectedVariant: native.selectedVariant } : {}),
+      ...(native?.loadedInstanceId !== undefined ? { loadedInstanceId: native.loadedInstanceId } : {}),
+      ...(native?.supportsImage !== undefined ? { supportsImage: native.supportsImage } : {}),
+      ...(native?.supportsAudio !== undefined ? { supportsAudio: native.supportsAudio } : {}),
+      ...(native?.supportsReasoning !== undefined ? { supportsReasoning: native.supportsReasoning } : {})
+    };
+  });
+}
+
+async function listLmStudioNativeModelInfos(baseUrl: string, fetchImpl: typeof fetch): Promise<LmStudioModelInfo[]> {
+  try {
+    const root = lmStudioRootUrl(baseUrl);
+    const response = await fetchImpl(`${root}/api/v0/models`);
+    if (!response.ok) {
+      return [];
+    }
+    const body = (await response.json()) as LmStudioNativeModelsResponse;
+    return (body.data ?? []).flatMap((model) => {
+      const id = typeof model.id === 'string' ? model.id.trim() : '';
+      if (!id) {
+        return [];
+      }
+      const capabilities = Array.isArray(model.capabilities)
+        ? model.capabilities.map((capability) => String(capability).toLowerCase())
+        : [];
+      return [{
+        name: id,
+        provider: 'lmstudio' as const,
+        displayName: typeof model.display_name === 'string' ? model.display_name : id,
+        selectedVariant: typeof model.selected_variant === 'string' ? model.selected_variant : undefined,
+        loadedInstanceId: typeof model.loaded_instance_id === 'string' ? model.loaded_instance_id : undefined,
+        supportsImage: capabilities.some((capability) => /vision|image/.test(capability)),
+        supportsAudio: capabilities.some((capability) => /audio|speech/.test(capability)),
+        supportsReasoning: capabilities.some((capability) => /reason|think/.test(capability))
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function lmStudioRootUrl(baseUrl: string): string {
+  const normalized = normalizeOpenAICompatibleBaseUrl(baseUrl);
+  const url = new URL(normalized);
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.at(-1)?.toLowerCase() === 'v1') {
+    url.pathname = `/${segments.slice(0, -1).join('/')}`;
+  }
+  return url.toString().replace(/\/+$/, '');
 }

@@ -1,0 +1,17 @@
+{
+  "name": "open-gemma-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "benchmark:throughput": "node gemma-model-throughput.mjs",
+    "benchmark:throughput:dry-run": "node gemma-model-throughput.mjs --dry-run",
+    "report:site": "node gemma-report-site.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "gemma-cli": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

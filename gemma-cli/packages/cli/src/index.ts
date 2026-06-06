@@ -6,6 +6,7 @@ import type { AgentRunOptions, AgentTurn, StreamChunk, ToolCall } from '@gemma-s
 import { runAcp } from './acp.js';
 import { parseArgs } from './args.js';
 import { appendEvent, createDiagnosticContext, createRunModelActivityRecorder, listStoredSessions, recordRunError, recordRunResult, recordRunStart, sessionMessagesWithMetadata, type DiagnosticContext } from './diagnostics.js';
+import { createHeadlessRunMetricsTracker } from './headlessMetrics.js';
 import { createRuntime, formatRunResult, resolveRuntimeSkills } from './runtime.js';
 import { runTui } from './tui.js';
 import { cliVersionText } from './version.js';
@@ -66,11 +67,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     const explicitSkillPaths = new Set(runtime.skills.map((skill) => skill.path));
     const detectedSkills = runSkills.filter((skill) => !explicitSkillPaths.has(skill.path));
     const runId = await recordRunStart(diagnostics, prompt, promptHistory.metadata);
+    const settings = resolvedCliSettings(options);
     const resultBase = {
       sessionId: diagnostics.session.id,
       provider: runtime.provider.name,
       model: runtime.model,
       selectedModel: runtime.selectedModel,
+      settings,
       context: {
         requestedTokens: runtime.requestedContextTokens,
         loadedTokens: runtime.loadedContextTokens,
@@ -91,14 +94,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         })
       : undefined;
     const modelActivity = createRunModelActivityRecorder(diagnostics, runId);
+    const runMetrics = createHeadlessRunMetricsTracker();
     const partialTurns: AgentTurn[] = [];
     const pendingToolCalls = new Map<number, ToolCall>();
     const jsonRunOptions = jsonStream?.runOptions();
     const runOptions: AgentRunOptions = {
       async onModelStart(event) {
+        runMetrics.onModelStart(event);
         await jsonRunOptions?.onModelStart?.(event);
       },
       async onModelActivity(event) {
+        runMetrics.onModelActivity(event);
         await modelActivity.record(event);
         await jsonRunOptions?.onModelActivity?.(event);
       },
@@ -125,6 +131,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           loadedTokens: runtime.loadedContextTokens,
           tokens: runtime.contextTokens
         },
+        settings,
         promptHistory: promptHistory.metadata,
         skills: runSkills.map((skill) => skill.name),
         detectedSkills: detectedSkills.map((skill) => skill.name)
@@ -143,11 +150,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       });
       if (jsonStream) {
         streamedError = true;
-        jsonStream.emit('run_failed', { error: formatError(error) });
+        jsonStream.emit('run_failed', { error: formatError(error), metrics: runMetrics.snapshot() });
       }
       throw error;
     }
-    const resultPayload = { ...resultBase, ...result };
+    const resultPayload = { ...resultBase, ...result, metrics: runMetrics.snapshot() };
     if (options.jsonStream) {
       jsonStream?.emit('run_completed', { result: resultPayload });
     } else if (options.json) {
@@ -182,6 +189,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
 function shouldStartTuiByDefault(options: ReturnType<typeof parseArgs>): boolean {
   return !options.prompt && !options.scenario && !options.acp;
+}
+
+export function resolvedCliSettings(options: ReturnType<typeof parseArgs>): Record<string, unknown> {
+  return {
+    maxTurns: options.maxTurns ?? 'unlimited',
+    maxTokens: options.maxTokens ?? 'provider settings',
+    contextTokens: options.contextTokens,
+    temperature: options.temperature,
+    topP: options.topP,
+    topK: options.topK,
+    reasoningMode: options.reasoningMode,
+    shellIdleTimeoutMs: options.shellIdleTimeoutMs ?? 'default',
+    ollamaAutoStart: options.ollamaAutoStart
+  };
 }
 
 function helpText(): string {
@@ -396,6 +417,9 @@ export function createJsonStreamReporter(context: JsonStreamContext, writeLine: 
     if (chunk.doneReason) {
       pendingActivity.doneReason = chunk.doneReason;
     }
+    if (chunk.usage) {
+      pendingActivity.usage = chunk.usage;
+    }
 
     const now = Date.now();
     if (pendingActivity.done || lastActivityEmittedAt === 0 || now - lastActivityEmittedAt >= jsonStreamActivityIntervalMs) {
@@ -456,6 +480,7 @@ interface PendingActivity {
   status?: string;
   done?: boolean;
   doneReason?: string;
+  usage?: StreamChunk['usage'];
 }
 
 function formatPendingActivity(activity: PendingActivity): Record<string, unknown> {
@@ -472,7 +497,8 @@ function formatPendingActivity(activity: PendingActivity): Record<string, unknow
     } : {}),
     ...(activity.status ? { status: activity.status } : {}),
     ...(activity.done === true ? { done: true } : {}),
-    ...(activity.doneReason ? { doneReason: activity.doneReason } : {})
+    ...(activity.doneReason ? { doneReason: activity.doneReason } : {}),
+    ...(activity.usage ? { usage: activity.usage } : {})
   };
 }
 

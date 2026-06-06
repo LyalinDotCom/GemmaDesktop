@@ -74,6 +74,70 @@ describe('LmStudioProvider', () => {
     expect(calls[0]?.body).toMatchObject({ reasoning_effort: 'none' });
   });
 
+  it('does not send provider reasoning control when LM Studio discovery says it is unsupported', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const provider = new LmStudioProvider({
+      model: 'google/gemma-4-31b',
+      baseUrl: 'http://lmstudio.local',
+      reasoning: false,
+      fetchImpl: openAiChatFetch(calls, [chatCompletion('ok')])
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hello' }], { reasoningMode: 'on' })).resolves.toBe('ok');
+    expect(calls[0]?.body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('reads LM Studio native capability metadata when listing models', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url) => {
+      urls.push(String(url));
+      if (String(url).endsWith('/v1/models')) {
+        return new Response(JSON.stringify({
+          data: [
+            { id: 'google/gemma-4-31b' },
+            { id: 'google/gemma-4-26b-a4b' }
+          ]
+        }), { status: 200 });
+      }
+      if (String(url).endsWith('/api/v0/models')) {
+        return new Response(JSON.stringify({
+          data: [
+            {
+              id: 'google/gemma-4-31b',
+              display_name: 'Gemma 4 31B',
+              capabilities: ['tool_use']
+            },
+            {
+              id: 'google/gemma-4-26b-a4b',
+              display_name: 'Gemma 4 26B A4B',
+              capabilities: ['tool_use', 'reasoning']
+            }
+          ]
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+
+    const models = await listLmStudioModelInfos('http://lmstudio.local', fetchImpl);
+
+    expect(urls).toEqual([
+      'http://lmstudio.local/v1/models',
+      'http://lmstudio.local/api/v0/models'
+    ]);
+    expect(models).toEqual([
+      expect.objectContaining({
+        name: 'google/gemma-4-26b-a4b',
+        displayName: 'Gemma 4 26B A4B',
+        supportsReasoning: true
+      }),
+      expect.objectContaining({
+        name: 'google/gemma-4-31b',
+        displayName: 'Gemma 4 31B',
+        supportsReasoning: false
+      })
+    ]);
+  });
+
   it('retries streams without provider reasoning when the server rejects reasoning control', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new LmStudioProvider({
@@ -163,7 +227,10 @@ describe('listLmStudioModels', () => {
       }) as typeof fetch
     );
 
-    expect(calls).toEqual(['http://lmstudio.local/v1/models']);
+    expect(calls).toEqual([
+      'http://lmstudio.local/v1/models',
+      'http://lmstudio.local/api/v0/models'
+    ]);
     expect(models).toEqual(['a', 'z']);
   });
 
@@ -178,12 +245,16 @@ describe('listLmStudioModels', () => {
   it('returns display metadata for model picker rows', async () => {
     const models = await listLmStudioModelInfos(
       'http://lmstudio.local/v1',
-      (async () =>
-        new Response(JSON.stringify({
+      (async (url) => {
+        if (String(url).endsWith('/api/v0/models')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
           data: [
             { id: 'gemma' }
           ]
-        }), { status: 200 })) as typeof fetch
+        }), { status: 200 });
+      }) as typeof fetch
     );
 
     expect(models).toEqual([{

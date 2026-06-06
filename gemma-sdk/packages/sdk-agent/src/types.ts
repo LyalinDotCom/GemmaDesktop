@@ -39,7 +39,15 @@ export interface StreamChunk {
   status?: string;
   done?: boolean;
   doneReason?: string;
+  usage?: TokenUsage;
   raw?: unknown;
+}
+
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
 }
 
 export interface GenerateOptions {
