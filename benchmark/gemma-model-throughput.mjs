@@ -649,7 +649,28 @@ async function collectLmStudioMetadata(options, models, availability) {
     version: greeting?.version,
     commandVersion: summarizeLmStudioCommandVersion(commandVersion.stdout || commandVersion.stderr || commandVersion.error || ''),
     listedModelCount: availability?.models?.size ?? (Array.isArray(openAiModels?.data) ? openAiModels.data.length : undefined),
+    transportDiagnostics: lmStudioTransportDiagnostics(options),
     models: Object.fromEntries(modelEntries)
+  };
+}
+
+function lmStudioTransportDiagnostics(options) {
+  if (options.mediaKind !== 'audio') {
+    return undefined;
+  }
+  return {
+    audio: {
+      status: 'not supported',
+      evidence: 'LM Studio local chat transports expose text/image inputs only; audio file handles are not delivered to the model through the public REST, OpenAI-compatible, Anthropic-compatible, CLI, or lmstudio-js chat surfaces.',
+      checkedSurfaces: [
+        '/api/v1/chat',
+        '/v1/chat/completions',
+        '/v1/responses',
+        '/v1/messages',
+        'lms chat',
+        '@lmstudio/sdk model.respond'
+      ]
+    }
   };
 }
 

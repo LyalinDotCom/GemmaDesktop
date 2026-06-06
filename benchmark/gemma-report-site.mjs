@@ -55,6 +55,7 @@ export function renderReportHtml(report) {
   const maxFirstOutput = Math.max(...report.results.map((row) => row.firstOutputMs).filter(Number.isFinite), 1);
   const modelInventory = modelInventoryRows(report.runtimeMetadata);
   const runtimeInventory = runtimeInventoryRows(report.runtimeMetadata);
+  const transportDiagnostics = transportDiagnosticRows(report.runtimeMetadata);
   const environmentRows = environmentRowsFor(report);
   const generatedLabel = report.generatedAt ? new Date(report.generatedAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) : 'Unknown';
 
@@ -181,6 +182,13 @@ ${css()}
         numberCol('listedModelCount', 'Visible models'),
         col('loadedModels', 'Loaded before run')
       ], runtimeInventory, { compact: true })}
+      ${transportDiagnostics.length > 0 ? sortableTable('transportDiagnostics', 'Transport Diagnostics', 'Provider-level media transport conclusions captured before benchmark cases ran.', [
+        col('provider', 'Provider'),
+        col('modality', 'Modality'),
+        col('status', 'Status'),
+        longTextCol('evidence', 'Evidence'),
+        longTextCol('checkedSurfaces', 'Checked surfaces')
+      ], transportDiagnostics, { compact: true }) : ''}
       ${sortableTable('modelInventory', 'Configured Model Inventory', 'Model metadata observed from the runtime APIs before benchmark cases ran.', [
         col('provider', 'Provider'),
         col('model', 'Model'),
@@ -462,6 +470,20 @@ function modelInventoryRows(runtimeMetadata) {
       maxContextLength: info.maxContextLength ?? info.contextLength ?? '',
       temperature: info.temperature ?? info.parameters?.temperature ?? '',
       capabilities: Array.isArray(info.capabilities) ? info.capabilities.join(', ') : ''
+    }))
+  );
+}
+
+function transportDiagnosticRows(runtimeMetadata) {
+  return Object.entries(runtimeMetadata ?? {}).flatMap(([provider, data]) =>
+    Object.entries(data.transportDiagnostics ?? {}).map(([modality, diagnostic]) => ({
+      provider,
+      modality,
+      status: diagnostic.status ?? '',
+      evidence: diagnostic.evidence ?? '',
+      checkedSurfaces: Array.isArray(diagnostic.checkedSurfaces)
+        ? diagnostic.checkedSurfaces.join(', ')
+        : ''
     }))
   );
 }

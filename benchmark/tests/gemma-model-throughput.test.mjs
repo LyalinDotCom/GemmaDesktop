@@ -360,6 +360,13 @@ test('renders media fixture references and outputs in the static report site', (
           reachable: true,
           commandVersion: 'lms CLI commit test',
           listedModelCount: 1,
+          transportDiagnostics: {
+            audio: {
+              status: 'not supported',
+              evidence: 'LM Studio local chat transports expose text/image inputs only.',
+              checkedSurfaces: ['/api/v1/chat', '@lmstudio/sdk model.respond']
+            }
+          },
           models: {
             'google/gemma-4-e2b': {
               state: 'loaded',
@@ -421,6 +428,8 @@ test('renders media fixture references and outputs in the static report site', (
   assert.equal(report.results[0].outputOrError, 'The image depicts an astronaut on the lunar surface.');
   assert.match(html, /Fixtures And References/);
   assert.match(html, /Not Applicable Coverage/);
+  assert.match(html, /Transport Diagnostics/);
+  assert.match(html, /text\/image inputs only/);
   assert.match(html, /runtime transport does not support audio input/);
   assert.match(html, /NASA photo AS11-40-5869/);
   assert.match(html, /Output \/ Error/);
