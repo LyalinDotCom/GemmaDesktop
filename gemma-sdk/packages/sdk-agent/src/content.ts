@@ -69,7 +69,7 @@ export function inferAttachmentCapabilities(input: AttachmentCapabilityInput): A
   const isGemma4 = signature.includes('gemma4');
   const isGemma3n = signature.includes('gemma3n');
   const inferredImage = isGemma && (isGemma4 || isGemma3n);
-  const inferredAudio = isGemma && (isGemma3n || signature.includes('gemma4e2b') || signature.includes('gemma4e4b'));
+  const inferredAudio = isGemma && (isGemma3n || isGemma4AudioModel(signature));
   const image = providerSupportsImages && (input.explicitImage ?? inferredImage);
   const audio = providerSupportsAudio && (input.explicitAudio ?? inferredAudio);
 
@@ -80,6 +80,12 @@ export function inferAttachmentCapabilities(input: AttachmentCapabilityInput): A
     pdf: providerSupportsPdf && (input.explicitPdf ?? false),
     source: input.explicitImage != null || input.explicitAudio != null || input.explicitPdf != null ? 'provider-metadata' : isGemma ? 'model-family-inference' : 'provider-default'
   };
+}
+
+function isGemma4AudioModel(signature: string): boolean {
+  return signature.includes('gemma4e2b')
+    || signature.includes('gemma4e4b')
+    || /gemma412b/.test(signature);
 }
 
 export function assertContentSupported(content: MessageContent, capabilities: AttachmentCapabilities, model: string, provider: string): void {

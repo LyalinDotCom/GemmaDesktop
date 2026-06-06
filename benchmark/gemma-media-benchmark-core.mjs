@@ -555,12 +555,12 @@ function notApplicableResult(item, reason) {
   };
 }
 
-function mediaUnsupportedReason(stack, provider, model, mediaKind) {
-  if (!runtimeSupportsMediaTransport(provider, mediaKind)) {
-    return `${provider} runtime transport does not support ${mediaKind} input`;
-  }
+export function mediaUnsupportedReason(stack, provider, model, mediaKind) {
   if (!modelSupportsMedia(stack, provider, model, mediaKind)) {
     return `model is not tagged for ${mediaKind} input`;
+  }
+  if (!runtimeSupportsMediaTransport(provider, mediaKind)) {
+    return `${provider} runtime transport does not support ${mediaKind} input`;
   }
   return undefined;
 }
@@ -604,6 +604,12 @@ function inferModelFamilyMediaSupport(provider, model, mediaKind) {
   }
   if (mediaKind === 'image') {
     return isGemma4 || isGemma3n;
+  }
+  if (mediaKind === 'audio') {
+    return isGemma3n
+      || signature.includes('gemma4e2b')
+      || signature.includes('gemma4e4b')
+      || /gemma412b/.test(signature);
   }
   return false;
 }

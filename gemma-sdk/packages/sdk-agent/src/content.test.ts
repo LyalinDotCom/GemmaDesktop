@@ -16,7 +16,17 @@ describe('content attachment capabilities', () => {
       audio: true,
       video: true
     });
+    expect(inferAttachmentCapabilities({ provider: 'ollama', model: 'gemma4:12b' })).toMatchObject({
+      image: true,
+      audio: true,
+      video: true
+    });
     expect(inferAttachmentCapabilities({ provider: 'lmstudio', model: 'gemma4:e4b' })).toMatchObject({
+      image: true,
+      audio: false,
+      video: true
+    });
+    expect(inferAttachmentCapabilities({ provider: 'lmstudio', model: 'google/gemma-4-12b' })).toMatchObject({
       image: true,
       audio: false,
       video: true

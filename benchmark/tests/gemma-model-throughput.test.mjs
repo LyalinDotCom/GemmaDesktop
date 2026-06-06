@@ -20,6 +20,7 @@ import {
   buildMediaBenchmarkPlan,
   buildMediaGemmaCliArgs,
   imageDescriptionFixtures,
+  mediaUnsupportedReason,
   parseMediaArgs,
   renderMediaMarkdownReport
 } from '../gemma-media-benchmark-core.mjs';
@@ -477,6 +478,30 @@ test('media benchmark rejects generation tuning options', () => {
   assert.throws(() => parseMediaArgs(['--max-tokens', '512'], imageDescriptionBenchmark), /Unknown option: --max-tokens/);
   assert.throws(() => parseMediaArgs(['--temperature', '0.2'], imageDescriptionBenchmark), /Unknown option: --temperature/);
   assert.throws(() => parseMediaArgs(['--context-tokens', '4096'], imageDescriptionBenchmark), /Unknown option: --context-tokens/);
+});
+
+test('media applicability separates model audio support from runtime audio transport', () => {
+  const stack = {
+    providers: {
+      ollama: {
+        models: {
+          'gemma4:12b': { capabilities: ['completion', 'vision', 'audio', 'thinking'] },
+          'gemma4:26b': { capabilities: ['completion', 'vision', 'thinking'] }
+        }
+      },
+      lmstudio: {
+        models: {
+          'google/gemma-4-12b': { capabilities: ['tool_use'] },
+          'google/gemma-4-31b': { capabilities: ['tool_use'] }
+        }
+      }
+    }
+  };
+
+  assert.equal(mediaUnsupportedReason(stack, 'ollama', 'gemma4:12b', 'audio'), undefined);
+  assert.equal(mediaUnsupportedReason(stack, 'ollama', 'gemma4:26b', 'audio'), 'model is not tagged for audio input');
+  assert.equal(mediaUnsupportedReason(stack, 'lmstudio', 'google/gemma-4-12b', 'audio'), 'lmstudio runtime transport does not support audio input');
+  assert.equal(mediaUnsupportedReason(stack, 'lmstudio', 'google/gemma-4-31b', 'audio'), 'model is not tagged for audio input');
 });
 
 test('renders media results with raw output or error in the final column', () => {
