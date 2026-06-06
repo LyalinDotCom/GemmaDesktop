@@ -325,10 +325,95 @@ test('renders a self-contained sortable static report site from markdown', () =>
 
   assert.equal(report.results.length, 1);
   assert.equal(report.resetEvidence[0].unloaded, 'gemma4:e2b');
-  assert.match(html, /<table id="resultsTable" class="sortable-table results-table">/);
+  assert.match(html, /<table id="resultsTable" class="sortable-table results-table"/);
   assert.match(html, /function sortTable/);
   assert.doesNotMatch(html, /<script src=/);
   assert.doesNotMatch(html, /<link rel=/);
+});
+
+test('renders media fixture references and outputs in the static report site', () => {
+  const markdown = renderMediaMarkdownReport({
+    generatedAt: '2026-06-06T18:10:10.819Z',
+    category: 'Gemma Image Description Benchmark',
+    mediaKind: 'image',
+    providers: ['lmstudio'],
+    cli: '/tmp/gemma',
+    resetRuntimeBetweenCases: true,
+    stack: {
+      system: { node: 'v24.14.1', platform: 'darwin', arch: 'arm64' },
+      gemmaCli: {
+        versionText: 'gemma-cli 0.1.11',
+        label: '/tmp/gemma',
+        defaults: {
+          contextTokens: 262144,
+          temperature: 1,
+          topP: 0.95,
+          topK: 64,
+          maxTokens: 'provider settings',
+          maxTurns: 'unlimited'
+        }
+      },
+      providers: {
+        lmstudio: {
+          endpoint: 'http://127.0.0.1:1234',
+          reachable: true,
+          commandVersion: 'lms CLI commit test',
+          listedModelCount: 1,
+          models: {
+            'google/gemma-4-e2b': {
+              state: 'loaded',
+              family: 'gemma4',
+              maxContextLength: 131072,
+              capabilities: ['tool_use']
+            }
+          }
+        }
+      }
+    },
+    fixtures: [{
+      id: 'apollo-buzz-aldrin',
+      kind: 'image',
+      localPath: '/tmp/apollo-buzz-aldrin.jpg',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:AldrinOnMoon.jpg',
+      license: 'Public domain, NASA',
+      reference: 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.'
+    }],
+    results: [{
+      provider: 'lmstudio',
+      model: 'google/gemma-4-e2b',
+      fixtureId: 'apollo-buzz-aldrin',
+      fixtureReference: 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.',
+      think: 'off',
+      workspace: '/tmp/workspace',
+      status: 'completed',
+      command: 'gemma',
+      commandArgs: ['--provider', 'lmstudio', '--model', 'google/gemma-4-e2b'],
+      wallDurationMs: 1234,
+      settings: { temperature: 1, maxTokens: 'provider settings' },
+      runtimeModelState: { state: 'loaded', contextLength: 131072 },
+      output: 'The image depicts an astronaut on the lunar surface.',
+      metrics: {
+        tokensPerSecond: 12.5,
+        wallTokensPerSecond: 8.5,
+        metricOutputTokens: 42,
+        tokenSource: 'provider',
+        modelCallDurationMs: 1100
+      },
+      modelCalls: [{ firstOutputLatencyMs: 600 }]
+    }]
+  });
+
+  const report = parseReportMarkdown(markdown);
+  const html = renderReportHtml(report);
+
+  assert.equal(report.fixtures[0].reference, 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.');
+  assert.equal(report.results[0].fixture, 'apollo-buzz-aldrin');
+  assert.equal(report.results[0].outputOrError, 'The image depicts an astronaut on the lunar surface.');
+  assert.match(html, /Fixtures And References/);
+  assert.match(html, /NASA photo AS11-40-5869/);
+  assert.match(html, /Output \/ Error/);
+  assert.match(html, /The image depicts an astronaut on the lunar surface/);
+  assert.match(html, /<a href="#fixtures">Fixtures<\/a>/);
 });
 
 test('builds the image benchmark matrix across fixtures without generation tuning flags', () => {

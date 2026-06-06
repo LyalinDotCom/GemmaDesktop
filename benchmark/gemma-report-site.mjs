@@ -6,6 +6,7 @@ const defaultInput = 'reports/unified-google-base-clean-runtime-local-fix-2026-0
 
 export function parseReportMarkdown(markdown) {
   const metadata = parseTopMetadata(markdown);
+  const title = markdown.match(/^# (.+)$/m)?.[1]?.trim() ?? 'Gemma Benchmark Report';
   const summary = linesInSection(markdown, 'Unified Run Summary')
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim());
@@ -13,6 +14,7 @@ export function parseReportMarkdown(markdown) {
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim());
   const runtimeMetadata = parseRuntimeMetadata(markdown);
+  const fixtures = parseFixturesTable(markdown);
   const prompt = extractFence(markdown, 'Prompt', 'text') ?? '';
   const results = parseResultsTable(markdown);
   const resetEvidence = parseRuntimeResetEvidence(markdown);
@@ -20,10 +22,12 @@ export function parseReportMarkdown(markdown) {
   const commands = parseCommands(markdown);
 
   return {
+    title,
     ...metadata,
     summary,
     stack,
     runtimeMetadata,
+    fixtures,
     prompt,
     results,
     resetEvidence,
@@ -34,6 +38,7 @@ export function parseReportMarkdown(markdown) {
 
 export function renderReportHtml(report) {
   const providerSummaries = summarizeProviders(report.results);
+  const hasFixtures = report.fixtures.length > 0;
   const fastest = report.results
     .filter((row) => Number.isFinite(row.tokensPerSecond))
     .toSorted((a, b) => b.tokensPerSecond - a.tokensPerSecond)[0];
@@ -65,8 +70,8 @@ ${css()}
   <header class="hero">
     <div class="hero-copy">
       <p class="kicker">Open Gemma Benchmark</p>
-      <h1>Google Gemma 4 Runtime Matrix</h1>
-      <p class="lede">A self-contained benchmark dashboard for Ollama and LM Studio across five Google base model weights, with thinking on and off.</p>
+      <h1>${escapeHtml(report.title)}</h1>
+      <p class="lede">${escapeHtml(reportLede(report))}</p>
     </div>
     <div class="hero-panel" aria-label="Run summary">
       <div>
@@ -86,6 +91,7 @@ ${css()}
 
   <nav class="section-nav" aria-label="Report sections">
     <a href="#overview">Overview</a>
+    ${hasFixtures ? '<a href="#fixtures">Fixtures</a>' : ''}
     <a href="#results">Results</a>
     <a href="#runtime">Runtime</a>
     <a href="#evidence">Evidence</a>
@@ -105,7 +111,9 @@ ${css()}
         ${statCard('LM Studio 31B Think On', lmStudio31bThinking ? `${formatInteger(lmStudio31bThinking.firstOutputMs)} ms first output` : 'n/a', lmStudio31bThinking ? `${formatNumber(lmStudio31bThinking.tokensPerSecond)} tok/s, ${formatInteger(lmStudio31bThinking.modelTimeMs)} ms model time` : 'Missing case')}
       </div>
       <div class="summary-list">
-        ${report.summary.map((item) => `<p>${inlineCode(escapeHtml(item))}</p>`).join('\n        ')}
+        ${report.summary.length > 0
+          ? report.summary.map((item) => `<p>${inlineCode(escapeHtml(item))}</p>`).join('\n        ')
+          : `<p>${escapeHtml('No unified summary section was present in this report.')}</p>`}
       </div>
       <div class="chart-panel">
         <div class="section-heading compact">
@@ -120,6 +128,14 @@ ${css()}
         </div>
       </div>
     </section>
+
+    ${hasFixtures ? `<section id="fixtures" class="section">
+      <div class="section-heading">
+        <p class="kicker">Reference Material</p>
+        <h2>Fixtures</h2>
+      </div>
+      ${fixturesTable(report.fixtures)}
+    </section>` : ''}
 
     <section id="results" class="section">
       <div class="section-heading split">
@@ -185,17 +201,13 @@ ${css()}
         <h2>Runtime Reset And Loaded State</h2>
       </div>
       ${sortableTable('resetEvidence', 'Runtime Reset Evidence', 'Each row records before and after cleanup for one benchmark case.', [
-        col('provider', 'Provider'),
-        col('model', 'Model'),
-        col('thinking', 'Thinking'),
+        ...caseColumns(report.resetEvidence),
         col('before', 'Before'),
         col('after', 'After'),
         col('unloaded', 'Unloaded')
       ], report.resetEvidence)}
       ${sortableTable('modelStateEvidence', 'Runtime Model State Evidence', 'Loaded model state captured during each case.', [
-        col('provider', 'Provider'),
-        col('model', 'Model'),
-        col('thinking', 'Thinking'),
+        ...caseColumns(report.modelStateEvidence),
         col('state', 'State'),
         col('runtimeStatus', 'Runtime status'),
         numberCol('contextLength', 'Context'),
@@ -215,9 +227,7 @@ ${css()}
         <pre>${escapeHtml(report.prompt)}</pre>
       </div>
       ${sortableTable('commandsTable', 'Runnable Commands', 'The exact command recorded for each case. Use the copy button per row.', [
-        col('provider', 'Provider'),
-        col('model', 'Model'),
-        col('thinking', 'Thinking'),
+        ...caseColumns(report.commands),
         {
           key: 'command',
           label: 'Command',
@@ -242,6 +252,7 @@ function parseTopMetadata(markdown) {
     if (!rest.length) continue;
     const value = rest.join(':').trim();
     if (key === 'Generated') metadata.generatedAt = value;
+    if (key === 'Category') metadata.category = value;
     if (key === 'Providers') metadata.providers = value;
     if (key === 'CLI') metadata.cli = value;
     if (key === 'Clean runtime reset') metadata.cleanRuntimeReset = value;
@@ -265,6 +276,7 @@ function parseResultsTable(markdown) {
   return rows.map((row) => ({
     provider: row.Provider,
     model: row.Model,
+    fixture: row.Fixture,
     thinking: row.Thinking,
     status: row.Status,
     tokensPerSecond: numeric(row['Tok/s']),
@@ -272,11 +284,25 @@ function parseResultsTable(markdown) {
     tokens: numeric(row.Tokens),
     source: row.Source,
     firstOutputMs: numeric(row['First output']),
+    completionTimeMs: numeric(row['Completion time']),
     modelTimeMs: numeric(row['Model time']),
     context: numeric(row.Context),
     temperature: numeric(row.Temp),
     maxTokens: row['Max tokens'],
-    answerChars: numeric(row['Answer chars'])
+    answerChars: numeric(row['Answer chars']),
+    outputOrError: row['Output / Error']
+  }));
+}
+
+function parseFixturesTable(markdown) {
+  const lines = linesInSection(markdown, 'Fixtures').filter((line) => line.startsWith('|'));
+  return parsePipeTable(lines).map((row) => ({
+    fixture: row.Fixture,
+    kind: row.Kind,
+    localFile: row['Local file'],
+    source: row.Source,
+    license: row.License,
+    reference: row.Reference
   }));
 }
 
@@ -284,14 +310,14 @@ function parseRuntimeResetEvidence(markdown) {
   return linesInSection(markdown, 'Runtime Reset Evidence')
     .filter((line) => line.startsWith('- '))
     .flatMap((line) => {
-      const match = line.match(/^- ([^/]+) \/ (.+) \/ think (on|off): before (.*?); after (.*)$/);
+      const match = line.match(/^- (.+): before (.*?); after (.*)$/);
       if (!match) return [];
-      const after = match[5].trim();
+      const label = parseCaseLabel(match[1]);
+      if (!label) return [];
+      const after = match[3].trim();
       return [{
-        provider: match[1].trim(),
-        model: match[2].trim(),
-        thinking: match[3],
-        before: match[4].trim(),
+        ...label,
+        before: match[2].trim(),
         after,
         unloaded: after.match(/unloaded=([^\s]+)/)?.[1] ?? ''
       }];
@@ -302,34 +328,50 @@ function parseRuntimeModelStateEvidence(markdown) {
   return linesInSection(markdown, 'Runtime Model State Evidence')
     .filter((line) => line.startsWith('- '))
     .flatMap((line) => {
-      const match = line.match(/^- ([^/]+) \/ (.+) \/ think (on|off): (.*)$/);
+      const match = line.match(/^- (.+): (.*)$/);
       if (!match) return [];
-      const details = match[4].split(',').map((part) => part.trim()).filter(Boolean);
+      const label = parseCaseLabel(match[1]);
+      if (!label) return [];
+      const stateText = match[2];
+      const details = stateText.split(',').map((part) => part.trim()).filter(Boolean);
       const state = details[0] ?? '';
       const runtimeStatus = details.find((part) => !/^context |^max context |^processor |^quant /.test(part) && part !== state) ?? '';
       return [{
-        provider: match[1].trim(),
-        model: match[2].trim(),
-        thinking: match[3],
+        ...label,
         state,
         runtimeStatus,
-        contextLength: numeric(match[4].match(/context (\d+)/)?.[1]),
-        maxContextLength: numeric(match[4].match(/max context (\d+)/)?.[1]),
-        processor: match[4].match(/processor ([^,]+)/)?.[1] ?? '',
-        quantization: match[4].match(/quant ([^,]+)/)?.[1] ?? ''
+        contextLength: numeric(stateText.match(/context (\d+)/)?.[1]),
+        maxContextLength: numeric(stateText.match(/max context (\d+)/)?.[1]),
+        processor: stateText.match(/processor ([^,]+)/)?.[1] ?? '',
+        quantization: stateText.match(/quant ([^,]+)/)?.[1] ?? ''
       }];
     });
 }
 
 function parseCommands(markdown) {
   const section = sectionText(markdown, 'Commands');
-  const matches = [...section.matchAll(/### ([^/]+) \/ (.+) \/ think (on|off)\n\n```sh\n([\s\S]*?)\n```/g)];
-  return matches.map((match) => ({
-    provider: match[1].trim(),
-    model: match[2].trim(),
-    thinking: match[3],
-    command: match[4].trim().split('\n')[0] ?? ''
-  }));
+  const matches = [...section.matchAll(/### (.+)\n\n```sh\n([\s\S]*?)\n```/g)];
+  return matches.flatMap((match) => {
+    const label = parseCaseLabel(match[1]);
+    return label ? [{
+      ...label,
+      command: match[2].trim().split('\n')[0] ?? ''
+    }] : [];
+  });
+}
+
+function parseCaseLabel(label) {
+  const parts = label.split(' / ').map((part) => part.trim()).filter(Boolean);
+  const thinkPart = parts.at(-1)?.match(/^think (on|off|auto)$/);
+  if (!thinkPart || parts.length < 3) {
+    return undefined;
+  }
+  return {
+    provider: parts[0],
+    model: parts[1],
+    fixture: parts.length > 3 ? parts.slice(2, -1).join(' / ') : '',
+    thinking: thinkPart[1]
+  };
 }
 
 function parsePipeTable(lines) {
@@ -432,7 +474,10 @@ function summarizeProviders(results) {
 }
 
 function resultsTable(rows, context) {
-  return sortableTable('resultsTable', 'Detailed Results', 'Provider token usage is used when available.', [
+  const hasFixture = rows.some((row) => row.fixture);
+  const hasCompletionTime = rows.some((row) => Number.isFinite(row.completionTimeMs));
+  const hasOutput = rows.some((row) => row.outputOrError);
+  const columns = [
     {
       key: 'provider',
       label: 'Provider',
@@ -440,6 +485,7 @@ function resultsTable(rows, context) {
       html: true
     },
     col('model', 'Model'),
+    ...(hasFixture ? [col('fixture', 'Fixture')] : []),
     {
       key: 'thinking',
       label: 'Thinking',
@@ -457,12 +503,35 @@ function resultsTable(rows, context) {
     numberCol('tokens', 'Tokens'),
     col('source', 'Source'),
     metricCol('firstOutputMs', 'First output', context.maxFirstOutput, { suffix: ' ms', inverse: true }),
+    ...(hasCompletionTime ? [numberCol('completionTimeMs', 'Completion time')] : []),
     numberCol('modelTimeMs', 'Model time'),
     numberCol('context', 'Context'),
     numberCol('temperature', 'Temp'),
     col('maxTokens', 'Max tokens'),
-    numberCol('answerChars', 'Answer chars')
+    ...(hasOutput ? [longTextCol('outputOrError', 'Output / Error')] : [numberCol('answerChars', 'Answer chars')])
+  ];
+  const defaultSortColumn = columns.findIndex((column) => column.key === 'wallTokensPerSecond');
+  return sortableTable('resultsTable', 'Detailed Results', 'Provider token usage is used when available. Media reports include the raw model output or provider error in the final column.', columns, rows, { defaultSortColumn });
+}
+
+function fixturesTable(rows) {
+  return sortableTable('fixturesTable', 'Fixtures And References', 'Source files, licenses, and known reference descriptions or transcripts used for manual review.', [
+    col('fixture', 'Fixture'),
+    col('kind', 'Kind'),
+    pathCol('localFile', 'Local file'),
+    linkCol('source', 'Source'),
+    longTextCol('license', 'License'),
+    longTextCol('reference', 'Reference')
   ], rows);
+}
+
+function caseColumns(rows) {
+  return [
+    col('provider', 'Provider'),
+    col('model', 'Model'),
+    ...(rows.some((row) => row.fixture) ? [col('fixture', 'Fixture')] : []),
+    col('thinking', 'Thinking')
+  ];
 }
 
 function sortableTable(id, title, note, columns, rows, options = {}) {
@@ -475,7 +544,7 @@ function sortableTable(id, title, note, columns, rows, options = {}) {
       <span class="row-count">${rows.length} rows</span>
     </div>
     <div class="table-shell">
-      <table id="${escapeAttr(id)}" class="sortable-table ${id === 'resultsTable' ? 'results-table' : ''}">
+      <table id="${escapeAttr(id)}" class="sortable-table ${id === 'resultsTable' ? 'results-table' : ''}"${options.defaultSortColumn >= 0 ? ` data-default-sort-column="${options.defaultSortColumn}"` : ''}>
         <thead>
           <tr>
             ${columns.map((column, index) => `<th scope="col"><button type="button" data-column="${index}">${escapeHtml(column.label)} <span class="sort-mark" aria-hidden="true">--</span></button></th>`).join('')}
@@ -494,8 +563,11 @@ function tableCell(column, row) {
   const sortValue = column.sortValue ? column.sortValue(row) : value;
   const rendered = column.render ? column.render(row) : value;
   const content = column.html ? rendered : escapeHtml(displayValue(rendered));
-  const align = column.numeric ? ' numeric' : '';
-  return `<td class="${align}" data-sort-value="${escapeAttr(sortToken(sortValue))}">${content}</td>`;
+  const classes = [
+    column.numeric ? 'numeric' : '',
+    column.className ?? ''
+  ].filter(Boolean).join(' ');
+  return `<td${classes ? ` class="${escapeAttr(classes)}"` : ''} data-sort-value="${escapeAttr(sortToken(sortValue))}">${content}</td>`;
 }
 
 function col(key, label) {
@@ -509,6 +581,40 @@ function numberCol(key, label) {
     numeric: true,
     render: (row) => formatMaybeNumber(row[key]),
     sortValue: (row) => row[key]
+  };
+}
+
+function longTextCol(key, label) {
+  return {
+    key,
+    label,
+    className: 'wrap-cell',
+    sortValue: (row) => row[key]
+  };
+}
+
+function pathCol(key, label) {
+  return {
+    key,
+    label,
+    html: true,
+    className: 'wrap-cell path-cell',
+    render: (row) => `<code>${escapeHtml(row[key])}</code>`
+  };
+}
+
+function linkCol(key, label) {
+  return {
+    key,
+    label,
+    html: true,
+    className: 'wrap-cell',
+    render: (row) => {
+      const value = row[key];
+      return /^https?:\/\//.test(String(value))
+        ? `<a href="${escapeAttr(value)}">${escapeHtml(value)}</a>`
+        : escapeHtml(displayValue(value));
+    }
   };
 }
 
@@ -543,6 +649,13 @@ function barRow(row, max) {
     <span class="bar-track"><span style="width:${width}%"></span></span>
     <strong>${formatMaybeNumber(row.wallTokensPerSecond)}</strong>
   </div>`;
+}
+
+function reportLede(report) {
+  if (report.category) {
+    return `A self-contained ${report.category} benchmark dashboard for ${report.providers ?? 'the selected providers'}, including runtime metadata, sortable results, commands, and fixture references.`;
+  }
+  return 'A self-contained benchmark dashboard for Ollama and LM Studio across Google base model weights, with thinking on and off.';
 }
 
 function badge(text, className) {
@@ -949,6 +1062,17 @@ td {
   white-space: nowrap;
 }
 
+td.wrap-cell {
+  min-width: 280px;
+  max-width: 680px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+td.path-cell code {
+  white-space: normal;
+}
+
 th {
   position: sticky;
   top: 42px;
@@ -1210,7 +1334,8 @@ document.querySelectorAll('.copy-btn').forEach((button) => {
 
 for (const table of tables) {
   if (table.id === 'resultsTable') {
-    sortTable(table, 5);
+    const defaultColumn = Number(table.dataset.defaultSortColumn || 5);
+    sortTable(table, defaultColumn);
     break;
   }
 }
