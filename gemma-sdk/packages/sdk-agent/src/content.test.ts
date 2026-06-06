@@ -18,7 +18,7 @@ describe('content attachment capabilities', () => {
     });
     expect(inferAttachmentCapabilities({ provider: 'lmstudio', model: 'gemma4:e4b' })).toMatchObject({
       image: true,
-      audio: true,
+      audio: false,
       video: true
     });
   });

@@ -378,6 +378,14 @@ test('renders media fixture references and outputs in the static report site', (
       license: 'Public domain, NASA',
       reference: 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.'
     }],
+    notApplicable: [{
+      provider: 'lmstudio',
+      model: 'google/gemma-4-e2b',
+      fixtureId: 'apollo-buzz-aldrin',
+      fixtureReference: 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.',
+      think: 'off',
+      reason: 'lmstudio runtime transport does not support audio input'
+    }],
     results: [{
       provider: 'lmstudio',
       model: 'google/gemma-4-e2b',
@@ -407,9 +415,12 @@ test('renders media fixture references and outputs in the static report site', (
   const html = renderReportHtml(report);
 
   assert.equal(report.fixtures[0].reference, 'NASA photo AS11-40-5869 showing Buzz Aldrin on the Moon during Apollo 11.');
+  assert.equal(report.notApplicable[0].reason, 'lmstudio runtime transport does not support audio input');
   assert.equal(report.results[0].fixture, 'apollo-buzz-aldrin');
   assert.equal(report.results[0].outputOrError, 'The image depicts an astronaut on the lunar surface.');
   assert.match(html, /Fixtures And References/);
+  assert.match(html, /Not Applicable Coverage/);
+  assert.match(html, /runtime transport does not support audio input/);
   assert.match(html, /NASA photo AS11-40-5869/);
   assert.match(html, /Output \/ Error/);
   assert.match(html, /The image depicts an astronaut on the lunar surface/);

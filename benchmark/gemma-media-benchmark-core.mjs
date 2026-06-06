@@ -239,6 +239,7 @@ export async function runMediaBenchmark(rawOptions, definition) {
     : new Map();
   const stack = await collectStackMetadata(options, cli, plan, availability);
   const results = [];
+  const notApplicable = [];
 
   for (const item of plan) {
     const prompt = definition.prompt(item.fixture);
@@ -253,8 +254,9 @@ export async function runMediaBenchmark(rawOptions, definition) {
       results.push(skipResult(item, cli, fullCommandArgs, 'model is not installed'));
       continue;
     }
-    if (!modelSupportsMedia(stack, item.provider, item.model, definition.mediaKind)) {
-      results.push(skipResult(item, cli, fullCommandArgs, `model is not tagged for ${definition.mediaKind} input`));
+    const unsupportedReason = mediaUnsupportedReason(stack, item.provider, item.model, definition.mediaKind);
+    if (unsupportedReason) {
+      notApplicable.push(notApplicableResult(item, unsupportedReason));
       continue;
     }
     if (options.dryRun) {
@@ -299,6 +301,7 @@ export async function runMediaBenchmark(rawOptions, definition) {
     resetRuntimeBetweenCases: options.resetRuntimeBetweenCases,
     stack,
     fixtures: resolvedFixtures,
+    notApplicable,
     results
   };
   const output = options.output ?? path.join(options.reportsDir, `${definition.reportPrefix}-${timestampForPath(new Date())}.md`);
@@ -343,6 +346,25 @@ export function renderMediaMarkdownReport(report) {
     ...report.results.map((result) => mediaResultRow(result, report)),
     ''
   ];
+
+  if (report.notApplicable?.length > 0) {
+    lines.push(
+      '## Not Applicable',
+      '',
+      'These planned cases were not run because the local runtime stack cannot deliver the requested modality to that model. They are excluded from the Results table so stack transport failures are not mixed with model outputs.',
+      '',
+      '| Provider | Model | Fixture | Thinking | Reason |',
+      '| --- | --- | --- | --- | --- |',
+      ...report.notApplicable.map((result) => [
+        result.provider,
+        result.model,
+        result.fixtureId,
+        result.think,
+        result.reason
+      ].map(tableCell).join(' | ').replace(/^/, '| ').replace(/$/, ' |')),
+      ''
+    );
+  }
 
   const notable = report.results.filter((result) => result.status !== 'completed');
   if (notable.length > 0) {
@@ -521,6 +543,38 @@ function skipResult(item, cli, commandArgs, error) {
   };
 }
 
+function notApplicableResult(item, reason) {
+  return {
+    provider: item.provider,
+    model: item.model,
+    fixtureId: item.fixture.id,
+    fixtureReference: item.fixture.reference,
+    think: item.think,
+    workspace: item.workspace,
+    reason
+  };
+}
+
+function mediaUnsupportedReason(stack, provider, model, mediaKind) {
+  if (!runtimeSupportsMediaTransport(provider, mediaKind)) {
+    return `${provider} runtime transport does not support ${mediaKind} input`;
+  }
+  if (!modelSupportsMedia(stack, provider, model, mediaKind)) {
+    return `model is not tagged for ${mediaKind} input`;
+  }
+  return undefined;
+}
+
+function runtimeSupportsMediaTransport(provider, mediaKind) {
+  if (mediaKind === 'image') {
+    return provider === 'ollama' || provider === 'lmstudio';
+  }
+  if (mediaKind === 'audio') {
+    return provider === 'ollama';
+  }
+  return false;
+}
+
 function modelSupportsMedia(stack, provider, model, mediaKind) {
   const metadata = stack?.providers?.[provider]?.models?.[model];
   const capabilities = normalizedCapabilities(metadata?.capabilities ?? metadata?.rawApiModel?.capabilities);
@@ -551,7 +605,7 @@ function inferModelFamilyMediaSupport(provider, model, mediaKind) {
   if (mediaKind === 'image') {
     return isGemma4 || isGemma3n;
   }
-  return isGemma3n || signature.includes('gemma4e2b') || signature.includes('gemma4e4b');
+  return false;
 }
 
 function normalizedCapabilities(value) {

@@ -17,6 +17,7 @@ export function parseReportMarkdown(markdown) {
   const fixtures = parseFixturesTable(markdown);
   const prompt = extractFence(markdown, 'Prompt', 'text') ?? '';
   const results = parseResultsTable(markdown);
+  const notApplicable = parseNotApplicableTable(markdown);
   const resetEvidence = parseRuntimeResetEvidence(markdown);
   const modelStateEvidence = parseRuntimeModelStateEvidence(markdown);
   const commands = parseCommands(markdown);
@@ -30,6 +31,7 @@ export function parseReportMarkdown(markdown) {
     fixtures,
     prompt,
     results,
+    notApplicable,
     resetEvidence,
     modelStateEvidence,
     commands
@@ -150,6 +152,7 @@ ${css()}
       </div>
       <p class="section-note"><span id="resultCount">${report.results.length}</span> cases visible. Click any column header to sort.</p>
       ${resultsTable(report.results, { maxTokensPerSecond, maxWallTokensPerSecond, maxFirstOutput })}
+      ${report.notApplicable.length > 0 ? notApplicableTable(report.notApplicable) : ''}
       ${sortableTable('providerSummary', 'Provider Summary', 'Averages are computed from completed rows in this report.', [
         col('provider', 'Provider'),
         numberCol('cases', 'Cases'),
@@ -303,6 +306,17 @@ function parseFixturesTable(markdown) {
     source: row.Source,
     license: row.License,
     reference: row.Reference
+  }));
+}
+
+function parseNotApplicableTable(markdown) {
+  const lines = linesInSection(markdown, 'Not Applicable').filter((line) => line.startsWith('|'));
+  return parsePipeTable(lines).map((row) => ({
+    provider: row.Provider,
+    model: row.Model,
+    fixture: row.Fixture,
+    thinking: row.Thinking,
+    reason: row.Reason
   }));
 }
 
@@ -523,6 +537,16 @@ function fixturesTable(rows) {
     longTextCol('license', 'License'),
     longTextCol('reference', 'Reference')
   ], rows);
+}
+
+function notApplicableTable(rows) {
+  return sortableTable('notApplicableTable', 'Not Applicable Coverage', 'Cases excluded before execution because the runtime cannot deliver that modality to the model. These are not model failures.', [
+    col('provider', 'Provider'),
+    col('model', 'Model'),
+    col('fixture', 'Fixture'),
+    col('thinking', 'Thinking'),
+    longTextCol('reason', 'Reason')
+  ], rows, { compact: true });
 }
 
 function caseColumns(rows) {

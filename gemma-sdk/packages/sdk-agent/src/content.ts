@@ -58,7 +58,7 @@ export function contentToText(content: MessageContent): string {
 
 export function inferAttachmentCapabilities(input: AttachmentCapabilityInput): AttachmentCapabilities {
   const providerSupportsImages = input.provider === 'ollama' || input.provider === 'lmstudio' || input.provider === 'gemini';
-  const providerSupportsAudio = input.provider === 'ollama' || input.provider === 'lmstudio' || input.provider === 'gemini';
+  const providerSupportsAudio = input.provider === 'ollama' || input.provider === 'gemini';
   const providerSupportsPdf = input.provider === 'gemini';
   const signature = [input.model, input.displayName]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
