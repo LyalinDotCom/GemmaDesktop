@@ -16,6 +16,14 @@ import {
   targetLmStudioModelIds
 } from '../gemma-model-throughput.mjs';
 import { parseReportMarkdown, renderReportHtml } from '../gemma-report-site.mjs';
+import {
+  buildMediaBenchmarkPlan,
+  buildMediaGemmaCliArgs,
+  imageDescriptionFixtures,
+  parseMediaArgs,
+  renderMediaMarkdownReport
+} from '../gemma-media-benchmark-core.mjs';
+import { imageDescriptionBenchmark } from '../gemma-image-description.mjs';
 
 test('parses the default model and thinking matrix', () => {
   const options = parseArgs([]);
@@ -321,4 +329,139 @@ test('renders a self-contained sortable static report site from markdown', () =>
   assert.match(html, /function sortTable/);
   assert.doesNotMatch(html, /<script src=/);
   assert.doesNotMatch(html, /<link rel=/);
+});
+
+test('builds the image benchmark matrix across fixtures without generation tuning flags', () => {
+  const options = parseMediaArgs([
+    '--providers',
+    'ollama,lmstudio',
+    '--think',
+    'off',
+    '--workspaces-dir',
+    '/tmp/gemma-media-workspaces'
+  ], imageDescriptionBenchmark);
+  const fixtures = imageDescriptionFixtures.map((fixture) => ({
+    ...fixture,
+    localPath: `/tmp/${fixture.filename}`
+  }));
+
+  const plan = buildMediaBenchmarkPlan(options, imageDescriptionBenchmark, fixtures);
+
+  assert.equal(plan.length, 30);
+  assert.deepEqual(plan.slice(0, 3).map((item) => item.fixture.id), [
+    'apollo-buzz-aldrin',
+    'vangogh-starry-night',
+    'cat-on-snow'
+  ]);
+  assert.match(plan[0].workspace, /ollama-gemma4-e2b-apollo-buzz-aldrin-think-off$/);
+
+  const prompt = imageDescriptionBenchmark.prompt(plan[0].fixture);
+  const args = buildMediaGemmaCliArgs(options, plan[0], prompt);
+
+  assert.deepEqual(args, [
+    '--provider',
+    'ollama',
+    '--model',
+    'gemma4:e2b',
+    '--think',
+    'off',
+    '--json-stream',
+    '--cwd',
+    plan[0].workspace,
+    '--prompt',
+    prompt
+  ]);
+  assert.match(prompt, /@"\/tmp\/apollo-buzz-aldrin\.jpg"/);
+  assert.equal(args.includes('--max-tokens'), false);
+  assert.equal(args.includes('--temperature'), false);
+  assert.equal(args.includes('--context-tokens'), false);
+});
+
+test('media benchmark rejects generation tuning options', () => {
+  assert.throws(() => parseMediaArgs(['--max-tokens', '512'], imageDescriptionBenchmark), /Unknown option: --max-tokens/);
+  assert.throws(() => parseMediaArgs(['--temperature', '0.2'], imageDescriptionBenchmark), /Unknown option: --temperature/);
+  assert.throws(() => parseMediaArgs(['--context-tokens', '4096'], imageDescriptionBenchmark), /Unknown option: --context-tokens/);
+});
+
+test('renders media results with raw output or error in the final column', () => {
+  const markdown = renderMediaMarkdownReport({
+    generatedAt: '2026-06-06T00:00:00.000Z',
+    category: 'Gemma Image Description Benchmark',
+    mediaKind: 'image',
+    providers: ['ollama'],
+    cli: 'gemma',
+    resetRuntimeBetweenCases: true,
+    stack: {
+      system: {
+        node: 'v24.14.1',
+        platform: 'darwin',
+        arch: 'arm64'
+      },
+      gemmaCli: {
+        label: 'gemma',
+        versionText: 'gemma-cli 1.0.0',
+        defaults: {
+          contextTokens: 262144,
+          temperature: 1,
+          maxTokens: 'provider settings'
+        }
+      },
+      providers: {
+        ollama: {
+          reachable: true,
+          endpoint: 'http://127.0.0.1:11434',
+          version: '0.30.6',
+          models: {
+            'gemma4:e2b': {
+              contextLength: 131072,
+              capabilities: ['completion', 'vision', 'thinking']
+            }
+          }
+        }
+      }
+    },
+    fixtures: [{
+      id: 'apollo-buzz-aldrin',
+      kind: 'image',
+      localPath: '/tmp/apollo-buzz-aldrin.jpg',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:AldrinOnMoon.jpg',
+      license: 'Public domain, NASA',
+      reference: 'Buzz Aldrin on the Moon.'
+    }],
+    results: [{
+      provider: 'ollama',
+      model: 'gemma4:e2b',
+      fixtureId: 'apollo-buzz-aldrin',
+      think: 'off',
+      status: 'completed',
+      command: 'gemma',
+      commandArgs: ['--provider', 'ollama', '--model', 'gemma4:e2b'],
+      wallDurationMs: 2000,
+      output: 'An astronaut stands on the lunar surface.',
+      metrics: {
+        tokensPerSecond: 20,
+        wallTokensPerSecond: 10,
+        metricOutputTokens: 20,
+        tokenSource: 'estimate',
+        modelCallDurationMs: 1500
+      },
+      runtimeModelState: {
+        contextLength: 131072
+      }
+    }, {
+      provider: 'lmstudio',
+      model: 'google/gemma-4-e2b',
+      fixtureId: 'apollo-buzz-aldrin',
+      think: 'off',
+      status: 'skipped',
+      command: 'gemma',
+      commandArgs: ['--provider', 'lmstudio', '--model', 'google/gemma-4-e2b'],
+      error: 'model is not tagged for image input'
+    }]
+  });
+
+  assert.match(markdown, /# Gemma Image Description Benchmark/);
+  assert.match(markdown, /\| Provider \| Model \| Fixture \| Thinking \| Status .* Output \/ Error \|/);
+  assert.match(markdown, /\| ollama \| gemma4:e2b \| apollo-buzz-aldrin \| off \| completed .* An astronaut stands on the lunar surface\. \|/);
+  assert.match(markdown, /\| lmstudio \| google\/gemma-4-e2b \| apollo-buzz-aldrin \| off \| skipped .* model is not tagged for image input \|/);
 });

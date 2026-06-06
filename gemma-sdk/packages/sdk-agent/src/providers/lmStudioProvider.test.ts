@@ -136,6 +136,8 @@ describe('LmStudioProvider', () => {
         supportsReasoning: false
       })
     ]);
+    expect(models.find((model) => model.name === 'google/gemma-4-31b')).not.toHaveProperty('supportsImage');
+    expect(models.find((model) => model.name === 'google/gemma-4-31b')).not.toHaveProperty('supportsAudio');
   });
 
   it('retries streams without provider reasoning when the server rejects reasoning control', async () => {
@@ -183,6 +185,21 @@ describe('LmStudioProvider', () => {
     });
 
     await expect(provider.generate([{ role: 'user', content: 'hello' }])).rejects.toThrow('model failed to load');
+  });
+
+  it('decorates stream HTTP errors with LM Studio response text', async () => {
+    const provider = new LmStudioProvider({
+      model: 'plain-model',
+      baseUrl: 'http://lmstudio.local',
+      reasoning: false,
+      fetchImpl: openAiChatFetch([], [
+        new Response(JSON.stringify({
+          error: "Invalid 'content': 'content' objects must have a 'type' field that is either 'text' or 'image_url'."
+        }), { status: 400 })
+      ])
+    });
+
+    await expect(collectStream(provider.generateStream([{ role: 'user', content: 'hello' }]))).rejects.toThrow(/HTTP 400[\s\S]*image_url/);
   });
 
   it('serializes image attachments as OpenAI-compatible content parts', async () => {
@@ -273,6 +290,14 @@ function openAiChatFetch(
     calls.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
     return responses.shift() ?? chatCompletion('ok');
   }) as typeof fetch;
+}
+
+async function collectStream(stream: AsyncIterable<unknown>): Promise<unknown[]> {
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 function chatCompletion(content: string): Response {

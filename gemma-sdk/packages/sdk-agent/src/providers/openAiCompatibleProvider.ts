@@ -365,17 +365,55 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
 
   private decorateProviderError(error: unknown): Error {
     const original = error instanceof Error ? error : new Error(String(error));
-    if (this.providerName !== 'ollama' || !looksLikeTimeoutError(original)) {
-      return original;
+    const enriched = enrichProviderHttpError(original, this.displayName);
+    if (this.providerName !== 'ollama' || !looksLikeTimeoutError(enriched)) {
+      return enriched;
     }
     return new Error([
-      original.message,
+      enriched.message,
       '',
       `Gemma CLI is using Ollama through the OpenAI-compatible endpoint at ${this.baseUrl}.`,
       'If the local runner is wedged, reset it outside Gemma CLI and retry:',
       ollamaResetInstructions(this.model, this.baseUrl)
     ].join('\n'));
   }
+}
+
+function enrichProviderHttpError(error: Error, displayName: string): Error {
+  const details = providerHttpErrorDetails(error, displayName);
+  if (!details) {
+    return error;
+  }
+  const enriched = new Error([error.message, '', details].join('\n'));
+  enriched.name = error.name;
+  return enriched;
+}
+
+function providerHttpErrorDetails(error: Error, displayName: string): string | undefined {
+  const record = error as unknown as Record<string, unknown>;
+  const statusCode = typeof record.statusCode === 'number' ? record.statusCode : undefined;
+  const url = typeof record.url === 'string' ? record.url : undefined;
+  const responseBody = typeof record.responseBody === 'string' && record.responseBody.trim().length > 0
+    ? truncateDiagnosticText(record.responseBody.trim())
+    : undefined;
+  if (statusCode === undefined && !responseBody) {
+    return undefined;
+  }
+  const lines = [];
+  if (statusCode !== undefined) {
+    lines.push(`${displayName} OpenAI-compatible request failed with HTTP ${statusCode}${url ? ` at ${url}` : ''}.`);
+  } else {
+    lines.push(`${displayName} OpenAI-compatible request failed.`);
+  }
+  if (responseBody) {
+    lines.push(`Response body: ${responseBody}`);
+  }
+  return lines.join('\n');
+}
+
+function truncateDiagnosticText(value: string): string {
+  const maxLength = 2000;
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
 export async function listOpenAICompatibleModels(baseUrl: string, fetchImpl: typeof fetch, label: string): Promise<OpenAICompatibleModelInfo[]> {

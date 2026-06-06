@@ -5,6 +5,10 @@
   "scripts": {
     "benchmark:throughput": "node gemma-model-throughput.mjs",
     "benchmark:throughput:dry-run": "node gemma-model-throughput.mjs --dry-run",
+    "benchmark:image": "node gemma-image-description.mjs",
+    "benchmark:image:dry-run": "node gemma-image-description.mjs --dry-run",
+    "benchmark:audio": "node gemma-audio-transcription.mjs",
+    "benchmark:audio:dry-run": "node gemma-audio-transcription.mjs --dry-run",
     "report:site": "node gemma-report-site.mjs",
     "test": "node --test tests/*.test.mjs"
   },

@@ -56,6 +56,22 @@ npm run report:site -- --input reports/manual-run.md --output reports/manual-run
 
 The generated HTML has embedded CSS and JavaScript, no external dependencies, and sortable tables for the report data.
 
+Run the media benchmarks:
+
+```sh
+npm run benchmark:image
+npm run benchmark:audio
+```
+
+The media scripts download small open-source fixtures into `benchmark/fixtures/media/` when needed. The scripts do not download models. Missing models are skipped, and models without the required runtime media capability tag are skipped with that reason in the report.
+
+For report-grade media comparison runs across both local runtimes:
+
+```sh
+node gemma-image-description.mjs --providers ollama,lmstudio --clean-runtime
+node gemma-audio-transcription.mjs --providers ollama,lmstudio --clean-runtime
+```
+
 To compare both local runtimes when LM Studio is running:
 
 ```sh
@@ -123,20 +139,42 @@ node gemma-model-throughput.mjs --prompt-file ./my-prompt.txt
 node gemma-model-throughput.mjs --output ./reports/manual-run.md
 ```
 
+Media scripts share the same runtime/model options and add fixture selection:
+
+```sh
+node gemma-image-description.mjs --fixture apollo-buzz-aldrin --model gemma4:26b --think off
+node gemma-image-description.mjs --fixtures apollo-buzz-aldrin,cat-on-snow
+node gemma-audio-transcription.mjs --fixture apollo-one-small-step --providers ollama,lmstudio
+node gemma-audio-transcription.mjs --fixtures-dir ./fixtures/media
+```
+
 For monorepo development, point the benchmark at a locally built CLI:
 
 ```sh
 node gemma-model-throughput.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
+node gemma-image-description.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
+node gemma-audio-transcription.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
 ```
 
 ## Capability Benchmarks
 
-The benchmark folder should grow into separate scripts for capability-specific checks:
+The benchmark folder has separate scripts for capability-specific checks:
 
 - throughput on fixed text/code prompts
-- time to create a small working web app
-- SVG creation quality and validity
-- audio transcription for models that support audio attachments
-- video or frame analysis for models that support visual attachments
+- image description for models that advertise image/vision/video attachments
+- audio transcription for models that advertise audio attachments
+- future time to create a small working web app
+- future SVG creation quality and validity
+- future video or frame analysis for models that support visual attachments
 
-Those future scripts should keep this same shape: dependency-light Node entrypoints, fixed prompts, isolated workspaces, markdown reports, and honest skips when a local model or required media capability is not available.
+The image fixtures are:
+
+- `apollo-buzz-aldrin`: NASA Apollo 11 photo of Buzz Aldrin on the Moon, public domain NASA source.
+- `vangogh-starry-night`: Vincent van Gogh's 1889 painting The Starry Night, public-domain artwork reproduction.
+- `cat-on-snow`: Wikimedia Commons image of a domestic cat on snow, CC BY-SA 3.0 / GNU FDL.
+
+The audio fixture is:
+
+- `apollo-one-small-step`: NASA historical-sounds MP3 of Neil Armstrong's "one small step" line.
+
+Those scripts keep the same shape: dependency-light Node entrypoints, fixed prompts, isolated workspaces, markdown reports, and honest skips when a local model or required media capability is not available. Media reports put the raw model output or error in the last result column for manual review.

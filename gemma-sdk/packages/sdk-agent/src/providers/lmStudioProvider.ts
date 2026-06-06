@@ -114,14 +114,16 @@ async function listLmStudioNativeModelInfos(baseUrl: string, fetchImpl: typeof f
       const capabilities = Array.isArray(model.capabilities)
         ? model.capabilities.map((capability) => String(capability).toLowerCase())
         : [];
+      const supportsImage = capabilities.some((capability) => /vision|image/.test(capability));
+      const supportsAudio = capabilities.some((capability) => /audio|speech/.test(capability));
       return [{
         name: id,
         provider: 'lmstudio' as const,
         displayName: typeof model.display_name === 'string' ? model.display_name : id,
         selectedVariant: typeof model.selected_variant === 'string' ? model.selected_variant : undefined,
         loadedInstanceId: typeof model.loaded_instance_id === 'string' ? model.loaded_instance_id : undefined,
-        supportsImage: capabilities.some((capability) => /vision|image/.test(capability)),
-        supportsAudio: capabilities.some((capability) => /audio|speech/.test(capability)),
+        supportsImage: supportsImage ? true : undefined,
+        supportsAudio: supportsAudio ? true : undefined,
         supportsReasoning: capabilities.some((capability) => /reason|think/.test(capability))
       }];
     });

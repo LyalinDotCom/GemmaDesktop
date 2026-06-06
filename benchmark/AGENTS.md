@@ -6,6 +6,8 @@ This folder is for user-shaped benchmark scenarios, not synthetic provider tunin
 
 Benchmark scripts should exercise Gemma CLI the way a user would: choose a prompt, choose a model/runtime dimension to compare, run the CLI, and record what happened.
 
+One top goal of this benchmark folder is to keep Gemma CLI healthy for real users. Treat unexpected skips, local preflight failures, attachment-gating failures, provider aborts, empty responses, and timeout patterns as product evidence to investigate. If a model/runtime combination should work for a user, prefer fixing Gemma CLI, the SDK, or the benchmark infrastructure over accepting the failed row as a final answer.
+
 Do not pass generation-tuning flags such as `--temperature`, `--top-p`, `--top-k`, `--max-tokens`, `--max-turns`, or `--context-tokens` from benchmark scripts unless the benchmark is explicitly about that setting. For normal capability and throughput tests, Gemma CLI defaults are the product under test.
 
 If a setting matters for interpreting a run, record it as observed metadata instead of forcing it. Reports should make the stack reproducible by capturing:
@@ -45,3 +47,7 @@ Reports must include the runtimes touched, runtime versions, CLI versions, and m
 ## Future Capability Scripts
 
 Future scripts should follow the same philosophy for web apps, SVG generation, audio transcription, and video or frame analysis: prompt like a user, let Gemma CLI own defaults, validate the resulting artifact, and record the exact stack that produced it.
+
+For media benchmarks, fixtures must be sourceable, small, and documented in the report with local path, source URL, license, and reference description or transcript. Test only models that the local runtime tags as supporting the needed modality, and record unsupported models as skips instead of failures.
+
+Media result tables should preserve the model output verbatim enough for manual review. Put `Output / Error` as the final column so the timing and stack columns stay scannable while the human reviewer can judge the content separately.

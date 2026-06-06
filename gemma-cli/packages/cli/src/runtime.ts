@@ -244,16 +244,16 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
     const media = await buildPromptContentWithMedia(prompt, options.cwd, attachmentCapabilities);
     assertContentSupported(media.content, attachmentCapabilities, model, options.provider);
     runtime.lastUserContent = media.content;
-    const promptText = Array.isArray(media.content)
-      ? media.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n')
-      : prompt;
+    const promptText = promptTextForMediaContent(media.content, prompt);
     const attachments = Array.isArray(media.content) ? media.content.filter((part) => part.type !== 'text') : undefined;
+    const directMediaQuestion = isLikelyDirectMediaQuestion(promptText, attachments?.length ?? 0);
     const runSkills = resolveRuntimeSkills(skills, promptText, { cwd: options.cwd });
     const runSystemContext = skillsToSystemContext(runSkills);
+    const runTools = directMediaQuestion ? [] : tools;
     runtime.systemPrompt = buildAgentSystemPrompt({
-      tools,
+      tools: runTools,
       systemContext: runSystemContext,
-      workspace: options.cwd,
+      workspace: directMediaQuestion ? undefined : options.cwd,
       model,
       reasoningMode: options.reasoningMode,
       environment,
@@ -262,9 +262,9 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
     runtime.systemPromptTokens = Math.ceil(runtime.systemPrompt.length / 4);
     const agent = new Agent({
       provider,
-      tools,
+      tools: runTools,
       maxTurns: options.maxTurns ?? null,
-      workspace: options.cwd,
+      workspace: directMediaQuestion ? undefined : options.cwd,
       model,
       reasoningMode: options.reasoningMode,
       generation: {
@@ -327,6 +327,38 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
   return runtime;
 }
 
+export function promptTextForMediaContent(content: ChatMessage['content'], fallbackPrompt: string): string {
+  if (!Array.isArray(content)) {
+    return fallbackPrompt;
+  }
+  const text = content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n');
+  const hasAttachments = content.some((part) => part.type !== 'text');
+  if (!hasAttachments) {
+    return text;
+  }
+  return [
+    'Media attachments are included directly in this user message. Inspect the attached media itself; do not use tools or file reads to access the media path unless the user asks for filesystem work.',
+    text
+  ].filter(Boolean).join('\n');
+}
+
+export function isLikelyDirectMediaQuestion(promptText: string, attachmentCount: number): boolean {
+  if (attachmentCount <= 0) {
+    return false;
+  }
+  const lower = promptText.toLowerCase();
+  if (/\b(build|scaffold|edit|modify|fix|implement|patch|save|run|test|install|execute|commit)\b/.test(lower)) {
+    return false;
+  }
+  if (/\b(write|create)\b[\s\S]{0,40}\b(file|script|app|website|web app|page|component|svg|html|css|javascript|typescript|js|ts)\b/.test(lower)) {
+    return false;
+  }
+  return /\b(describe|caption|transcribe|summarize|identify|classify|analyze|analyse|extract|read|what is|what's|what do you see|what is said)\b/.test(lower);
+}
+
 function defaultModelForProvider(provider: CliOptions['provider']): string {
   if (provider === 'ollama') return 'gemma4:26b';
   if (provider === 'gemini') return 'gemini-3.5-flash';
@@ -352,7 +384,7 @@ async function resolveProviderAttachmentCapabilities(
       return {
         displayName: exact?.displayName,
         supportsImage: exact?.supportsImage,
-        supportsAudio: false,
+        supportsAudio: exact?.supportsAudio,
         supportsReasoning: exact?.supportsReasoning
       };
     }

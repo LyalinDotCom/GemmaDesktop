@@ -2327,6 +2327,7 @@ export function buildAgentSystemPrompt(options: AgentSystemPromptOptions = {}): 
     '<attachment_rules>',
     'The CLI validates local media before the model call and only includes attachments the selected provider/model can accept.',
     'When supported images, audio, PDFs, or sampled video frames are present in the user message, inspect them directly from the message context.',
+    'If the user only asks about attached media, answer directly from the attachment. Do not discuss file paths, tool availability, or whether you can read the file.',
     'Do not claim you inspected an unsupported, missing, or unsampled file. If the CLI reports a capability or sampling blocker, state that blocker plainly.',
     '</attachment_rules>',
     (options.systemContext ?? []).length > 0 ? `Additional skills and instructions:\n${(options.systemContext ?? []).join('\n\n')}` : '',
