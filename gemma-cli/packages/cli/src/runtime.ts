@@ -29,6 +29,8 @@ import {
   type AgentRunResult,
   type AgentRunOptions,
   type ChatMessage,
+  type ContentPart,
+  type GenerateOptions,
   type ModelProvider,
   type StreamingModelProvider,
   type Skill,
@@ -250,16 +252,37 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
     const runSkills = resolveRuntimeSkills(skills, promptText, { cwd: options.cwd });
     const runSystemContext = skillsToSystemContext(runSkills);
     const runTools = directMediaQuestion ? [] : tools;
-    runtime.systemPrompt = buildAgentSystemPrompt({
-      tools: runTools,
-      systemContext: runSystemContext,
-      workspace: directMediaQuestion ? undefined : options.cwd,
-      model,
-      reasoningMode: options.reasoningMode,
-      environment,
-      yolo: options.yolo ?? false
-    });
+    runtime.systemPrompt = directMediaQuestion
+      ? buildDirectMediaSystemPrompt(model, options.reasoningMode, runSystemContext)
+      : buildAgentSystemPrompt({
+          tools: runTools,
+          systemContext: runSystemContext,
+          workspace: options.cwd,
+          model,
+          reasoningMode: options.reasoningMode,
+          environment,
+          yolo: options.yolo ?? false
+        });
     runtime.systemPromptTokens = Math.ceil(runtime.systemPrompt.length / 4);
+    if (directMediaQuestion && attachments?.length) {
+      return runDirectMediaRequest({
+        provider,
+        systemPrompt: runtime.systemPrompt,
+        promptText,
+        attachments,
+        generation: {
+          maxTokens: options.maxTokens,
+          contextTokens,
+          temperature: options.temperature,
+          topP: options.topP,
+          topK: options.topK,
+          reasoningMode: options.reasoningMode,
+          includeRawChunks: true,
+          signal: runOptions.signal
+        },
+        runOptions
+      });
+    }
     const agent = new Agent({
       provider,
       tools: runTools,
@@ -325,6 +348,79 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
       });
     };
   return runtime;
+}
+
+export function buildDirectMediaSystemPrompt(
+  model: string,
+  reasoningMode: GenerateOptions['reasoningMode'],
+  systemContext: string[] = []
+): string {
+  return [
+    buildGemmaThinkingInstructions(model, reasoningMode),
+    'You are Gemma CLI, a helpful local command-line assistant.',
+    'The user attached media directly to this message.',
+    'Inspect attached images, audio, PDFs, or sampled video frames directly from the message content.',
+    'Answer the user media request directly. Do not say you need tools, filesystem access, or access to the media path.',
+    'Do not wrap the response in JSON. Return only the answer requested by the user.',
+    systemContext.length > 0 ? `Additional skills and instructions:\n${systemContext.join('\n\n')}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+export async function runDirectMediaRequest(options: {
+  provider: ModelProvider;
+  systemPrompt: string;
+  promptText: string;
+  attachments: ContentPart[];
+  generation: GenerateOptions;
+  runOptions?: RuntimeRunOptions;
+}): Promise<AgentRunResult> {
+  const startedAt = Date.now();
+  await options.runOptions?.onModelStart?.({ index: 0 });
+  const answer = await options.provider.generate([
+    { role: 'system', content: options.systemPrompt },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: options.promptText },
+        ...options.attachments
+      ]
+    }
+  ], {
+    ...options.generation,
+    onActivity: async (chunk) => {
+      await options.generation.onActivity?.(chunk);
+      await options.runOptions?.onModelActivity?.({ index: 0, chunk });
+    }
+  });
+  const finalAnswer = normalizeDirectMediaAnswer(answer);
+  const finalTurn = { kind: 'final' as const, content: finalAnswer };
+  await options.runOptions?.onTurn?.({ index: 0, turn: finalTurn });
+  return {
+    answer: finalAnswer,
+    turns: [finalTurn],
+    stats: {
+      durationMs: Date.now() - startedAt,
+      turns: 1,
+      toolCalls: 0
+    },
+    completionStatus: 'completed'
+  };
+}
+
+function normalizeDirectMediaAnswer(answer: string): string {
+  const trimmed = answer.trim();
+  if (!trimmed.startsWith('{')) {
+    return trimmed;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { answer?: unknown };
+    if (typeof parsed.answer === 'string') {
+      return parsed.answer;
+    }
+  } catch {
+    // Keep the raw model text when it is not valid JSON.
+  }
+  return trimmed;
 }
 
 export function promptTextForMediaContent(content: ChatMessage['content'], fallbackPrompt: string): string {

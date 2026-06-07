@@ -285,6 +285,7 @@ function parseResultsTable(markdown) {
   const lines = linesInSection(markdown, 'Results').filter((line) => line.startsWith('|'));
   const rows = parsePipeTable(lines);
   return rows.map((row) => ({
+    benchmark: row.Benchmark,
     provider: row.Provider,
     model: row.Model,
     fixture: row.Fixture,
@@ -320,6 +321,7 @@ function parseFixturesTable(markdown) {
 function parseNotApplicableTable(markdown) {
   const lines = linesInSection(markdown, 'Not Applicable').filter((line) => line.startsWith('|'));
   return parsePipeTable(lines).map((row) => ({
+    benchmark: row.Benchmark,
     provider: row.Provider,
     model: row.Model,
     fixture: row.Fixture,
@@ -510,10 +512,13 @@ function summarizeProviders(results) {
 }
 
 function resultsTable(rows, context) {
+  const hasBenchmark = rows.some((row) => row.benchmark);
   const hasFixture = rows.some((row) => row.fixture);
   const hasCompletionTime = rows.some((row) => Number.isFinite(row.completionTimeMs));
   const hasOutput = rows.some((row) => row.outputOrError);
+  const hasAnswerChars = rows.some((row) => Number.isFinite(row.answerChars));
   const columns = [
+    ...(hasBenchmark ? [col('benchmark', 'Benchmark')] : []),
     {
       key: 'provider',
       label: 'Provider',
@@ -544,7 +549,8 @@ function resultsTable(rows, context) {
     numberCol('context', 'Context'),
     numberCol('temperature', 'Temp'),
     col('maxTokens', 'Max tokens'),
-    ...(hasOutput ? [longTextCol('outputOrError', 'Output / Error')] : [numberCol('answerChars', 'Answer chars')])
+    ...(hasAnswerChars ? [numberCol('answerChars', 'Answer chars')] : []),
+    ...(hasOutput ? [longTextCol('outputOrError', 'Output / Error')] : [])
   ];
   const defaultSortColumn = columns.findIndex((column) => column.key === 'wallTokensPerSecond');
   return sortableTable('resultsTable', 'Detailed Results', 'Provider token usage is used when available. Media reports include the raw model output or provider error in the final column.', columns, rows, { defaultSortColumn });
@@ -562,7 +568,9 @@ function fixturesTable(rows) {
 }
 
 function notApplicableTable(rows) {
+  const hasBenchmark = rows.some((row) => row.benchmark);
   return sortableTable('notApplicableTable', 'Not Applicable Coverage', 'Cases excluded before execution because the runtime cannot deliver that modality to the model. These are not model failures.', [
+    ...(hasBenchmark ? [col('benchmark', 'Benchmark')] : []),
     col('provider', 'Provider'),
     col('model', 'Model'),
     col('fixture', 'Fixture'),
@@ -1058,7 +1066,7 @@ main {
 
 .table-block {
   margin-bottom: 18px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .table-title {
@@ -1090,11 +1098,14 @@ main {
 }
 
 .table-shell {
-  overflow-x: auto;
+  max-width: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
 }
@@ -1110,7 +1121,8 @@ td {
 
 td.wrap-cell {
   min-width: 280px;
-  max-width: 680px;
+  width: 42rem;
+  max-width: 42rem;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -1120,9 +1132,6 @@ td.path-cell code {
 }
 
 th {
-  position: sticky;
-  top: 42px;
-  z-index: 2;
   background: #f8faf9;
 }
 
@@ -1230,17 +1239,16 @@ tbody tr:hover {
 
 .command-cell {
   display: grid;
-  grid-template-columns: auto minmax(420px, 1fr);
+  grid-template-columns: auto minmax(420px, max-content);
   align-items: start;
   gap: 10px;
 }
 
 .command-cell code {
   display: block;
-  overflow: hidden;
-  max-width: 980px;
   color: #27312e;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .copy-btn {

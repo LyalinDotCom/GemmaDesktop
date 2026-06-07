@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Skill } from '@gemma-sdk/agent';
-import { isLikelyDirectMediaQuestion, promptTextForMediaContent, resolveRuntimeSkills } from './runtime.js';
+import type { ChatMessage, GenerateOptions, ModelProvider } from '@gemma-sdk/agent';
+import {
+  buildDirectMediaSystemPrompt,
+  isLikelyDirectMediaQuestion,
+  promptTextForMediaContent,
+  resolveRuntimeSkills,
+  runDirectMediaRequest
+} from './runtime.js';
 
 describe('resolveRuntimeSkills', () => {
   it('adds an installed React skill for React app prompts', () => {
@@ -62,6 +69,59 @@ describe('isLikelyDirectMediaQuestion', () => {
   });
 });
 
+describe('direct media requests', () => {
+  it('uses a normal media prompt instead of the coding-agent JSON protocol', async () => {
+    const provider = new CapturingProvider('{"answer":"That is one small step."}');
+    const starts: unknown[] = [];
+    const activities: unknown[] = [];
+    const turns: unknown[] = [];
+    const systemPrompt = buildDirectMediaSystemPrompt('gemma4:e2b', 'off');
+
+    const result = await runDirectMediaRequest({
+      provider,
+      systemPrompt,
+      promptText: 'Transcribe the audio at @"/tmp/sample.mp3". Return only the transcript.',
+      attachments: [{ type: 'audio_url', url: '/tmp/sample.mp3', mediaType: 'audio/mpeg' }],
+      generation: { reasoningMode: 'off', contextTokens: 131072, includeRawChunks: true },
+      runOptions: {
+        onModelStart(event) {
+          starts.push(event);
+        },
+        onModelActivity(event) {
+          activities.push(event);
+        },
+        onTurn(event) {
+          turns.push(event);
+        }
+      }
+    });
+
+    expect(systemPrompt).toContain('Do not wrap the response in JSON');
+    expect(systemPrompt).toContain('Do not say you need tools');
+    expect(systemPrompt).not.toContain('Preferred portable format');
+    expect(provider.messages).toEqual([
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Transcribe the audio at @"/tmp/sample.mp3". Return only the transcript.' },
+          { type: 'audio_url', url: '/tmp/sample.mp3', mediaType: 'audio/mpeg' }
+        ]
+      }
+    ]);
+    expect(provider.options).toMatchObject({ reasoningMode: 'off', contextTokens: 131072, includeRawChunks: true });
+    expect(starts).toEqual([{ index: 0 }]);
+    expect(activities).toEqual([{ index: 0, chunk: { content: '{"answer":"That is one small step."}', done: true } }]);
+    expect(turns).toEqual([{ index: 0, turn: { kind: 'final', content: 'That is one small step.' } }]);
+    expect(result).toMatchObject({
+      answer: 'That is one small step.',
+      turns: [{ kind: 'final', content: 'That is one small step.' }],
+      stats: { turns: 1, toolCalls: 0 },
+      completionStatus: 'completed'
+    });
+  });
+});
+
 function installReactSkillFixture(root: string): string {
   const dir = join(root, 'skills');
   mkdirSync(join(dir, 'react-app-builder'), { recursive: true });
@@ -77,4 +137,19 @@ function installReactSkillFixture(root: string): string {
     ''
   ].join('\n'), 'utf8');
   return dir;
+}
+
+class CapturingProvider implements ModelProvider {
+  readonly name = 'test';
+  messages: ChatMessage[] = [];
+  options: GenerateOptions = {};
+
+  constructor(private readonly response: string) {}
+
+  async generate(messages: ChatMessage[], options: GenerateOptions = {}): Promise<string> {
+    this.messages = messages;
+    this.options = options;
+    await options.onActivity?.({ content: this.response, done: true });
+    return this.response;
+  }
 }
