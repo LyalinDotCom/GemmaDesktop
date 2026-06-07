@@ -23,6 +23,8 @@ ollama pull gemma4:31b
 
 Missing models are skipped by default so partial local setups still produce a report.
 
+The benchmark scripts detect missing runtime commands, stopped endpoints, missing imports, and missing model files, then report those prerequisites. They do not download models, import model artifacts, install runtimes, or change runtime defaults. Local setup belongs outside the benchmark command.
+
 ## Run
 
 Preview the command matrix without loading models:
@@ -88,6 +90,30 @@ Provider defaults are used when `--models` is omitted. Ollama uses the `gemma4:*
 
 If a Google-owned LM Studio model id is not installed locally, that row is skipped. The benchmark does not substitute community, quantizer, MLX-community, bartowski, unsloth, or other non-Google variants for a missing base model.
 
+LiteRT-LM uses imported LiteRT-LM model ids when that provider is selected:
+
+- `gemma4-e2b,gpu,32768`
+- `gemma4-e4b,gpu,32768`
+- `gemma4-12b,gpu,32768`
+
+The public LiteRT-LM repos currently cover those three target weights. The `,gpu,32768` suffix is LiteRT-LM's model-id form for selecting the GPU backend and a usable runtime context; the benchmark still does not pass Gemma CLI generation or context flags. If a model is not imported locally or `litert-lm serve` is not reachable, the affected rows are skipped or reported with the prerequisite failure.
+
+llama.cpp uses Google-owned QAT GGUF ids when that provider is selected:
+
+- `google/gemma-4-E2B-it-qat-q4_0-gguf`
+- `google/gemma-4-E4B-it-qat-q4_0-gguf`
+- `google/gemma-4-12B-it-qat-q4_0-gguf`
+- `google/gemma-4-26B-A4B-it-qat-q4_0-gguf`
+- `google/gemma-4-31B-it-qat-q4_0-gguf`
+
+For a llama.cpp matrix, point the benchmark at a directory containing the matching Google GGUF files. The benchmark starts one `llama-server` per case and uses an alias that matches the model id sent to Gemma CLI:
+
+```sh
+node gemma-model-throughput.mjs --provider llamacpp --llamacpp-models-dir /path/to/google-gemma4-gguf
+```
+
+If `--llamacpp-models-dir` is omitted, the benchmark assumes you are managing the llama.cpp endpoint yourself and uses `--list-models` against that endpoint.
+
 For a complete local LM Studio matrix, install the Google-owned model ids with LM Studio before running the benchmark:
 
 ```sh
@@ -111,12 +137,12 @@ The MVP benchmark sends a fixed, easy code-generation prompt through Gemma CLI i
 - first-output latency when available
 - answer size and run status
 - Gemma CLI version and resolved CLI defaults, including temperature, top-p, top-k, max-token behavior, and context budget
-- runtime metadata for touched providers, including Ollama and LM Studio versions when available
+- runtime metadata for touched providers, including Ollama, LM Studio, LiteRT-LM, and llama.cpp versions when available
 - per-case context and settings as reported by Gemma CLI
 
 The benchmark does not pass generation-tuning flags like `--temperature`, `--top-p`, `--top-k`, `--max-tokens`, `--max-turns`, or `--context-tokens`. It tests Gemma CLI defaults as the user would get them.
 
-The benchmark unloads each Ollama model after its case unless `--keep-model-loaded` is passed. For LM Studio, it avoids unloading models that were already loaded before the benchmark case.
+The benchmark unloads each Ollama model after its case unless `--keep-model-loaded` is passed. For LM Studio, it avoids unloading models that were already loaded before the benchmark case. For managed llama.cpp cases, the benchmark stops the `llama-server` process it started for that case.
 
 For report-grade comparison runs, use clean runtime resets:
 
@@ -132,6 +158,8 @@ That unloads all resident Ollama and LM Studio models before and after each case
 node gemma-model-throughput.mjs --models gemma4:e2b,gemma4:e4b --think on,off
 node gemma-model-throughput.mjs --model gemma4:26b --think off
 node gemma-model-throughput.mjs --providers ollama,lmstudio
+node gemma-model-throughput.mjs --provider litertlm --litertlm-endpoint http://127.0.0.1:9379
+node gemma-model-throughput.mjs --provider llamacpp --llamacpp-models-dir /path/to/google-gemma4-gguf
 node gemma-model-throughput.mjs --endpoint http://127.0.0.1:11434
 node gemma-model-throughput.mjs --ollama-endpoint http://127.0.0.1:11434 --lmstudio-endpoint http://127.0.0.1:1234
 node gemma-model-throughput.mjs --providers ollama,lmstudio --clean-runtime

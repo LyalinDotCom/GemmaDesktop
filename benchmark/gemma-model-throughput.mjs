@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { accessSync } from 'node:fs';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,9 +29,33 @@ export const targetLmStudioModelIds = [
   'google/gemma-4-31b'
 ];
 
+export const targetLiteRtLmModelIds = [
+  'gemma4-e2b,gpu,32768',
+  'gemma4-e4b,gpu,32768',
+  'gemma4-12b,gpu,32768'
+];
+
+export const targetLlamaCppModelIds = [
+  'google/gemma-4-E2B-it-qat-q4_0-gguf',
+  'google/gemma-4-E4B-it-qat-q4_0-gguf',
+  'google/gemma-4-12B-it-qat-q4_0-gguf',
+  'google/gemma-4-26B-A4B-it-qat-q4_0-gguf',
+  'google/gemma-4-31B-it-qat-q4_0-gguf'
+];
+
+export const targetLlamaCppModelFiles = {
+  'google/gemma-4-E2B-it-qat-q4_0-gguf': 'gemma-4-E2B_q4_0-it.gguf',
+  'google/gemma-4-E4B-it-qat-q4_0-gguf': 'gemma-4-E4B_q4_0-it.gguf',
+  'google/gemma-4-12B-it-qat-q4_0-gguf': 'gemma-4-12b-it-qat-q4_0.gguf',
+  'google/gemma-4-26B-A4B-it-qat-q4_0-gguf': 'gemma-4-26B_q4_0-it.gguf',
+  'google/gemma-4-31B-it-qat-q4_0-gguf': 'gemma-4-31B_q4_0-it.gguf'
+};
+
 export const targetProviderModels = {
   ollama: targetOllamaModelIds,
-  lmstudio: targetLmStudioModelIds
+  lmstudio: targetLmStudioModelIds,
+  litertlm: targetLiteRtLmModelIds,
+  llamacpp: targetLlamaCppModelIds
 };
 
 export const defaultThinkModes = ['on', 'off'];
@@ -47,6 +71,10 @@ const benchmarkDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(benchmarkDir, '..');
 const defaultReportsDir = path.join(benchmarkDir, 'reports');
 const defaultWorkspacesDir = path.join(benchmarkDir, 'workspaces');
+const defaultLlamaCppModelsDir = process.env.GEMMA_BENCHMARK_LLAMACPP_MODELS_DIR
+  ? path.resolve(process.env.GEMMA_BENCHMARK_LLAMACPP_MODELS_DIR)
+  : undefined;
+const managedLlamaCppServers = new Set();
 
 export function parseArgs(argv) {
   const options = {
@@ -65,6 +93,9 @@ export function parseArgs(argv) {
     skipMissing: true,
     keepModelLoaded: false,
     resetRuntimeBetweenCases: false,
+    llamaCppModelsDir: defaultLlamaCppModelsDir,
+    llamaCppServerCommand: process.env.GEMMA_BENCHMARK_LLAMACPP_SERVER ?? 'llama-server',
+    llamaCppStartupTimeoutMs: 10 * 60 * 1000,
     dryRun: false,
     help: false
   };
@@ -87,6 +118,14 @@ export function parseArgs(argv) {
       case '--lmstudio-endpoint':
       case '--lm-studio-endpoint':
         options.providerEndpoints.lmstudio = readValue(argv, ++i, arg);
+        break;
+      case '--litertlm-endpoint':
+      case '--litert-lm-endpoint':
+        options.providerEndpoints.litertlm = readValue(argv, ++i, arg);
+        break;
+      case '--llamacpp-endpoint':
+      case '--llama-cpp-endpoint':
+        options.providerEndpoints.llamacpp = readValue(argv, ++i, arg);
         break;
       case '--cli-path':
         options.cliPath = path.resolve(readValue(argv, ++i, arg));
@@ -120,6 +159,18 @@ export function parseArgs(argv) {
         break;
       case '--timeout-ms':
         options.timeoutMs = readPositiveInteger(readValue(argv, ++i, arg), arg);
+        break;
+      case '--llamacpp-models-dir':
+      case '--llama-cpp-models-dir':
+        options.llamaCppModelsDir = path.resolve(readValue(argv, ++i, arg));
+        break;
+      case '--llamacpp-server-command':
+      case '--llama-cpp-server-command':
+        options.llamaCppServerCommand = readValue(argv, ++i, arg);
+        break;
+      case '--llamacpp-startup-timeout-ms':
+      case '--llama-cpp-startup-timeout-ms':
+        options.llamaCppStartupTimeoutMs = readPositiveInteger(readValue(argv, ++i, arg), arg);
         break;
       case '--no-skip-missing':
         options.skipMissing = false;
@@ -341,6 +392,15 @@ export function renderMarkdownReport(report) {
     lines.push('');
   }
 
+  const runtimeServerResults = report.results.filter((result) => result.runtimeServer);
+  if (runtimeServerResults.length > 0) {
+    lines.push('## Managed Runtime Server Evidence', '');
+    for (const result of runtimeServerResults) {
+      lines.push(`- ${result.provider} / ${result.model} / think ${result.think}: ${managedRuntimeServerSummary(result.runtimeServer)}`);
+    }
+    lines.push('');
+  }
+
   lines.push('## Commands', '');
   for (const result of report.results) {
     lines.push(`### ${result.provider ?? report.provider} / ${result.model} / think ${result.think}`, '');
@@ -413,20 +473,46 @@ export async function runBenchmark(rawOptions) {
       continue;
     }
     await mkdir(item.workspace, { recursive: true });
-    const runtimeResetBefore = options.resetRuntimeBetweenCases
-      ? await resetTouchedRuntimeState(options, options.providers)
-      : undefined;
-    const loadedBeforeRun = await modelLoadedBeforeRun(options, item);
-    const result = await runBenchmarkCase(options, item, cli, commandArgs);
-    result.runtimeModelState = await captureRuntimeModelState(options, item);
+    let runtimeResetBefore;
+    let preparedRuntime;
+    let loadedBeforeRun = false;
+    let result;
+    try {
+      runtimeResetBefore = options.resetRuntimeBetweenCases
+        ? await resetTouchedRuntimeState(options, options.providers)
+        : undefined;
+      preparedRuntime = await prepareRuntimeForCase(options, item);
+      loadedBeforeRun = await modelLoadedBeforeRun(options, item);
+      result = await runBenchmarkCase(options, item, cli, commandArgs);
+      result.runtimeModelState = await captureRuntimeModelState(options, item);
+      if (preparedRuntime?.summary) {
+        result.runtimeServer = preparedRuntime.summary;
+      }
+    } catch (error) {
+      result = {
+        provider: item.provider,
+        model: item.model,
+        think: item.think,
+        workspace: item.workspace,
+        status: 'failed',
+        command: cli.command,
+        commandArgs: fullCommandArgs,
+        runtimeServer: preparedRuntime?.summary,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
     if (runtimeResetBefore) {
       result.runtimeResetBefore = runtimeResetBefore;
     }
     results.push(result);
     if (!options.keepModelLoaded) {
+      const providerCleanup = await cleanupModelAfterRun(options, item, loadedBeforeRun, preparedRuntime);
       result.cleanup = options.resetRuntimeBetweenCases
-        ? await resetTouchedRuntimeState(options, options.providers)
-        : await cleanupModelAfterRun(options, item, loadedBeforeRun);
+        ? {
+            ...(await resetTouchedRuntimeState(options, options.providers)),
+            [`${item.provider}:case`]: providerCleanup
+          }
+        : providerCleanup;
     }
   }
 
@@ -457,6 +543,16 @@ export async function listAvailableModelsByProvider(options, providers) {
 }
 
 async function listAvailableModels(options, provider) {
+  if (provider === 'llamacpp' && shouldManageLlamaCppServers(options)) {
+    return listAvailableManagedLlamaCppModels(options);
+  }
+  const models = await listAvailableModelsThroughCli(options, provider);
+  return provider === 'litertlm'
+    ? expandLiteRtLmAvailability(models, modelsForProvider(options, provider))
+    : models;
+}
+
+async function listAvailableModelsThroughCli(options, provider) {
   const cli = resolveGemmaCli(options);
   const args = [
     '--provider',
@@ -475,6 +571,143 @@ async function listAvailableModels(options, provider) {
     throw new Error(`Unable to list ${provider} models: ${result.error ?? (result.stderr || result.stdout)}`);
   }
   return new Set(result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+}
+
+function expandLiteRtLmAvailability(listedModels, requestedModels) {
+  const expanded = new Set(listedModels);
+  for (const model of requestedModels) {
+    if (liteRtLmAvailableAliases(model).some((alias) => listedModels.has(alias))) {
+      expanded.add(model);
+    }
+  }
+  return expanded;
+}
+
+async function listAvailableManagedLlamaCppModels(options) {
+  const entries = await Promise.all(modelsForProvider(options, 'llamacpp').map(async (model) => {
+    const modelPath = llamaCppModelPathFor(options, model);
+    if (!modelPath) {
+      return [model, false];
+    }
+    return [model, await fileExists(modelPath)];
+  }));
+  return new Set(entries.filter(([, exists]) => exists).map(([model]) => model));
+}
+
+async function prepareRuntimeForCase(options, item) {
+  if (item.provider === 'llamacpp' && shouldManageLlamaCppServers(options)) {
+    return startManagedLlamaCppServer(options, item);
+  }
+  return undefined;
+}
+
+function shouldManageLlamaCppServers(options) {
+  return Boolean(options.llamaCppModelsDir);
+}
+
+export function llamaCppModelPathFor(options, model) {
+  if (!options.llamaCppModelsDir) {
+    return undefined;
+  }
+  const file = targetLlamaCppModelFiles[model];
+  if (!file) {
+    return undefined;
+  }
+  return path.join(options.llamaCppModelsDir, file);
+}
+
+async function startManagedLlamaCppServer(options, item) {
+  const modelPath = llamaCppModelPathFor(options, item.model);
+  if (!modelPath) {
+    throw new Error(`No llama.cpp GGUF filename is configured for ${item.model}.`);
+  }
+  await access(modelPath);
+  const endpoint = normalizeRuntimeRoot(endpointForProvider(options, 'llamacpp') ?? 'http://127.0.0.1:8080');
+  const address = endpointAddress(endpoint, 8080);
+  const args = [
+    '--host',
+    address.host,
+    '--port',
+    String(address.port),
+    '--model',
+    modelPath,
+    '--alias',
+    item.model
+  ];
+  const child = spawn(options.llamaCppServerCommand ?? 'llama-server', args, {
+    cwd: repoRoot,
+    env: { ...process.env, NO_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const server = {
+    child,
+    model: item.model,
+    modelPath,
+    endpoint,
+    command: options.llamaCppServerCommand ?? 'llama-server',
+    args,
+    stdout: '',
+    stderr: '',
+    closePromise: new Promise((resolve) => {
+      child.on('close', (exitCode, signal) => resolve({ exitCode, signal }));
+      child.on('error', (error) => resolve({ exitCode: 1, signal: undefined, error: error.message }));
+    })
+  };
+  managedLlamaCppServers.add(server);
+  child.stdout.on('data', (chunk) => {
+    server.stdout = appendLimited(server.stdout, chunk.toString('utf8'));
+  });
+  child.stderr.on('data', (chunk) => {
+    server.stderr = appendLimited(server.stderr, chunk.toString('utf8'));
+  });
+
+  try {
+    await waitForLlamaCppServerModel(server, options.llamaCppStartupTimeoutMs ?? 10 * 60 * 1000);
+  } catch (error) {
+    await stopManagedLlamaCppServer(server);
+    throw error;
+  }
+
+  return {
+    summary: {
+      provider: 'llamacpp',
+      managed: true,
+      command: server.command,
+      commandArgs: server.args,
+      endpoint,
+      modelPath
+    },
+    cleanup: () => stopManagedLlamaCppServer(server)
+  };
+}
+
+async function waitForLlamaCppServerModel(server, timeoutMs) {
+  const startedAt = Date.now();
+  let lastError;
+  while (Date.now() - startedAt < timeoutMs) {
+    const closed = await settledClose(server.closePromise);
+    if (closed) {
+      throw new Error(`llama.cpp server exited before it was ready: ${singleLine([server.stdout, server.stderr, closed.error].filter(Boolean).join('\n'))}`);
+    }
+    try {
+      const models = await fetchJson(`${server.endpoint}/v1/models`, { timeoutMs: 2_000 });
+      const ids = (models.data ?? []).map((model) => model.id).filter(Boolean);
+      if (ids.includes(server.model)) {
+        return;
+      }
+      lastError = `llama.cpp /v1/models did not expose ${server.model}; visible models: ${ids.join(', ') || 'none'}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(2_000);
+  }
+  throw new Error(`Timed out waiting for llama.cpp to serve ${server.model}. Last evidence: ${singleLine(lastError ?? '')} ${singleLine(server.stderr)}`);
+}
+
+async function settledClose(closePromise) {
+  const pending = Symbol('pending');
+  const result = await Promise.race([closePromise, Promise.resolve(pending)]);
+  return result === pending ? undefined : result;
 }
 
 async function runBenchmarkCase(options, item, cli, commandArgs) {
@@ -574,6 +807,12 @@ async function collectProviderMetadata(options, provider, models, availability) 
   }
   if (provider === 'lmstudio') {
     return collectLmStudioMetadata(options, models, availability);
+  }
+  if (provider === 'litertlm') {
+    return collectLiteRtLmMetadata(options, models, availability);
+  }
+  if (provider === 'llamacpp') {
+    return collectLlamaCppMetadata(options, models, availability);
   }
   return { reachable: false, error: `Unsupported provider: ${provider}` };
 }
@@ -691,6 +930,113 @@ function compactLmStudioModelMetadata(model) {
   });
 }
 
+async function collectLiteRtLmMetadata(options, models, availability) {
+  const endpoint = normalizeRuntimeRoot(endpointForProvider(options, 'litertlm') ?? 'http://127.0.0.1:9379');
+  const commandVersion = await runProcess('litert-lm', ['--version'], {
+    cwd: repoRoot,
+    timeoutMs: 30_000
+  });
+  const openAiModels = await fetchJson(`${endpoint}/v1/models`).catch((error) => ({ error: error.message }));
+  const list = await runProcess('litert-lm', ['list'], {
+    cwd: repoRoot,
+    timeoutMs: 30_000
+  });
+  const localModels = parseLiteRtLmList(list.stdout);
+  const openAiModelsById = new Map((openAiModels?.data ?? []).map((model) => [model.id, model]));
+  const modelEntries = models.map((model) => {
+    const aliases = liteRtLmAvailableAliases(model);
+    return [
+      model,
+      compactLiteRtLmModelMetadata(
+        model,
+        localModels.get(liteRtLmImportedModelId(model)),
+        aliases.map((alias) => openAiModelsById.get(alias)).find(Boolean)
+      )
+    ];
+  });
+
+  return {
+    endpoint,
+    reachable: Array.isArray(openAiModels?.data),
+    error: openAiModels?.error,
+    commandVersion: singleLine(commandVersion.stdout || commandVersion.stderr || commandVersion.error || ''),
+    listedModelCount: availability?.models?.size ?? (Array.isArray(openAiModels?.data) ? openAiModels.data.length : localModels.size),
+    models: Object.fromEntries(modelEntries)
+  };
+}
+
+async function collectLlamaCppMetadata(options, models, availability) {
+  const endpoint = normalizeRuntimeRoot(endpointForProvider(options, 'llamacpp') ?? 'http://127.0.0.1:8080');
+  const managed = shouldManageLlamaCppServers(options);
+  const commandVersion = await runProcess(options.llamaCppServerCommand ?? 'llama-server', ['--version'], {
+    cwd: repoRoot,
+    timeoutMs: 30_000
+  });
+  const health = await fetchText(`${endpoint}/health`).catch((error) => ({ error: error.message }));
+  const openAiModels = await fetchJson(`${endpoint}/v1/models`).catch((error) => ({ error: error.message }));
+  const routerModels = await fetchJson(`${endpoint}/models`).catch(() => undefined);
+  const props = await fetchJson(`${endpoint}/props`).catch(() => undefined);
+  const openAiModelsById = new Map((openAiModels?.data ?? []).map((model) => [model.id, model]));
+  const routerModelsById = new Map(extractModelArray(routerModels).map((model) => [String(model.id ?? model.model ?? ''), model]));
+  const modelEntries = await Promise.all(models.map(async (model) => [
+    model,
+    await compactLlamaCppModelMetadata(options, model, openAiModelsById.get(model), routerModelsById.get(model))
+  ]));
+  const preRunEndpointReachable = !health?.error || Array.isArray(openAiModels?.data);
+
+  return {
+    endpoint,
+    reachable: managed || preRunEndpointReachable,
+    preRunEndpointReachable,
+    endpointLifecycle: managed ? 'started per benchmark case' : 'external server expected',
+    error: managed && !preRunEndpointReachable ? undefined : health?.error ?? openAiModels?.error,
+    health: typeof health === 'string' ? singleLine(health) : undefined,
+    commandVersion: singleLine(commandVersion.stdout || commandVersion.stderr || commandVersion.error || ''),
+    listedModelCount: availability?.models?.size ?? (Array.isArray(openAiModels?.data) ? openAiModels.data.length : undefined),
+    mode: props?.role === 'router' ? 'router' : managed ? 'benchmark-managed-single-model' : 'single-model-or-external',
+    modelsDir: options.llamaCppModelsDir,
+    models: Object.fromEntries(modelEntries)
+  };
+}
+
+function compactLiteRtLmModelMetadata(modelId, localModel, openAiModel) {
+  if (!localModel && !openAiModel) {
+    return undefined;
+  }
+  return pruneUndefined({
+    rawApiModel: openAiModel,
+    state: localModel ? 'imported' : openAiModel ? 'served' : undefined,
+    size: localModel?.size,
+    modified: localModel?.modified,
+    contextLength: liteRtLmContextFromModelId(modelId),
+    maxContextLength: liteRtLmContextFromModelId(modelId),
+    backend: liteRtLmBackendFromModelId(modelId),
+    family: 'gemma4',
+    capabilities: ['completion', 'thinking'],
+    displayName: openAiModel?.id ?? modelId
+  });
+}
+
+async function compactLlamaCppModelMetadata(options, modelId, openAiModel, routerModel) {
+  const modelPath = llamaCppModelPathFor(options, modelId);
+  const file = modelPath ? await stat(modelPath).catch(() => undefined) : undefined;
+  if (!file && !openAiModel && !routerModel) {
+    return undefined;
+  }
+  return pruneUndefined({
+    rawApiModel: openAiModel,
+    rawRouterModel: routerModel,
+    state: file ? 'file-present' : openAiModel || routerModel ? 'served' : undefined,
+    modelPath,
+    fileSizeBytes: file?.size,
+    modified: file?.mtime?.toISOString?.(),
+    quantization: modelId.includes('q4_0') ? 'Q4_0 QAT' : undefined,
+    family: 'gemma4',
+    capabilities: ['completion', 'thinking'],
+    displayName: openAiModel?.id ?? routerModel?.id ?? modelId
+  });
+}
+
 export function runProcess(command, args, options) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -744,7 +1090,10 @@ export async function modelLoadedBeforeRun(options, item) {
   return false;
 }
 
-export async function cleanupModelAfterRun(options, item, loadedBeforeRun) {
+export async function cleanupModelAfterRun(options, item, loadedBeforeRun, preparedRuntime) {
+  if (preparedRuntime?.cleanup) {
+    return preparedRuntime.cleanup();
+  }
   if (item.provider === 'ollama') {
     return stopOllamaModel(item.model);
   }
@@ -770,6 +1119,12 @@ export async function captureRuntimeModelState(options, item) {
     }
     return compactOllamaRuntimeState(result.stdout, item.model);
   }
+  if (item.provider === 'llamacpp') {
+    return compactLlamaCppRuntimeState(options, item);
+  }
+  if (item.provider === 'litertlm') {
+    return compactLiteRtLmRuntimeState(options, item);
+  }
   return undefined;
 }
 
@@ -787,6 +1142,12 @@ async function resetProviderRuntimeState(options, provider) {
   }
   if (provider === 'lmstudio') {
     return resetLmStudioRuntimeState(options);
+  }
+  if (provider === 'llamacpp' || provider === 'litertlm') {
+    return {
+      ok: true,
+      output: `${provider} cleanup is limited to benchmark-managed server processes; external runtime processes are left untouched.`
+    };
   }
   return { ok: false, output: `Unsupported provider: ${provider}` };
 }
@@ -908,6 +1269,39 @@ async function waitForNoLmStudioModels(options, timeoutMs = 120_000) {
     ok: false,
     output: 'Timed out waiting for LM Studio to unload all models.'
   };
+}
+
+async function compactLlamaCppRuntimeState(options, item) {
+  const endpoint = normalizeRuntimeRoot(endpointForProvider(options, 'llamacpp') ?? 'http://127.0.0.1:8080');
+  const [models, props] = await Promise.all([
+    fetchJson(`${endpoint}/v1/models`).catch((error) => ({ error: error.message })),
+    fetchJson(`${endpoint}/props`).catch(() => undefined)
+  ]);
+  const ids = Array.isArray(models?.data) ? models.data.map((model) => model.id).filter(Boolean) : [];
+  const modelPath = llamaCppModelPathFor(options, item.model);
+  return pruneUndefined({
+    state: ids.includes(item.model) ? 'loaded' : ids.length > 0 ? 'served-other-model' : undefined,
+    status: models?.error,
+    contextLength: props?.default_generation_settings?.n_ctx ?? props?.total_slots,
+    maxContextLength: props?.model_context_length ?? props?.default_generation_settings?.n_ctx,
+    modelPath,
+    visibleModels: ids
+  });
+}
+
+async function compactLiteRtLmRuntimeState(options, item) {
+  const endpoint = normalizeRuntimeRoot(endpointForProvider(options, 'litertlm') ?? 'http://127.0.0.1:9379');
+  const models = await fetchJson(`${endpoint}/v1/models`).catch((error) => ({ error: error.message }));
+  const ids = Array.isArray(models?.data) ? models.data.map((model) => model.id).filter(Boolean) : [];
+  const served = liteRtLmAvailableAliases(item.model).some((alias) => ids.includes(alias));
+  return pruneUndefined({
+    state: served ? 'served' : undefined,
+    status: models?.error,
+    contextLength: liteRtLmContextFromModelId(item.model),
+    maxContextLength: liteRtLmContextFromModelId(item.model),
+    backend: liteRtLmBackendFromModelId(item.model),
+    visibleModels: ids
+  });
 }
 
 async function waitForOllamaModelToUnload(model, timeoutMs = 120_000) {
@@ -1083,6 +1477,8 @@ function providerSummary(metadata) {
   }
   const parts = [
     metadata.endpoint,
+    metadata.mode ? `mode ${metadata.mode}` : undefined,
+    metadata.endpointLifecycle ? metadata.endpointLifecycle : undefined,
     metadata.version ? `version ${metadata.version}` : undefined,
     metadata.commandVersion ? `command ${singleLine(metadata.commandVersion)}` : undefined,
     typeof metadata.listedModelCount === 'number' ? `${metadata.listedModelCount} visible models` : undefined
@@ -1100,6 +1496,7 @@ function modelSummary(metadata) {
     metadata.maxContextLength ? `max context ${metadata.maxContextLength}` : undefined,
     metadata.temperature !== undefined ? `temp ${metadata.temperature}` : undefined,
     metadata.quantization ? `quant ${metadata.quantization}` : undefined,
+    metadata.backend ? `backend ${metadata.backend}` : undefined,
     metadata.family ? `family ${metadata.family}` : undefined
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(', ') : 'metadata available';
@@ -1152,9 +1549,22 @@ function runtimeStateSummary(state) {
     state.contextLength ? `context ${state.contextLength}` : undefined,
     state.maxContextLength ? `max context ${state.maxContextLength}` : undefined,
     state.quantization ? `quant ${state.quantization}` : undefined,
-    state.processor ? `processor ${state.processor}` : undefined
+    state.backend ? `backend ${state.backend}` : undefined,
+    state.processor ? `processor ${state.processor}` : undefined,
+    Array.isArray(state.visibleModels) && state.visibleModels.length > 0 ? `visible ${state.visibleModels.join(',')}` : undefined,
+    state.modelPath ? `path ${state.modelPath}` : undefined
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(', ') : 'state available';
+}
+
+function managedRuntimeServerSummary(server) {
+  const parts = [
+    server.managed ? 'managed' : undefined,
+    server.endpoint,
+    server.command ? shellQuoteCommand([server.command, ...(server.commandArgs ?? [])]) : undefined,
+    server.modelPath ? `model path ${server.modelPath}` : undefined
+  ].filter(Boolean);
+  return parts.join(', ');
 }
 
 function resetSummary(reset) {
@@ -1213,10 +1623,20 @@ function splitList(value) {
 }
 
 function readProvider(value) {
-  if (value === 'ollama' || value === 'lmstudio') {
-    return value;
+  const normalized = value.toLowerCase();
+  if (normalized === 'ollama' || normalized === 'lmstudio' || normalized === 'litertlm' || normalized === 'llamacpp') {
+    return normalized;
   }
-  throw new Error('Provider values must be ollama or lmstudio.');
+  if (normalized === 'lm-studio' || normalized === 'lm_studio') {
+    return 'lmstudio';
+  }
+  if (normalized === 'litert-lm' || normalized === 'litert_lm' || normalized === 'litert') {
+    return 'litertlm';
+  }
+  if (normalized === 'llama.cpp' || normalized === 'llama-cpp' || normalized === 'llama_cpp') {
+    return 'llamacpp';
+  }
+  throw new Error('Provider values must be ollama, lmstudio, litertlm, or llamacpp.');
 }
 
 function modelsForProvider(options, provider) {
@@ -1271,6 +1691,128 @@ async function postJson(url, body) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
   });
+}
+
+async function fetchText(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
+  try {
+    const response = await fetch(url, {
+      method: options.method ?? 'GET',
+      headers: options.headers,
+      body: options.body,
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseLiteRtLmList(output) {
+  const models = new Map();
+  for (const line of output.split(/\r?\n/).slice(2)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const match = trimmed.match(/^(\S+)\s+(.+?)\s+(\d{4}-\d{2}-\d{2}.*)$/);
+    if (!match) {
+      continue;
+    }
+    models.set(match[1], {
+      id: match[1],
+      size: match[2].trim(),
+      modified: match[3].trim()
+    });
+  }
+  return models;
+}
+
+function liteRtLmAvailableAliases(modelId) {
+  const aliases = new Set([modelId]);
+  const withoutContext = modelId.replace(/,\d+$/, '');
+  aliases.add(withoutContext);
+  aliases.add(withoutContext.replace(/,gpu$/, '').replace(/,cpu$/, ''));
+  return [...aliases].filter(Boolean);
+}
+
+function liteRtLmImportedModelId(modelId) {
+  return liteRtLmAvailableAliases(modelId).at(-1);
+}
+
+function liteRtLmContextFromModelId(modelId) {
+  const matched = modelId.match(/,(\d+)$/);
+  if (!matched) {
+    return undefined;
+  }
+  const parsed = Number(matched[1]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function liteRtLmBackendFromModelId(modelId) {
+  const parts = modelId.split(',');
+  return parts.find((part) => part === 'gpu' || part === 'cpu');
+}
+
+function extractModelArray(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+  if (Array.isArray(response?.models)) {
+    return response.models;
+  }
+  return [];
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function endpointAddress(endpoint, defaultPort) {
+  const parsed = new URL(endpoint);
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : defaultPort
+  };
+}
+
+function appendLimited(existing, chunk, limit = 20_000) {
+  const next = `${existing}${chunk}`;
+  return next.length > limit ? next.slice(next.length - limit) : next;
+}
+
+async function stopManagedLlamaCppServer(server) {
+  if (!managedLlamaCppServers.has(server)) {
+    return { ok: true, output: 'llama.cpp server was already stopped.' };
+  }
+  managedLlamaCppServers.delete(server);
+  if (server.child.exitCode === null && !server.child.killed) {
+    server.child.kill('SIGTERM');
+    const close = await Promise.race([
+      server.closePromise,
+      sleep(10_000).then(() => undefined)
+    ]);
+    if (!close && server.child.exitCode === null) {
+      server.child.kill('SIGKILL');
+    }
+  }
+  const closed = await server.closePromise;
+  return {
+    ok: closed.exitCode === 0 || closed.signal === 'SIGTERM' || closed.signal === 'SIGKILL' || server.child.killed,
+    output: singleLine([server.stdout, server.stderr, closed.error].filter(Boolean).join('\n'))
+  };
 }
 
 function parseOllamaParameters(parametersText) {
@@ -1401,7 +1943,7 @@ Usage:
   node gemma-model-throughput.mjs --providers ollama,lmstudio --think on,off
 
 Options:
-  --providers <csv>       Providers to test. Defaults to ollama. Supported: ollama,lmstudio.
+  --providers <csv>       Providers to test. Defaults to ollama. Supported: ollama,lmstudio,litertlm,llamacpp.
   --provider <name>       Test one provider.
   --models <csv>          Models to test for every selected provider. Provider defaults are used when omitted.
   --model <name>          Test one model.
@@ -1409,6 +1951,10 @@ Options:
   --endpoint <url>        Provider endpoint passed through to Gemma CLI when one provider is selected.
   --ollama-endpoint <url> Ollama endpoint for multi-provider runs.
   --lmstudio-endpoint <url> LM Studio endpoint for multi-provider runs.
+  --litertlm-endpoint <url> LiteRT-LM endpoint for multi-provider runs.
+  --llamacpp-endpoint <url> llama.cpp endpoint for multi-provider runs.
+  --llamacpp-models-dir <path> Directory of Google-owned GGUF files. When set, the benchmark starts llama-server per case.
+  --llamacpp-server-command <cmd> llama-server command for managed llama.cpp cases. Defaults to llama-server.
   --cli-command <cmd>     Gemma CLI command. Defaults to local node_modules/.bin/gemma, then PATH gemma.
   --cli-path <path>       Development override for a built Gemma CLI index.js.
   --prompt <text>         Override the fixed code-generation prompt.
@@ -1416,8 +1962,8 @@ Options:
   --output <path>         Markdown report path.
   --timeout-ms <n>        Per-case timeout. Defaults to 1200000.
   --no-skip-missing       Run cases even when --list-models does not show the model.
-  --keep-model-loaded     Do not run ollama stop after each case.
-  --clean-runtime         Unload all Ollama and LM Studio models before and after each case.
+  --keep-model-loaded     Do not run per-case cleanup after each case.
+  --clean-runtime         Unload Ollama and LM Studio models before and after each case; managed llama.cpp servers are still stopped.
   --dry-run               Write a report with commands without running models.
 `;
 }

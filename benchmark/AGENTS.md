@@ -34,6 +34,8 @@ Prefer fixed prompts, isolated workspaces, JSON-stream output from Gemma CLI, ma
 
 Default model matrices must use only Google-provided base Gemma models for the target weights. Do not substitute community, quantizer, MLX-community, bartowski, unsloth, or other non-Google variants when a Google model is missing. Benchmark scripts should skip missing models; local setup and downloads belong outside the script.
 
+The benchmark repo plus the locally installed `gemma-cli` package should be enough to run a test command from a clean clone. If a runtime server, command-line tool, model file, imported model, or model download is required, the benchmark should detect the missing prerequisite, report it clearly, and skip or fail the affected row honestly. The benchmark must not assist with setup by downloading models, importing runtime artifacts, installing tools, changing provider defaults, or mutating the user's inference stack.
+
 ## Runtime Handling
 
 For Ollama live runs, unload models after each case unless the user explicitly asks to keep them loaded.

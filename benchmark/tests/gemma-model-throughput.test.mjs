@@ -13,6 +13,8 @@ import {
   parseJsonStreamEvents,
   renderMarkdownReport,
   resolveGemmaCli,
+  targetLiteRtLmModelIds,
+  targetLlamaCppModelIds,
   targetLmStudioModelIds
 } from '../gemma-model-throughput.mjs';
 import { parseReportMarkdown, renderReportHtml } from '../gemma-report-site.mjs';
@@ -45,6 +47,22 @@ test('uses only Google base LM Studio model defaults for the target weights', ()
   assert.equal(targetLmStudioModelIds.every((model) => model.startsWith('google/')), true);
 });
 
+test('uses available Google Gemma defaults for LiteRT-LM and llama.cpp targets', () => {
+  assert.deepEqual(targetLiteRtLmModelIds, [
+    'gemma4-e2b,gpu,32768',
+    'gemma4-e4b,gpu,32768',
+    'gemma4-12b,gpu,32768'
+  ]);
+  assert.deepEqual(targetLlamaCppModelIds, [
+    'google/gemma-4-E2B-it-qat-q4_0-gguf',
+    'google/gemma-4-E4B-it-qat-q4_0-gguf',
+    'google/gemma-4-12B-it-qat-q4_0-gguf',
+    'google/gemma-4-26B-A4B-it-qat-q4_0-gguf',
+    'google/gemma-4-31B-it-qat-q4_0-gguf'
+  ]);
+  assert.equal(targetLlamaCppModelIds.every((model) => model.startsWith('google/')), true);
+});
+
 test('builds one benchmark case per model and thinking mode', () => {
   const options = parseArgs([
     '--providers',
@@ -71,6 +89,31 @@ test('builds one benchmark case per model and thinking mode', () => {
     'lmstudio:google/gemma-4-31b:off'
   ]);
   assert.match(plan[0].workspace, /ollama-gemma4-e2b-think-off$/);
+});
+
+test('builds provider defaults for LiteRT-LM and llama.cpp', () => {
+  const options = parseArgs([
+    '--providers',
+    'litertlm,llamacpp',
+    '--think',
+    'off',
+    '--workspaces-dir',
+    '/tmp/gemma-benchmark-workspaces'
+  ]);
+
+  const plan = buildBenchmarkPlan(options);
+
+  assert.equal(plan.length, 8);
+  assert.deepEqual(plan.map((item) => `${item.provider}:${item.model}:${item.think}`), [
+    'litertlm:gemma4-e2b,gpu,32768:off',
+    'litertlm:gemma4-e4b,gpu,32768:off',
+    'litertlm:gemma4-12b,gpu,32768:off',
+    'llamacpp:google/gemma-4-E2B-it-qat-q4_0-gguf:off',
+    'llamacpp:google/gemma-4-E4B-it-qat-q4_0-gguf:off',
+    'llamacpp:google/gemma-4-12B-it-qat-q4_0-gguf:off',
+    'llamacpp:google/gemma-4-26B-A4B-it-qat-q4_0-gguf:off',
+    'llamacpp:google/gemma-4-31B-it-qat-q4_0-gguf:off'
+  ]);
 });
 
 test('uses a local npm-installed gemma binary before falling back to PATH', async () => {
@@ -113,6 +156,42 @@ test('builds Gemma CLI arguments without generation tuning flags', () => {
   assert.equal(buildGemmaCliArgs(options, item).includes('--max-tokens'), false);
   assert.equal(buildGemmaCliArgs(options, item).includes('--temperature'), false);
   assert.equal(buildGemmaCliArgs(options, item).includes('--max-turns'), false);
+});
+
+test('builds new provider endpoints without generation tuning flags', () => {
+  const options = parseArgs([
+    '--provider',
+    'llama.cpp',
+    '--model',
+    'google/gemma-4-12B-it-qat-q4_0-gguf',
+    '--think',
+    'on',
+    '--llamacpp-endpoint',
+    'http://llama.local:8080',
+    '--llamacpp-models-dir',
+    '/models/google-gemma4'
+  ]);
+  const [item] = buildBenchmarkPlan(options);
+  const args = buildGemmaCliArgs(options, item);
+
+  assert.deepEqual(args, [
+    '--provider',
+    'llamacpp',
+    '--model',
+    'google/gemma-4-12B-it-qat-q4_0-gguf',
+    '--endpoint',
+    'http://llama.local:8080',
+    '--think',
+    'on',
+    '--json-stream',
+    '--cwd',
+    item.workspace,
+    '--prompt',
+    options.prompt
+  ]);
+  assert.equal(args.includes('--max-tokens'), false);
+  assert.equal(args.includes('--temperature'), false);
+  assert.equal(args.includes('--context-tokens'), false);
 });
 
 test('rejects generation tuning options so Gemma CLI defaults stay authoritative', () => {
