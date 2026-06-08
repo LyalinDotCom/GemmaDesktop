@@ -96,6 +96,10 @@ Do not use terse checkpoint messages for substantive work. Prefer a concise subj
 
 When a commit includes multiple coordinated workstreams, the commit body should name each workstream clearly instead of hiding secondary changes under a generic summary.
 
+### Gemma CLI NPM Publishing
+
+Do not manually bump `gemma-cli` package versions just because a change is intended for npm publishing. The CLI publish process owns version bumps. Unless the user explicitly asks for a manual version change, leave `gemma-cli/package.json`, `gemma-cli/packages/cli/package.json`, and lockfile version entries alone and let the publish workflow update them.
+
 ### P0 SDK/Desktop/CLI Parity
 
 CLI parity is P0. `gemma-cli` is the canonical headless product. When changing `gemma-desktop` in a way that adds, removes, or materially changes SDK-backed behavior, update or add headless coverage in `gemma-cli` or the SDK harness unless there is a concrete reason it cannot apply.
