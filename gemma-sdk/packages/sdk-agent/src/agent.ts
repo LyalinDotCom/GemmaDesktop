@@ -2720,10 +2720,17 @@ function parseAction(text: string): { answer: string } | ToolCall {
 
   const candidate = toolCallFromObject(parsed.value);
   if (!candidate) {
-    throw new Error('Model response must include either answer or tool plus args.');
+    if (looksLikeProtocolJsonObject(parsed.value)) {
+      throw new Error('Model response must include either answer or tool plus args.');
+    }
+    return { answer: jsonText };
   }
 
   return candidate;
+}
+
+function looksLikeProtocolJsonObject(value: object): boolean {
+  return 'tool' in value || 'args' in value;
 }
 
 function normalizeToolCall(toolCall: ToolCall): ToolCall {

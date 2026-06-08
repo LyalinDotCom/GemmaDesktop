@@ -49,7 +49,7 @@ const defaultContextTokens = 262_144;
 const defaultTemperature = 1;
 const defaultTopP = 0.95;
 export const defaultOllamaStreamInactivityTimeoutMs = 180_000;
-export const defaultOllamaGenerationStartTimeoutMs = 600_000;
+export const defaultOllamaGenerationStartTimeoutMs = 30 * 60_000;
 const ollamaStartupTimeoutMs = 10_000;
 const ollamaPrepareRequestTimeoutMs = 15_000;
 

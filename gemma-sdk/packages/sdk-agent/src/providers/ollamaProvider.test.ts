@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StreamChunk } from '../types.js';
 import { defaultOllamaGenerationStartTimeoutMs, defaultOllamaStreamInactivityTimeoutMs, ensureOllamaRunning, getOllamaModelCapabilities, listOllamaModelInfos, listOllamaModels, normalizeOllamaBaseUrl, OllamaProvider, prepareOllama } from './ollamaProvider.js';
+import { defaultLocalOpenAICompatibleHeadersTimeoutMs } from './openAiCompatibleProvider.js';
 
 describe('OllamaProvider', () => {
   it('uses a long default stream inactivity timeout for local reasoning pauses', () => {
@@ -8,7 +9,8 @@ describe('OllamaProvider', () => {
   });
 
   it('uses a long default generation-start timeout for slow local first tokens', () => {
-    expect(defaultOllamaGenerationStartTimeoutMs).toBeGreaterThanOrEqual(600_000);
+    expect(defaultOllamaGenerationStartTimeoutMs).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(defaultLocalOpenAICompatibleHeadersTimeoutMs).toBeGreaterThanOrEqual(defaultOllamaGenerationStartTimeoutMs);
   });
 
   it('posts OpenAI-compatible chat completions and returns content', async () => {

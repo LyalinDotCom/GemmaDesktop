@@ -60,7 +60,7 @@ export class LmStudioProvider implements ModelProvider {
       temperature: options.temperature ?? defaultTemperature,
       topP: options.topP ?? defaultTopP,
       maxTokens: options.maxTokens,
-      supportsReasoning: options.reasoning,
+      supportsReasoning: options.reasoning ?? false,
       fetchImpl: options.fetchImpl,
       emptyResponseLabel: 'LM Studio OpenAI-compatible response'
     });

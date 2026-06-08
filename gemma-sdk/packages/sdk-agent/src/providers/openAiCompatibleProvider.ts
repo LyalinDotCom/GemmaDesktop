@@ -1,5 +1,6 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, streamText, type JSONValue, type LanguageModelUsage, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { Agent } from 'undici';
 import { contentToText, resolveBinaryAssetForRequest, resolveImageAssetForRequest } from '../content.js';
 import { shouldEnableProviderReasoning } from '../modelProfiles.js';
 import type { ChatMessage, ContentPart, GenerateOptions, ModelProvider, StreamChunk, TokenUsage } from '../types.js';
@@ -37,6 +38,8 @@ interface OpenAICompatibleModelsResponse {
 
 const defaultGenerationStartTimeoutMs = 15 * 60_000;
 const defaultStreamInactivityTimeoutMs = 15 * 60_000;
+export const defaultLocalOpenAICompatibleHeadersTimeoutMs = 30 * 60_000;
+export const defaultLocalOpenAICompatibleBodyTimeoutMs = 30 * 60_000;
 const whitespaceOnlyContentStallLimitChars = 4096;
 const streamCancelTimeoutMs = 250;
 
@@ -80,7 +83,10 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
     const provider = createOpenAICompatible({
       name: options.providerName,
       baseURL: this.baseUrl,
-      fetch: options.fetchImpl,
+      fetch: options.fetchImpl ?? createLocalOpenAICompatibleFetch({
+        headersTimeoutMs: Math.max(defaultLocalOpenAICompatibleHeadersTimeoutMs, this.generationStartTimeoutMs),
+        bodyTimeoutMs: Math.max(defaultLocalOpenAICompatibleBodyTimeoutMs, this.streamInactivityTimeoutMs)
+      }),
       includeUsage: true,
       supportedUrls: () => ({
         'image/*': [/^data:/, /^https?:/]
@@ -377,6 +383,18 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
       ollamaResetInstructions(this.model, this.baseUrl)
     ].join('\n'));
   }
+}
+
+function createLocalOpenAICompatibleFetch(options: { headersTimeoutMs: number; bodyTimeoutMs: number }): typeof fetch {
+  const dispatcher = new Agent({
+    headersTimeout: options.headersTimeoutMs,
+    bodyTimeout: options.bodyTimeoutMs
+  });
+  return ((input, init) =>
+    fetch(input, {
+      ...init,
+      dispatcher
+    } as RequestInit & { dispatcher: Agent })) as typeof fetch;
 }
 
 function enrichProviderHttpError(error: Error, displayName: string): Error {

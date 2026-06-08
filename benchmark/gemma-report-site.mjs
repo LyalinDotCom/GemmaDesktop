@@ -54,6 +54,7 @@ export function renderReportHtml(report) {
   const maxWallTokensPerSecond = Math.max(...report.results.map((row) => row.wallTokensPerSecond).filter(Number.isFinite), 1);
   const maxFirstOutput = Math.max(...report.results.map((row) => row.firstOutputMs).filter(Number.isFinite), 1);
   const modelInventory = modelInventoryRows(report.runtimeMetadata);
+  const variantInventory = variantInventoryRows(report.runtimeMetadata);
   const runtimeInventory = runtimeInventoryRows(report.runtimeMetadata);
   const transportDiagnostics = transportDiagnosticRows(report.runtimeMetadata);
   const environmentRows = environmentRowsFor(report);
@@ -200,6 +201,16 @@ ${css()}
         numberCol('temperature', 'Temp'),
         col('capabilities', 'Capabilities')
       ], modelInventory)}
+      ${variantInventory.length > 0 ? sortableTable('variantInventory', 'LM Studio Variant Inventory', 'Downloaded LM Studio variants observed before benchmark cases ran. Selected marks the base variant LM Studio would use without explicit variant loading.', [
+        col('provider', 'Provider'),
+        col('baseModel', 'Base model'),
+        col('variantKey', 'Variant key'),
+        col('selected', 'Selected'),
+        col('format', 'Format'),
+        col('quantization', 'Quant'),
+        col('architecture', 'Architecture'),
+        numberCol('sizeBytes', 'Size bytes')
+      ], variantInventory) : ''}
       <details class="metadata-block">
         <summary>Raw runtime metadata JSON</summary>
         <pre>${escapeHtml(JSON.stringify(report.runtimeMetadata ?? {}, null, 2))}</pre>
@@ -287,7 +298,12 @@ function parseResultsTable(markdown) {
   return rows.map((row) => ({
     benchmark: row.Benchmark,
     provider: row.Provider,
+    family: row.Family,
+    variant: row.Variant,
+    scale: row.Scale,
     model: row.Model,
+    runtimeModelKey: row['Runtime key'],
+    scenario: row.Scenario,
     fixture: row.Fixture,
     thinking: row.Thinking,
     status: row.Status,
@@ -301,6 +317,8 @@ function parseResultsTable(markdown) {
     context: numeric(row.Context),
     temperature: numeric(row.Temp),
     maxTokens: row['Max tokens'],
+    promptEstimatedTokens: numeric(row['Prompt est tokens']),
+    promptChars: numeric(row['Prompt chars']),
     answerChars: numeric(row['Answer chars']),
     outputOrError: row['Output / Error']
   }));
@@ -393,7 +411,9 @@ function parseCaseLabel(label) {
   return {
     provider: parts[0],
     model: parts[1],
-    fixture: parts.length > 3 ? parts.slice(2, -1).join(' / ') : '',
+    ...(parts.length > 3 && parts.slice(2, -1).join(' / ').startsWith('scenario ')
+      ? { scenario: parts.slice(2, -1).join(' / ').replace(/^scenario\s+/, '') }
+      : { fixture: parts.length > 3 ? parts.slice(2, -1).join(' / ') : '' }),
     thinking: thinkPart[1]
   };
 }
@@ -476,6 +496,23 @@ function modelInventoryRows(runtimeMetadata) {
   );
 }
 
+function variantInventoryRows(runtimeMetadata) {
+  return Object.entries(runtimeMetadata ?? {}).flatMap(([provider, data]) =>
+    (data.variantInventory ?? []).flatMap((group) =>
+      (group.variants ?? []).map((variant) => ({
+        provider,
+        baseModel: group.model?.modelKey ?? '',
+        variantKey: variant.modelKey ?? '',
+        selected: group.model?.selectedVariant === variant.modelKey ? 'yes' : '',
+        format: variant.format ?? '',
+        quantization: variant.quantization?.name ?? variant.quantization ?? '',
+        architecture: variant.architecture ?? '',
+        sizeBytes: variant.sizeBytes ?? ''
+      }))
+    )
+  );
+}
+
 function transportDiagnosticRows(runtimeMetadata) {
   return Object.entries(runtimeMetadata ?? {}).flatMap(([provider, data]) =>
     Object.entries(data.transportDiagnostics ?? {}).map(([modality, diagnostic]) => ({
@@ -513,10 +550,16 @@ function summarizeProviders(results) {
 
 function resultsTable(rows, context) {
   const hasBenchmark = rows.some((row) => row.benchmark);
+  const hasFamily = rows.some((row) => row.family);
+  const hasVariant = rows.some((row) => row.variant);
+  const hasScale = rows.some((row) => row.scale);
+  const hasRuntimeModelKey = rows.some((row) => row.runtimeModelKey);
+  const hasScenario = rows.some((row) => row.scenario);
   const hasFixture = rows.some((row) => row.fixture);
   const hasCompletionTime = rows.some((row) => Number.isFinite(row.completionTimeMs));
   const hasOutput = rows.some((row) => row.outputOrError);
   const hasAnswerChars = rows.some((row) => Number.isFinite(row.answerChars));
+  const hasPromptStats = rows.some((row) => Number.isFinite(row.promptEstimatedTokens) || Number.isFinite(row.promptChars));
   const columns = [
     ...(hasBenchmark ? [col('benchmark', 'Benchmark')] : []),
     {
@@ -525,7 +568,12 @@ function resultsTable(rows, context) {
       render: (row) => badge(row.provider, `provider-${row.provider}`),
       html: true
     },
+    ...(hasFamily ? [col('family', 'Family')] : []),
+    ...(hasVariant ? [col('variant', 'Variant')] : []),
+    ...(hasScale ? [col('scale', 'Scale')] : []),
     col('model', 'Model'),
+    ...(hasRuntimeModelKey ? [col('runtimeModelKey', 'Runtime key')] : []),
+    ...(hasScenario ? [col('scenario', 'Scenario')] : []),
     ...(hasFixture ? [col('fixture', 'Fixture')] : []),
     {
       key: 'thinking',
@@ -549,6 +597,10 @@ function resultsTable(rows, context) {
     numberCol('context', 'Context'),
     numberCol('temperature', 'Temp'),
     col('maxTokens', 'Max tokens'),
+    ...(hasPromptStats ? [
+      numberCol('promptEstimatedTokens', 'Prompt est tokens'),
+      numberCol('promptChars', 'Prompt chars')
+    ] : []),
     ...(hasAnswerChars ? [numberCol('answerChars', 'Answer chars')] : []),
     ...(hasOutput ? [longTextCol('outputOrError', 'Output / Error')] : [])
   ];
@@ -583,6 +635,7 @@ function caseColumns(rows) {
   return [
     col('provider', 'Provider'),
     col('model', 'Model'),
+    ...(rows.some((row) => row.scenario) ? [col('scenario', 'Scenario')] : []),
     ...(rows.some((row) => row.fixture) ? [col('fixture', 'Fixture')] : []),
     col('thinking', 'Thinking')
   ];
@@ -698,8 +751,9 @@ function statCard(label, value, detail) {
 
 function barRow(row, max) {
   const width = Number.isFinite(row.wallTokensPerSecond) ? Math.max(3, (row.wallTokensPerSecond / max) * 100) : 0;
+  const label = [row.provider, row.model, row.scenario, row.fixture, row.thinking].filter(Boolean).join(' / ');
   return `<div class="bar-row">
-    <span class="bar-label">${escapeHtml(`${row.provider} / ${row.model} / ${row.thinking}`)}</span>
+    <span class="bar-label">${escapeHtml(label)}</span>
     <span class="bar-track"><span style="width:${width}%"></span></span>
     <strong>${formatMaybeNumber(row.wallTokensPerSecond)}</strong>
   </div>`;

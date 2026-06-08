@@ -84,6 +84,9 @@ ollama pull gemma4:e4b
 ollama pull gemma4:12b
 ollama pull gemma4:26b
 ollama pull gemma4:31b
+ollama pull gemma4:12b-mlx
+ollama pull gemma4:26b-mlx
+ollama pull gemma4:31b-mlx
 ```
 
 Recommended observed context and defaults for apples-to-apples local runs:
@@ -95,8 +98,21 @@ Recommended observed context and defaults for apples-to-apples local runs:
 | `gemma4:12b` | `262144` | `1` | `0.95` | `64` | `Q4_K_M` |
 | `gemma4:26b` | `262144` | `1` | `0.95` | `64` | `Q4_K_M` |
 | `gemma4:31b` | `262144` | `1` | `0.95` | `64` | `Q4_K_M` |
+| `gemma4:12b-mlx` | `131072` | `1` | `0.95` | `64` | `NVFP4` |
+| `gemma4:26b-mlx` | `262144` | `1` | `0.95` | `64` | `NVFP4` |
+| `gemma4:31b-mlx` | `262144` | `1` | `0.95` | `64` | `NVFP4` |
 
 Configure Ollama model context in Ollama itself. The benchmark records the context reported by Ollama; it does not pass context flags to Gemma CLI.
+For Gemma MLX comparison rows, use the low-bit `*-mlx` or `*-nvfp4` tags as the primary apples-to-apples lane. BF16 MLX tags are precision-ceiling fallbacks and should not be treated as the main performance comparison against Q4/NVFP4 regular or Qwen rows.
+
+The large-context comparison also includes nearest Qwen 3.6 comparison targets when installed:
+
+```sh
+ollama pull qwen3.6:27b
+ollama pull qwen3.6:27b-mlx
+ollama pull qwen3.6:35b-a3b
+ollama pull qwen3.6:35b-mlx
+```
 
 ### LM Studio
 
@@ -110,17 +126,44 @@ lms get google/gemma-4-26b-a4b --gguf
 lms get google/gemma-4-31b --gguf
 ```
 
+For large-context Gemma MLX comparison rows, install the concrete MLX repos used by the current LM Studio runtime:
+
+```sh
+lms get https://huggingface.co/mlx-community/gemma-4-12B-it-4bit --yes
+lms get https://huggingface.co/jedisct1/gemma-4-12B-it-txt-mlx-8bit --yes
+lms get google/gemma-4-26b-a4b-qat --mlx
+lms get https://huggingface.co/lmstudio-community/gemma-4-31B-it-MLX-4bit --yes
+```
+
 Recommended LM Studio model settings:
 
-| Model | Max context | Last tested quantization |
-| --- | ---: | --- |
-| `google/gemma-4-e2b` | `131072` | `Q4_K_M` |
-| `google/gemma-4-e4b` | `131072` | `8bit` |
-| `google/gemma-4-12b` | `262144` | `Q4_K_M` |
-| `google/gemma-4-26b-a4b` | `262144` | `Q8_0` |
-| `google/gemma-4-31b` | `262144` | `Q4_K_M` |
+| Runtime key | Source package | Max context | Last tested quantization |
+| --- | --- | ---: | --- |
+| `google/gemma-4-e2b` | `lmstudio-community/gemma-4-E2B-it-GGUF` | `131072` | `Q4_K_M` |
+| `google/gemma-4-e4b` | `lmstudio-community/gemma-4-E4B-it-MLX-8bit` | `131072` | `8bit` |
+| `google/gemma-4-12b` | `lmstudio-community/gemma-4-12B-it-GGUF` | `262144` | `Q4_K_M` |
+| `gemma-4-12b-it@4bit` | `mlx-community/gemma-4-12B-it-4bit` | `131072` | `4bit` MLX |
+| `gemma-4-12b-it-txt-mlx` | `jedisct1/gemma-4-12B-it-txt-mlx-8bit` | `131072` | `8bit` text-only MLX fallback |
+| `google/gemma-4-26b-a4b` | `lmstudio-community/gemma-4-26B-A4B-it-GGUF` | `262144` | `Q8_0` |
+| `google/gemma-4-26b-a4b-qat` | `lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit` | `262144` | `4bit` MLX |
+| `google/gemma-4-31b` | `lmstudio-community/gemma-4-31B-it-GGUF` | `262144` | `Q4_K_M` |
+| `gemma-4-31b-it-mlx` | `lmstudio-community/gemma-4-31B-it-MLX-4bit` | `262144` | `4bit` MLX |
 
 Set max context inside LM Studio's model settings before the run. The benchmark records the max context exposed by LM Studio and does not force it. Leave generation settings at runtime defaults.
+Use low-bit MLX variants as the primary apples-to-apples performance lane. The benchmark keeps BF16 packages as precision-ceiling fallbacks only. On the last local validation, LM Studio exposed the 12B `mlx-community/gemma-4-12B-it-4bit` package but failed to load it because the MLX runtime reported missing `gemma4_unified` support; that should be preserved as runtime evidence if it still fails.
+
+For the large-context Qwen comparison, install both GGUF and MLX variants for the Qwen model ids:
+
+```sh
+lms get qwen/qwen3.6-27b --gguf
+lms get qwen/qwen3.6-27b --mlx
+lms get qwen/qwen3.6-35b-a3b --gguf
+lms get qwen/qwen3.6-35b-a3b --mlx
+```
+
+Recommended LM Studio Qwen context for the large-context run is `262144` for `qwen/qwen3.6-27b` and `qwen/qwen3.6-35b-a3b`. Configure this in LM Studio before the run. If LM Studio autoloads a model at `4096`, the report should expose that as configuration evidence instead of hiding it.
+
+LM Studio exposes downloaded GGUF and MLX variants through `lms ls --variants --json`, but its OpenAI model list exposes only the selected base model id. The large-context script uses the LM Studio SDK bundled with the local LM Studio installation to pre-load exact Qwen variants under benchmark identifiers, then calls Gemma CLI normally against those loaded identifiers. It does not pass context, temperature, max-token, or other generation tuning values. If the bundled SDK cannot be found, exact LM Studio variant rows are skipped with a setup message.
 
 ### LiteRT-LM
 
@@ -184,6 +227,13 @@ node gemma-image-description.mjs --providers ollama,lmstudio --clean-runtime
 node gemma-audio-transcription.mjs --providers ollama,lmstudio --clean-runtime
 ```
 
+Run the large-context comparison for Gemma regular/MLX and nearest Qwen 3.6 comparison targets:
+
+```sh
+node gemma-large-context-comparison.mjs
+node gemma-large-context-comparison.mjs --scenario prefill-80k --think off
+```
+
 Render a Markdown report into a self-contained static HTML dashboard:
 
 ```sh
@@ -209,6 +259,7 @@ node gemma-model-throughput.mjs --ollama-endpoint http://127.0.0.1:11434 --lmstu
 node gemma-model-throughput.mjs --providers ollama,lmstudio --clean-runtime
 node gemma-model-throughput.mjs --prompt-file ./my-prompt.txt
 node gemma-model-throughput.mjs --output ./reports/manual-run.md
+node gemma-large-context-comparison.mjs --target ollama:gemma4:regular:26b --scenario prefill-80k --think off
 ```
 
 Media scripts share the same runtime/model options and add fixture selection:
@@ -220,12 +271,15 @@ node gemma-audio-transcription.mjs --fixture apollo-one-small-step --providers o
 node gemma-audio-transcription.mjs --fixtures-dir ./fixtures/media
 ```
 
+The large-context script defaults to Ollama plus LM Studio, clean runtime reset, both thinking modes, and both scenarios. It accepts the same endpoint and CLI options as the throughput script. It intentionally does not pass generation tuning flags.
+
 For monorepo development, point the benchmark at a locally built CLI:
 
 ```sh
 node gemma-model-throughput.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
 node gemma-image-description.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
 node gemma-audio-transcription.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
+node gemma-large-context-comparison.mjs --cli-path ../gemma-cli/packages/cli/dist/index.js
 ```
 
 ## Expected Results
@@ -239,18 +293,21 @@ Expected row counts assume every recommended local model is installed and each r
 | llama.cpp throughput | `node gemma-model-throughput.mjs --provider llamacpp --llamacpp-models-dir ...` | `10` completed rows |
 | Ollama + LM Studio image description | `node gemma-image-description.mjs --providers ollama,lmstudio --clean-runtime` | `60` completed rows |
 | Ollama + LM Studio audio transcription | `node gemma-audio-transcription.mjs --providers ollama,lmstudio --clean-runtime` | `6` completed rows plus `14` not-applicable rows |
+| Ollama + LM Studio large context | `node gemma-large-context-comparison.mjs` | up to `80` completed rows, with missing MLX/Qwen rows skipped when not installed |
 
 Missing local models are expected skips, not model failures. Missing runtime servers or unsupported transports should be reported clearly.
 
 Audio is currently only executable for Ollama `gemma4:e2b`, `gemma4:e4b`, and `gemma4:12b` in the canonical suite. Ollama `26b` and `31b` are not tagged for audio input. LM Studio audio rows are recorded as not applicable when the runtime transport cannot deliver audio input to the model.
 
-Some cases can take more than 10 minutes. The default per-case timeout is `1200000` ms. Large LM Studio models may take more than 60 seconds to produce first output.
+Some cases can take more than 10 minutes. The default throughput and media per-case timeout is `1200000` ms. The large-context comparison uses a `2700000` ms per-case timeout because 80K-token prefill on large local models can be substantially slower. Large LM Studio models may take more than 60 seconds to produce first output.
 
 ## What Reports Measure
 
 Throughput reports use a fixed, easy code-generation prompt through Gemma CLI in `--json-stream` mode.
 
 Media reports use fixed image-description or audio-transcription prompts with local fixtures. Raw model output or provider error is preserved in the final result column for manual review.
+
+Large-context reports use a short control prompt and a deterministic local text prompt of about `80,000` estimated input tokens. The full long prompt is passed directly to Gemma CLI, but the Markdown report records the prompt size, hash, expected marker counts, and raw model output instead of embedding hundreds of kilobytes of prompt text.
 
 Reports include:
 
@@ -267,6 +324,7 @@ Reports include:
 - runtime versions and model configuration snapshots from provider APIs
 - runtime reset and loaded-state evidence for clean-runtime runs
 - fixture source, license, and reference description or transcript for media runs
+- scenario id, prompt size, prompt hash, and expected marker values for large-context runs
 
 The benchmark does not pass generation-tuning flags like `--temperature`, `--top-p`, `--top-k`, `--max-tokens`, `--max-turns`, or `--context-tokens`. If those values appear in a report, they were observed from Gemma CLI or the runtime.
 
@@ -282,9 +340,12 @@ For report-grade comparisons, prefer:
 
 ```sh
 node gemma-model-throughput.mjs --providers ollama,lmstudio --clean-runtime
+node gemma-large-context-comparison.mjs
 ```
 
 `--clean-runtime` unloads all resident Ollama and LM Studio models before and after each case and records reset evidence. It does not kill the Ollama or LM Studio app processes.
+
+The large-context script enables clean runtime reset by default because the prompt prefill comparison is especially sensitive to resident-model state.
 
 ## Media Fixtures
 

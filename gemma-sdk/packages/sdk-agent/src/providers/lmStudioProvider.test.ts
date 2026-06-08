@@ -87,6 +87,18 @@ describe('LmStudioProvider', () => {
     expect(calls[0]?.body).not.toHaveProperty('reasoning_effort');
   });
 
+  it('does not assume LM Studio provider reasoning when support is unknown', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const provider = new LmStudioProvider({
+      model: 'local-model',
+      baseUrl: 'http://lmstudio.local',
+      fetchImpl: openAiChatFetch(calls, [chatCompletion('ok')])
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hello' }], { reasoningMode: 'on' })).resolves.toBe('ok');
+    expect(calls[0]?.body).not.toHaveProperty('reasoning_effort');
+  });
+
   it('reads LM Studio native capability metadata when listing models', async () => {
     const urls: string[] = [];
     const fetchImpl = (async (url) => {

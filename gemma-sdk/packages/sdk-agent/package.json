@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",
-    "ai": "^6.0.174"
+    "ai": "^6.0.174",
+    "undici": "^7.27.2"
   }
 }

@@ -9,6 +9,9 @@
     "benchmark:image:dry-run": "node gemma-image-description.mjs --dry-run",
     "benchmark:audio": "node gemma-audio-transcription.mjs",
     "benchmark:audio:dry-run": "node gemma-audio-transcription.mjs --dry-run",
+    "benchmark:large-context": "node gemma-large-context-comparison.mjs",
+    "benchmark:large-context:dry-run": "node gemma-large-context-comparison.mjs --dry-run",
+    "report:qat-q4": "node gemma-qat-q4-special-report.mjs",
     "report:site": "node gemma-report-site.mjs",
     "test": "node --test tests/*.test.mjs"
   },

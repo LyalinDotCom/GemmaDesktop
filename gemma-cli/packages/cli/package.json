@@ -28,7 +28,8 @@
     "ai": "^6.0.174",
     "ansi-escapes": "^7.3.0",
     "ink": "npm:@jrichman/ink@^6.6.9",
-    "react": "^19.2.5"
+    "react": "^19.2.5",
+    "undici": "^7.27.2"
   },
   "devDependencies": {
     "@gemma-sdk/agent": "0.1.0",

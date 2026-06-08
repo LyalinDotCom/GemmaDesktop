@@ -27,6 +27,15 @@ import {
   renderMediaMarkdownReport
 } from '../gemma-media-benchmark-core.mjs';
 import { imageDescriptionBenchmark } from '../gemma-image-description.mjs';
+import {
+  buildLargeContextBenchmarkPlan,
+  buildLargeContextGemmaCliArgs,
+  buildLargeContextPrompt,
+  largeContextModelTargets,
+  parseLargeContextArgs,
+  renderLargeContextMarkdownReport,
+  resolveLargeContextTargetModel
+} from '../gemma-large-context-comparison.mjs';
 
 test('parses the default model and thinking matrix', () => {
   const options = parseArgs([]);
@@ -590,6 +599,296 @@ test('media applicability separates model audio support from runtime audio trans
   assert.equal(mediaUnsupportedReason(stack, 'ollama', 'gemma4:26b', 'audio'), 'model is not tagged for audio input');
   assert.equal(mediaUnsupportedReason(stack, 'lmstudio', 'google/gemma-4-12b', 'audio'), 'lmstudio runtime transport does not support audio input');
   assert.equal(mediaUnsupportedReason(stack, 'lmstudio', 'google/gemma-4-31b', 'audio'), 'model is not tagged for audio input');
+});
+
+test('builds the large-context comparison matrix without generation tuning flags', () => {
+  const options = parseLargeContextArgs([
+    '--providers',
+    'ollama,lmstudio',
+    '--scenario',
+    'control',
+    '--think',
+    'off',
+    '--workspaces-dir',
+    '/tmp/gemma-large-context-workspaces'
+  ]);
+
+  const plan = buildLargeContextBenchmarkPlan(options);
+
+  assert.equal(plan.length, 20);
+  assert.deepEqual(plan.slice(0, 4).map((item) => `${item.provider}:${item.family}:${item.variant}:${item.scale}:${item.model}:${item.scenario}:${item.think}`), [
+    'ollama:gemma4:regular:12b:gemma4:12b:control:off',
+    'ollama:gemma4:regular:26b:gemma4:26b:control:off',
+    'ollama:gemma4:regular:31b:gemma4:31b:control:off',
+    'ollama:gemma4:mlx:12b:gemma4:12b-mlx:control:off'
+  ]);
+
+  const args = buildLargeContextGemmaCliArgs(options, plan[0], 'prompt text');
+  assert.equal(args.includes('--max-tokens'), false);
+  assert.equal(args.includes('--temperature'), false);
+  assert.equal(args.includes('--context-tokens'), false);
+  assert.equal(args.includes('--max-turns'), false);
+});
+
+test('builds QAT llama.cpp large-context rows without generation tuning flags', () => {
+  const options = parseLargeContextArgs([
+    '--providers',
+    'llamacpp',
+    '--scenario',
+    'control',
+    '--think',
+    'off',
+    '--llamacpp-models-dir',
+    '/tmp/google-gemma4-gguf',
+    '--workspaces-dir',
+    '/tmp/gemma-large-context-workspaces'
+  ]);
+
+  const plan = buildLargeContextBenchmarkPlan(options);
+
+  assert.equal(options.llamaCppModelsDir, '/tmp/google-gemma4-gguf');
+  assert.equal(plan.length, 5);
+  assert.deepEqual(plan.map((item) => `${item.provider}:${item.family}:${item.variant}:${item.scale}:${item.model}:${item.scenario}:${item.think}`), [
+    'llamacpp:gemma4:qat-q4_0:e2b:google/gemma-4-E2B-it-qat-q4_0-gguf:control:off',
+    'llamacpp:gemma4:qat-q4_0:e4b:google/gemma-4-E4B-it-qat-q4_0-gguf:control:off',
+    'llamacpp:gemma4:qat-q4_0:12b:google/gemma-4-12B-it-qat-q4_0-gguf:control:off',
+    'llamacpp:gemma4:qat-q4_0:26b:google/gemma-4-26B-A4B-it-qat-q4_0-gguf:control:off',
+    'llamacpp:gemma4:qat-q4_0:31b:google/gemma-4-31B-it-qat-q4_0-gguf:control:off'
+  ]);
+
+  const args = buildLargeContextGemmaCliArgs(options, plan[0], 'prompt text');
+  assert.equal(args.includes('--max-tokens'), false);
+  assert.equal(args.includes('--temperature'), false);
+  assert.equal(args.includes('--context-tokens'), false);
+  assert.equal(args.includes('--max-turns'), false);
+});
+
+test('resolves large-context targets from installed candidate sets', () => {
+  const target = {
+    candidates: ['qwen3.6:35b-a3b-coding-mxfp8', 'qwen3.6:35b-a3b'],
+    matchTerms: ['qwen3.6', '35b-a3b']
+  };
+
+  assert.deepEqual(
+    resolveLargeContextTargetModel(target, new Set(['qwen3.6:35b-a3b'])),
+    { model: 'qwen3.6:35b-a3b', selectedFrom: 'installed-candidate' }
+  );
+  assert.deepEqual(
+    resolveLargeContextTargetModel(target, new Set(['qwen3.6:35b-a3b-custom'])),
+    { model: 'qwen3.6:35b-a3b-custom', selectedFrom: 'installed-fuzzy-match' }
+  );
+});
+
+test('prefers low-bit MLX candidates before BF16 precision fallbacks', () => {
+  const mlxTargetsWithBf16 = largeContextModelTargets.filter(
+    (item) => item.variant === 'mlx' && item.candidates.some((candidate) => candidate.toLowerCase().includes('bf16'))
+  );
+
+  assert.equal(mlxTargetsWithBf16.length > 0, true);
+  for (const target of mlxTargetsWithBf16) {
+    const firstBf16Index = target.candidates.findIndex((candidate) => candidate.toLowerCase().includes('bf16'));
+    assert.equal(firstBf16Index, target.candidates.length - 1, `${target.provider}:${target.family}:${target.scale} should use BF16 last`);
+  }
+});
+
+test('resolves LM Studio large-context variants from downloaded variant inventory', () => {
+  const target = {
+    provider: 'lmstudio',
+    candidates: ['qwen/qwen3.6-27b'],
+    matchTerms: ['qwen3.6', '27b'],
+    lmStudioVariantCandidates: ['qwen/qwen3.6-27b@q4_k_m'],
+    lmStudioIdentifier: 'benchmark-qwen36-27b-gguf'
+  };
+  const variant = {
+    modelKey: 'qwen/qwen3.6-27b@q4_k_m',
+    format: 'gguf',
+    quantization: { name: 'Q4_K_M', bits: 4 }
+  };
+
+  assert.deepEqual(
+    resolveLargeContextTargetModel(target, {
+      models: new Set(['qwen/qwen3.6-27b']),
+      lmStudioVariantsByKey: new Map([[variant.modelKey, variant]])
+    }),
+    {
+      model: 'benchmark-qwen36-27b-gguf',
+      runtimeModelKey: 'qwen/qwen3.6-27b@q4_k_m',
+      lmStudioLoadModelKey: 'qwen/qwen3.6-27b@q4_k_m',
+      lmStudioVariantFormat: 'gguf',
+      lmStudioVariantQuantization: 'Q4_K_M',
+      selectedFrom: 'installed-lmstudio-variant'
+    }
+  );
+});
+
+test('large-context LM Studio Gemma MLX rows use concrete variant keys', () => {
+  const availability = new Map([[
+    'lmstudio',
+    {
+      models: new Set([
+        'google/gemma-4-12b',
+        'google/gemma-4-26b-a4b',
+        'google/gemma-4-26b-a4b-qat',
+        'google/gemma-4-31b'
+      ]),
+      lmStudioModelsByKey: new Map([
+        ['gemma-4-12b-it@4bit', {
+          modelKey: 'gemma-4-12b-it@4bit',
+          indexedModelIdentifier: 'mlx-community/gemma-4-12B-it-4bit',
+          format: 'safetensors',
+          quantization: { name: '4bit', bits: 4 }
+        }],
+        ['mlx-community/gemma-4-12B-it-4bit', {
+          modelKey: 'gemma-4-12b-it@4bit',
+          indexedModelIdentifier: 'mlx-community/gemma-4-12B-it-4bit',
+          format: 'safetensors',
+          quantization: { name: '4bit', bits: 4 }
+        }],
+        ['gemma-4-12b-it-txt-mlx', {
+          modelKey: 'gemma-4-12b-it-txt-mlx',
+          indexedModelIdentifier: 'jedisct1/gemma-4-12B-it-txt-mlx-8bit',
+          format: 'safetensors',
+          quantization: { name: '8bit', bits: 8 }
+        }],
+        ['jedisct1/gemma-4-12B-it-txt-mlx-8bit', {
+          modelKey: 'gemma-4-12b-it-txt-mlx',
+          indexedModelIdentifier: 'jedisct1/gemma-4-12B-it-txt-mlx-8bit',
+          format: 'safetensors',
+          quantization: { name: '8bit', bits: 8 }
+        }],
+        ['gemma-4-31b-it-mlx', {
+          modelKey: 'gemma-4-31b-it-mlx',
+          indexedModelIdentifier: 'lmstudio-community/gemma-4-31B-it-MLX-4bit',
+          format: 'safetensors',
+          quantization: { name: '4bit', bits: 4 }
+        }],
+        ['lmstudio-community/gemma-4-31B-it-MLX-4bit', {
+          modelKey: 'gemma-4-31b-it-mlx',
+          indexedModelIdentifier: 'lmstudio-community/gemma-4-31B-it-MLX-4bit',
+          format: 'safetensors',
+          quantization: { name: '4bit', bits: 4 }
+        }]
+      ])
+    }
+  ]]);
+  const options = parseLargeContextArgs([
+    '--provider',
+    'lmstudio',
+    '--scenario',
+    'control',
+    '--think',
+    'off',
+    '--workspaces-dir',
+    '/tmp/gemma-large-context-workspaces'
+  ]);
+
+  const plan = buildLargeContextBenchmarkPlan(options, availability);
+  const gemmaMlxRows = plan.filter((item) => item.family === 'gemma4' && item.variant === 'mlx');
+
+  assert.deepEqual(
+    gemmaMlxRows.map((item) => [item.scale, item.model, item.runtimeModelKey, item.lmStudioLoadModelKey]),
+    [
+      ['12b', 'benchmark-gemma4-12b-mlx', 'gemma-4-12b-it@4bit', 'gemma-4-12b-it@4bit'],
+      ['26b', 'google/gemma-4-26b-a4b-qat', undefined, undefined],
+      ['31b', 'benchmark-gemma4-31b-mlx', 'gemma-4-31b-it-mlx', 'gemma-4-31b-it-mlx']
+    ]
+  );
+  assert.equal(largeContextModelTargets.some((item) => item.candidates.includes('google/gemma-4-12b-mlx')), true);
+});
+
+test('builds an approximately 80K-token large-context prompt', () => {
+  const prompt = buildLargeContextPrompt('prefill-80k');
+
+  assert.equal(prompt.scenario, 'prefill-80k');
+  assert.equal(prompt.promptSha256.length, 64);
+  assert.ok(prompt.promptEstimatedTokens >= 79_000);
+  assert.ok(prompt.promptEstimatedTokens <= 82_000);
+  assert.ok(prompt.expectedNeedles > 0);
+  assert.match(prompt.prompt, /FINAL_MARKER LC-/);
+});
+
+test('renders and parses large-context report columns in static reports', () => {
+  const markdown = renderLargeContextMarkdownReport({
+    generatedAt: '2026-06-07T00:00:00.000Z',
+    providers: ['ollama'],
+    cli: 'gemma',
+    resetRuntimeBetweenCases: true,
+    stack: {
+      system: { node: 'v24.0.0', platform: 'darwin', arch: 'arm64' },
+      gemmaCli: { versionText: 'gemma-cli 0.0.0', label: 'gemma', defaults: { contextTokens: 262144, temperature: 1, maxTokens: 'provider settings' } },
+      providers: {
+        lmstudio: {
+          variantInventory: [{
+            model: {
+              modelKey: 'qwen/qwen3.6-27b',
+              selectedVariant: 'qwen/qwen3.6-27b@4bit'
+            },
+            variants: [{
+              modelKey: 'qwen/qwen3.6-27b@q4_k_m',
+              format: 'gguf',
+              architecture: 'qwen3_5',
+              sizeBytes: 123,
+              quantization: { name: 'Q4_K_M', bits: 4 }
+            }, {
+              modelKey: 'qwen/qwen3.6-27b@4bit',
+              format: 'safetensors',
+              architecture: 'qwen3_5',
+              sizeBytes: 456,
+              quantization: { name: '4bit', bits: 4 }
+            }]
+          }]
+        }
+      }
+    },
+    scenarios: [{
+      id: 'prefill-80k',
+      label: 'Large prefill',
+      targetEstimatedTokens: 80000,
+      promptEstimatedTokens: 80123,
+      promptChars: 320492,
+      promptSha256: 'a'.repeat(64),
+      expectedNeedles: 44,
+      expectedLastMarker: 'FINAL_MARKER LC-100-44'
+    }],
+    results: [{
+      provider: 'ollama',
+      family: 'gemma4',
+      variant: 'regular',
+      scale: '26b',
+      model: 'gemma4:26b',
+      runtimeModelKey: 'gemma4:26b',
+      scenario: 'prefill-80k',
+      think: 'off',
+      status: 'completed',
+      command: 'gemma',
+      commandDisplayArgs: ['--provider', 'ollama', '--prompt', '<prefill prompt omitted>'],
+      promptEstimatedTokens: 80123,
+      promptChars: 320492,
+      answerChars: 82,
+      output: '{"status":"ok","needle_count":44}',
+      metrics: { wallTokensPerSecond: 2, tokensPerSecond: 4, metricOutputTokens: 20, tokenSource: 'provider', modelCallDurationMs: 5000 },
+      wallDurationMs: 10000,
+      settings: { temperature: 1, maxTokens: 'provider settings' },
+      runtimeResetBefore: { ollama: { ok: true, unloadedModels: [] } },
+      cleanup: { ollama: { ok: true, unloadedModels: ['gemma4:26b'] } },
+      runtimeModelState: { state: 'loaded', contextLength: 262144 }
+    }]
+  });
+
+  const parsed = parseReportMarkdown(markdown);
+  const html = renderReportHtml(parsed);
+
+  assert.equal(parsed.results[0].family, 'gemma4');
+  assert.equal(parsed.results[0].variant, 'regular');
+  assert.equal(parsed.results[0].scale, '26b');
+  assert.equal(parsed.results[0].runtimeModelKey, 'gemma4:26b');
+  assert.equal(parsed.results[0].scenario, 'prefill-80k');
+  assert.equal(parsed.results[0].promptEstimatedTokens, 80123);
+  assert.match(html, /Prompt est tokens/);
+  assert.match(html, /LM Studio Variant Inventory/);
+  assert.match(html, /qwen\/qwen3\.6-27b@q4_k_m/);
+  assert.match(html, /prefill-80k/);
+  assert.match(html, /needle_count/);
 });
 
 test('renders media results with raw output or error in the final column', () => {

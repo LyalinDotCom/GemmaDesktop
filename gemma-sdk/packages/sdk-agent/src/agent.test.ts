@@ -2050,6 +2050,17 @@ describe('Agent', () => {
     await expect(agent.run('answer')).resolves.toMatchObject({ answer: 'first' });
   });
 
+  it('accepts user-requested non-protocol JSON as a final answer', async () => {
+    const agent = new Agent({
+      provider: new ScriptedProvider(['```json\n{"status":"ok","needle_count":17}\n```'])
+    });
+
+    await expect(agent.run('return a JSON object')).resolves.toMatchObject({
+      answer: '{"status":"ok","needle_count":17}',
+      stats: { turns: 1, toolCalls: 0 }
+    });
+  });
+
   it('does not crash when a model emits malformed JSON text', async () => {
     const agent = new Agent({
       provider: new ScriptedProvider(['{"answer":"created files\nvalidation passed"}'])

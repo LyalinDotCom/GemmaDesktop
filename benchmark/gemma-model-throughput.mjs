@@ -594,7 +594,7 @@ async function listAvailableManagedLlamaCppModels(options) {
   return new Set(entries.filter(([, exists]) => exists).map(([model]) => model));
 }
 
-async function prepareRuntimeForCase(options, item) {
+export async function prepareRuntimeForCase(options, item) {
   if (item.provider === 'llamacpp' && shouldManageLlamaCppServers(options)) {
     return startManagedLlamaCppServer(options, item);
   }
@@ -888,6 +888,8 @@ async function collectLmStudioMetadata(options, models, availability) {
     version: greeting?.version,
     commandVersion: summarizeLmStudioCommandVersion(commandVersion.stdout || commandVersion.stderr || commandVersion.error || ''),
     listedModelCount: availability?.models?.size ?? (Array.isArray(openAiModels?.data) ? openAiModels.data.length : undefined),
+    variantInventory: availability?.lmStudioVariantGroups,
+    variantInventoryError: availability?.lmStudioVariantError,
     transportDiagnostics: lmStudioTransportDiagnostics(options),
     models: Object.fromEntries(modelEntries)
   };
@@ -1512,6 +1514,10 @@ function compactLmStudioRuntimeState(model) {
   return pruneUndefined({
     state: model.state ?? 'loaded',
     status: model.status,
+    modelKey: model.modelKey,
+    format: model.format,
+    path: model.path,
+    selectedVariant: model.selectedVariant,
     contextLength: model.contextLength ?? model.context_length,
     maxContextLength: model.maxContextLength ?? model.max_context_length,
     quantization,
@@ -1546,6 +1552,8 @@ function runtimeStateSummary(state) {
   const parts = [
     state.state,
     state.status,
+    state.modelKey ? `model key ${state.modelKey}` : undefined,
+    state.format ? `format ${state.format}` : undefined,
     state.contextLength ? `context ${state.contextLength}` : undefined,
     state.maxContextLength ? `max context ${state.maxContextLength}` : undefined,
     state.quantization ? `quant ${state.quantization}` : undefined,
