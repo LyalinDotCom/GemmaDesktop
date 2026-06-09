@@ -117,6 +117,7 @@ export interface Runtime {
   skills: Skill[];
   history?: ChatMessage[];
   lastUserContent?: ChatMessage['content'];
+  lastMediaNotices?: string[];
   run(prompt: string, options?: RuntimeRunOptions): Promise<AgentRunResult>;
   stream(prompt: string, options?: { signal?: AbortSignal }): AsyncIterable<{ content?: string; thinking?: string; done?: boolean }>;
 }
@@ -246,6 +247,7 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
     const media = await buildPromptContentWithMedia(prompt, options.cwd, attachmentCapabilities);
     assertContentSupported(media.content, attachmentCapabilities, model, options.provider);
     runtime.lastUserContent = media.content;
+    runtime.lastMediaNotices = media.notices;
     const promptText = promptTextForMediaContent(media.content, prompt);
     const attachments = Array.isArray(media.content) ? media.content.filter((part) => part.type !== 'text') : undefined;
     const directMediaQuestion = isLikelyDirectMediaQuestion(promptText, attachments?.length ?? 0);
@@ -270,6 +272,7 @@ export async function createRuntime(options: CliOptions, hostOptions: RuntimeHos
         systemPrompt: runtime.systemPrompt,
         promptText,
         attachments,
+        history,
         generation: {
           maxTokens: options.maxTokens,
           contextTokens,
@@ -371,6 +374,7 @@ export async function runDirectMediaRequest(options: {
   systemPrompt: string;
   promptText: string;
   attachments: ContentPart[];
+  history?: ChatMessage[];
   generation: GenerateOptions;
   runOptions?: RuntimeRunOptions;
 }): Promise<AgentRunResult> {
@@ -378,6 +382,9 @@ export async function runDirectMediaRequest(options: {
   await options.runOptions?.onModelStart?.({ index: 0 });
   const answer = await options.provider.generate([
     { role: 'system', content: options.systemPrompt },
+    // Carry prior conversation/--resume history so follow-up media questions
+    // ("how does this differ from the first image?") keep their context.
+    ...(options.history ?? []),
     {
       role: 'user',
       content: [
@@ -536,4 +543,29 @@ export function formatRunResult(result: AgentRunResult): string {
 
 export function messageContentToText(content: ChatMessage['content']): string {
   return contentToText(content);
+}
+
+/**
+ * Append a completed prompt/response exchange onto a runtime's history so the
+ * next call carries conversational context. Pushes in place onto the same array
+ * the runtime closure reads, so stateless callers (e.g. ACP session/prompt)
+ * become stateful across prompts.
+ */
+export function appendExchangeToRuntimeHistory(runtime: Runtime, prompt: string, result: AgentRunResult): void {
+  runtime.history ??= [];
+  runtime.history.push({ role: 'user', content: runtime.lastUserContent ?? prompt });
+  runtime.lastUserContent = undefined;
+  for (const turn of result.turns) {
+    if (turn.kind === 'tool') {
+      runtime.history.push({
+        role: 'user',
+        content: `Tool result for ${turn.toolCall?.tool ?? 'tool'}:\n${JSON.stringify({
+          ok: turn.toolResult?.ok ?? true,
+          output: turn.toolResult?.output ?? turn.content
+        })}`
+      });
+    } else {
+      runtime.history.push({ role: 'assistant', content: turn.content });
+    }
+  }
 }

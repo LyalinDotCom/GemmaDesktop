@@ -1423,6 +1423,46 @@ describe('workspace tools', () => {
     });
   });
 
+  it('does not kill a handed-off command when it emits output then goes idle', async () => {
+    // Regression: after handoff the foreground idle-timer watchdog must be
+    // detached. Otherwise the first post-handoff output chunk re-arms the idle
+    // timer and SIGKILLs the very process we promised to keep running.
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
+    await writeFile(join(cwd, 'server.js'), [
+      'const fs = require("fs");',
+      'fs.writeFileSync("bg.pid", String(process.pid));',
+      'console.log("Local: http://localhost:5173/");',
+      // Emit one line shortly *after* handoff, then stay quiet far longer than
+      // the idle timeout.
+      'setTimeout(() => process.stdout.write("GET /index.html 200\\n"), 120);',
+      'setInterval(() => {}, 1000);',
+      ''
+    ].join('\n'), 'utf8');
+    const tools = createWorkspaceTools({ cwd, shellIdleTimeoutMs: 250, shellHandoffTimeoutMs: 1_000 });
+    const shell = tools.find((item) => item.name === 'exec_command');
+    const cancel = tools.find((item) => item.name === 'cancel_command');
+    if (!shell || !cancel) {
+      throw new Error('missing command tools');
+    }
+
+    let pid: number | undefined;
+    try {
+      const result = await shell.run({ command: 'node server.js', timeoutMs: 5_000 });
+      expect(result).toMatchObject({ ok: true, meta: { runningCommand: { status: 'running' } } });
+      pid = Number(await readFile(join(cwd, 'bg.pid'), 'utf8'));
+
+      // Wait well past idleTimeoutMs measured from the post-handoff output line.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(() => process.kill(pid!, 0)).not.toThrow();
+    } finally {
+      try {
+        process.kill(pid ?? Number(await readFile(join(cwd, 'bg.pid'), 'utf8')), 'SIGTERM');
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  });
+
   it('hands progress-producing finite commands back and waits for updates', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-'));
     await writeFile(join(cwd, 'progress.js'), [

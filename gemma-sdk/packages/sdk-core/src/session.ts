@@ -1945,6 +1945,32 @@ export class SessionEngine {
     );
   }
 
+  /**
+   * Keep history consistent when a tool loop is interrupted (cancellation or a
+   * non-recoverable tool failure). An assistant message carrying tool_calls must
+   * be paired with a tool message per call, otherwise strict OpenAI-compatible
+   * servers reject the resumed conversation and lenient ones mislead the model.
+   * The assistant tool-call structure is preserved (it is useful context); any
+   * call that did not produce a result gets a synthesized one.
+   */
+  private settleInterruptedToolCalls(toolCalls: ModelToolCall[], reason: string): void {
+    const matchedCallIds = new Set(
+      this.history
+        .filter((message) => message.role === "tool" && typeof message.toolCallId === "string")
+        .map((message) => message.toolCallId),
+    );
+    for (const toolCall of toolCalls) {
+      if (!matchedCallIds.has(toolCall.id)) {
+        this.history.push(
+          this.buildMessage("tool", [{ type: "text", text: reason }], {
+            name: toolCall.name,
+            toolCallId: toolCall.id,
+          }),
+        );
+      }
+    }
+  }
+
   private isRecoverableToolFailure(error: GemmaDesktopError): boolean {
     if (TOOL_SURFACE_REGISTRATION_ERROR_PATTERN.test(error.message.trim())) {
       return false;
@@ -2599,6 +2625,7 @@ export class SessionEngine {
         | { toolName: string; failurePreview: string; count: number }
         | undefined;
 
+      try {
       for (const toolCall of response.toolCalls) {
         throwIfCancelled(options.signal);
         this.emit(queue, turnId, "tool.call", {
@@ -2740,6 +2767,18 @@ export class SessionEngine {
             toolCall.id,
           );
         }
+      }
+      } catch (interruptionError) {
+        // Cancellation (throwIfCancelled) or a non-recoverable tool failure
+        // unwound the loop. Repair the assistant/tool pairing before the turn
+        // unwinds so the persisted history stays resumable.
+        this.settleInterruptedToolCalls(
+          response.toolCalls,
+          interruptionError instanceof GemmaDesktopError && interruptionError.kind === "cancellation"
+            ? "Tool call was cancelled before it completed."
+            : "Tool call did not complete because the turn ended.",
+        );
+        throw interruptionError;
       }
 
       if (repeatedFailure) {

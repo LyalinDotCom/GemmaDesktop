@@ -35,6 +35,30 @@ describe('OllamaProvider', () => {
     expect(calls[0]?.body).not.toHaveProperty('options');
   });
 
+  it('forwards top_k to the local runner when configured', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const provider = new OllamaProvider({
+      model: 'gemma4:26b',
+      baseUrl: 'http://ollama.local',
+      topK: 64,
+      fetchImpl: openAiChatFetch(calls, [chatCompletion('ok')])
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hello' }])).resolves.toBe('ok');
+    expect(calls[0]?.body).toMatchObject({ top_k: 64 });
+  });
+
+  it('omits top_k when not configured', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const provider = new OllamaProvider({
+      model: 'gemma4:26b',
+      fetchImpl: openAiChatFetch(calls, [chatCompletion('ok')])
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hello' }])).resolves.toBe('ok');
+    expect(calls[0]?.body).not.toHaveProperty('top_k');
+  });
+
   it('uses standard reasoning_effort none when thinking is disabled', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new OllamaProvider({

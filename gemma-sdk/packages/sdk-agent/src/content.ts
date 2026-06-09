@@ -209,10 +209,16 @@ export async function buildPromptContentWithMedia(prompt: string, cwd: string, c
   const attachments: ContentPart[] = [];
   const notices: string[] = [];
   const candidates = extractMediaPathCandidates(prompt, cwd);
-  for (const filePath of candidates) {
+  for (const { path: filePath, explicit } of candidates) {
     const fileStats = await stat(filePath).catch(() => undefined);
     if (!fileStats?.isFile()) {
-      throw new Error(`Attachment path does not exist or is not a file: ${filePath}`);
+      if (explicit) {
+        // The user explicitly attached this file with @path; a miss is a real error.
+        throw new Error(`Attachment path does not exist or is not a file: ${filePath}`);
+      }
+      // An incidental path mention (e.g. an output file the agent is being asked
+      // to create) must not abort the run just because it does not exist yet.
+      continue;
     }
     const ext = extname(filePath).toLowerCase();
     const mediaType = inferMimeTypeFromPath(filePath);
@@ -331,16 +337,22 @@ async function normalizeLocalImageForRequest(filePath: string, originalBytes: Bu
   }
 }
 
-function extractMediaPathCandidates(prompt: string, cwd: string): string[] {
-  const paths = new Set<string>();
+interface MediaPathCandidate {
+  path: string;
+  /** True only for explicit `@path` attachment markers (a miss is a hard error). */
+  explicit: boolean;
+}
+
+function extractMediaPathCandidates(prompt: string, cwd: string): MediaPathCandidate[] {
+  // Map keeps insertion order and lets an explicit `@` match override an
+  // incidental mention of the same path.
+  const explicitByPath = new Map<string, boolean>();
   const extensions = [...imageExtensions, ...videoExtensions, ...audioExtensions, ...pdfExtensions]
     .map((ext) => ext.slice(1))
     .join('|');
-  const patterns = [
-    new RegExp(`@(?:"([^"]+\\.(${extensions}))"|'([^']+\\.(${extensions}))'|([^\\s]+\\.(${extensions})))`, 'gi'),
-    new RegExp(`(?:"([^"]+\\.(${extensions}))"|'([^']+\\.(${extensions}))'|((?:\\.?\\.?/|/)[^\\s]+\\.(${extensions})))`, 'gi')
-  ];
-  for (const pattern of patterns) {
+  const explicitPattern = new RegExp(`@(?:"([^"]+\\.(${extensions}))"|'([^']+\\.(${extensions}))'|([^\\s]+\\.(${extensions})))`, 'gi');
+  const incidentalPattern = new RegExp(`(?:"([^"]+\\.(${extensions}))"|'([^']+\\.(${extensions}))'|((?:\\.?\\.?/|/)[^\\s]+\\.(${extensions})))`, 'gi');
+  const scan = (pattern: RegExp, explicit: boolean) => {
     for (const match of prompt.matchAll(pattern)) {
       const raw = [match[1], match[3], match[5]].find((value) => typeof value === 'string' && value.length > 0);
       if (!raw) {
@@ -348,10 +360,12 @@ function extractMediaPathCandidates(prompt: string, cwd: string): string[] {
       }
       const cleaned = raw.replace(/[),.;:!?]+$/g, '');
       const resolved = isAbsolute(cleaned) ? cleaned : resolve(cwd, cleaned);
-      paths.add(resolved);
+      explicitByPath.set(resolved, (explicitByPath.get(resolved) ?? false) || explicit);
     }
-  }
-  return [...paths];
+  };
+  scan(explicitPattern, true);
+  scan(incidentalPattern, false);
+  return [...explicitByPath].map(([path, explicit]) => ({ path, explicit }));
 }
 
 async function sampleVideoFrames(filePath: string): Promise<{ frames: string[]; durationSeconds?: number }> {

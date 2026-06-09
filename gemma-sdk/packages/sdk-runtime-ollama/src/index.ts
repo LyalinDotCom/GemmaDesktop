@@ -190,7 +190,13 @@ function createTimeoutLinkedSignal(
     controller.abort(signal?.reason);
   };
 
-  signal?.addEventListener("abort", onAbort, { once: true });
+  // A listener added to an already-aborted signal never fires, so honor a
+  // parent that aborted before this linked signal was wired.
+  if (signal?.aborted) {
+    controller.abort(signal.reason);
+  } else {
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }
   timeout = setTimeout(() => {
     controller.abort(new GemmaDesktopError("timeout", message, {
       details: { timeoutMs },
@@ -589,6 +595,10 @@ function parseInlineToolCallsFromText(text: string): {
     if (typeof parsedInput === "string") {
       cleaned += cleanInlineToolTextFragment(text.slice(cursor, section.end));
       cursor = section.end;
+      // Resume scanning past the consumed section; otherwise the regex
+      // re-scans inside the arguments (which can contain literal "call:name{"
+      // text) and emits phantom nested tool calls / duplicates text.
+      pattern.lastIndex = cursor;
       continue;
     }
 
@@ -605,6 +615,7 @@ function parseInlineToolCallsFromText(text: string): {
     if (trailingMarker) {
       cursor += trailingMarker[0].length;
     }
+    pattern.lastIndex = cursor;
   }
 
   return {
@@ -1149,6 +1160,22 @@ export function createOllamaNativeAdapter(options: OllamaAdapterOptions = {}): R
             `Ollama accepted the ${request.model} stream but produced no data for ${Math.round(streamIdleTimeoutMs / 1000)} seconds. `
             + "The local runner may have stalled; Gemma Desktop is ending the turn instead of waiting indefinitely.",
         })) {
+          // Ollama returns HTTP 200 and then streams NDJSON. A runner crash or
+          // OOM mid-generation arrives as a final `{"error": "..."}` line rather
+          // than a non-200 status. Surface it as a transport error instead of
+          // silently completing the turn with whatever partial text accumulated.
+          const chunkError = typeof chunk.error === "string" ? chunk.error.trim() : "";
+          if (chunkError) {
+            throw new GemmaDesktopError(
+              "transport_error",
+              [
+                `Ollama reported an error while running ${request.model}: ${chunkError}.`,
+                "The local runner may have crashed or run out of memory mid-generation.",
+                "Try retrying after unloading other Ollama models, using a smaller or MoE model, or restarting Ollama.",
+              ].join(" "),
+              { details: { ollamaError: chunkError } },
+            );
+          }
           finalChunk = chunk;
           if (!sawFirstChunk) {
             sawFirstChunk = true;

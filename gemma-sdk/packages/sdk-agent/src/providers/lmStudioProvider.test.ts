@@ -87,7 +87,10 @@ describe('LmStudioProvider', () => {
     expect(calls[0]?.body).not.toHaveProperty('reasoning_effort');
   });
 
-  it('does not assume LM Studio provider reasoning when support is unknown', async () => {
+  it('honors an explicit reasoning request when LM Studio support is unknown', async () => {
+    // "Unknown" (no reasoning flag from discovery) must not silently override an
+    // explicit --think on. The provider attempts reasoning and falls back via the
+    // retry-without-reasoning path if the server rejects reasoning_effort.
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new LmStudioProvider({
       model: 'local-model',
@@ -96,7 +99,7 @@ describe('LmStudioProvider', () => {
     });
 
     await expect(provider.generate([{ role: 'user', content: 'hello' }], { reasoningMode: 'on' })).resolves.toBe('ok');
-    expect(calls[0]?.body).not.toHaveProperty('reasoning_effort');
+    expect(calls[0]?.body).toMatchObject({ reasoning_effort: 'high' });
   });
 
   it('reads LM Studio native capability metadata when listing models', async () => {
@@ -144,10 +147,12 @@ describe('LmStudioProvider', () => {
       }),
       expect.objectContaining({
         name: 'google/gemma-4-31b',
-        displayName: 'Gemma 4 31B',
-        supportsReasoning: false
+        displayName: 'Gemma 4 31B'
       })
     ]);
+    // A model that does not advertise a reasoning capability is "unknown", not
+    // "unsupported" — matching how image/audio absence is handled.
+    expect(models.find((model) => model.name === 'google/gemma-4-31b')).not.toHaveProperty('supportsReasoning');
     expect(models.find((model) => model.name === 'google/gemma-4-31b')).not.toHaveProperty('supportsImage');
     expect(models.find((model) => model.name === 'google/gemma-4-31b')).not.toHaveProperty('supportsAudio');
   });

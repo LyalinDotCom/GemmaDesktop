@@ -605,13 +605,15 @@ export async function* parseSse(
     buffer += decoder.decode(value, { stream: true });
 
     while (true) {
-      const boundary = buffer.search(/\r?\n\r?\n/);
-      if (boundary === -1) {
+      const separator = /\r?\n\r?\n/.exec(buffer);
+      if (!separator) {
         break;
       }
 
-      const raw = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + (buffer[boundary] === "\r" ? 4 : 2));
+      const raw = buffer.slice(0, separator.index);
+      // Skip exactly the matched separator length so mixed line endings (e.g.
+      // "\r\n\n") don't eat the first character of the next event.
+      buffer = buffer.slice(separator.index + separator[0].length);
 
       let event: string | undefined;
       const dataParts: string[] = [];
@@ -677,8 +679,16 @@ export async function* parseJsonLines(
     }
   }
 
-  if (buffer.trim().length > 0) {
-    yield JSON.parse(buffer.trim()) as Record<string, unknown>;
+  const trailing = buffer.trim();
+  if (trailing.length > 0) {
+    // A stream that closed uncleanly can leave a partial trailing line. Parse it
+    // if it is complete JSON, but don't let a truncated fragment throw a raw
+    // SyntaxError that escapes uncategorized.
+    try {
+      yield JSON.parse(trailing) as Record<string, unknown>;
+    } catch {
+      // Incomplete trailing fragment; drop it.
+    }
   }
 }
 
@@ -1016,6 +1026,24 @@ export async function generateOpenAICompatibleResponse(
   };
 }
 
+function extractOpenAICompatibleStreamError(chunk: Record<string, unknown>): string | undefined {
+  const error = chunk.error;
+  if (!error) {
+    return undefined;
+  }
+  if (typeof error === "string") {
+    return error.trim() || "unknown error";
+  }
+  if (typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+    return "unknown error";
+  }
+  return String(error);
+}
+
 export async function* streamOpenAICompatibleResponse(
   baseUrl: string,
   request: ChatRequest,
@@ -1116,7 +1144,32 @@ export async function* streamOpenAICompatibleResponse(
       },
     });
 
-    const chunk = JSON.parse(message.data) as Record<string, unknown>;
+    let chunk: Record<string, unknown>;
+    try {
+      chunk = JSON.parse(message.data) as Record<string, unknown>;
+    } catch (error) {
+      // A `data:` payload that is not JSON (an HTML error page fragment, a
+      // truncated line at an unclean close) must not throw a raw SyntaxError
+      // that escapes uncategorized.
+      throw new GemmaDesktopError(
+        "transport_error",
+        `${`The ${request.model} runtime`} sent a malformed streaming payload.`,
+        { cause: error, details: { data: message.data.slice(0, 500) } },
+      );
+    }
+
+    // Some OpenAI-compatible runners (e.g. llama.cpp) signal a mid-stream
+    // failure with a `{"error": ...}` envelope and HTTP 200. Surface it as a
+    // transport error instead of dropping it and completing with truncated text.
+    const streamError = extractOpenAICompatibleStreamError(chunk);
+    if (streamError) {
+      throw new GemmaDesktopError(
+        "transport_error",
+        `${`The ${request.model} runtime`} reported a streaming error: ${streamError}`,
+        { details: { error: chunk.error } },
+      );
+    }
+
     if (typeof chunk.id === "string") {
       responseId = chunk.id;
     }

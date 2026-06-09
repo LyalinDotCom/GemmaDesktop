@@ -126,6 +126,38 @@ describe("Ollama native thinking", () => {
     expect(completed && completed.type === "response.complete" ? completed.response.text : "").toBe("42");
   });
 
+  it("surfaces a mid-stream error chunk instead of completing with truncated text", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/api/chat") {
+        return {
+          text: [
+            JSON.stringify({
+              model: "qwen3:8b",
+              message: { role: "assistant", content: "partial answer so " },
+              done: false,
+            }),
+            // The runner crashes / OOMs mid-generation: HTTP 200, then an error line.
+            JSON.stringify({ error: "model runner has unexpectedly stopped" }),
+          ].join("\n"),
+          headers: { "content-type": "application/x-ndjson" },
+        };
+      }
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createOllamaNativeAdapter({ baseUrl: server.url });
+
+    await expect((async () => {
+      for await (const _event of adapter.stream({
+        model: "qwen3:8b",
+        messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "hi" }], createdAt: new Date().toISOString() }],
+      })) {
+        // drain
+      }
+    })()).rejects.toThrow(/unexpectedly stopped|error while running/i);
+  });
+
   it("preserves ordinary streamed text deltas while watching for raw tool syntax", async () => {
     const server = await createMockServer((request) => {
       if (request.path === "/api/chat") {

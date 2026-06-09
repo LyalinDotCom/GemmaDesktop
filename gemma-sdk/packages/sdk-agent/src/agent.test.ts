@@ -105,6 +105,21 @@ class RepeatedVisiblePhraseProvider implements ModelProvider {
   }
 }
 
+class AlwaysProtocolDriftProvider implements ModelProvider {
+  readonly name = 'always-protocol-drift';
+  callCount = 0;
+
+  async generate(_messages: ChatMessage[], options?: GenerateOptions): Promise<string> {
+    this.callCount += 1;
+    // Emit a repeated visible phrase that the protocol monitor flags as drift on
+    // every call, so the only thing that can stop the run is the retry cap.
+    for (let index = 0; index < 8; index += 1) {
+      await options?.onActivity?.({ content: "-<<<<< Let's do that.\n" });
+    }
+    return 'not reached';
+  }
+}
+
 class RepeatedToolPayloadFragmentProvider implements ModelProvider {
   readonly name = 'repeated-tool-payload-fragment';
   private index = 0;
@@ -2059,6 +2074,45 @@ describe('Agent', () => {
       answer: '{"status":"ok","needle_count":17}',
       stats: { turns: 1, toolCalls: 0 }
     });
+  });
+
+  it('keeps surrounding prose instead of truncating to an embedded JSON object', async () => {
+    const agent = new Agent({
+      provider: new ScriptedProvider(['Here is the summary you asked for: {"status":"ok","count":17} Let me know if you need more.'])
+    });
+
+    await expect(agent.run('summarize')).resolves.toMatchObject({
+      answer: 'Here is the summary you asked for: {"status":"ok","count":17} Let me know if you need more.',
+      stats: { turns: 1, toolCalls: 0 }
+    });
+  });
+
+  it('treats OpenAI-style {name,arguments} drift as protocol drift, not a final answer', async () => {
+    const provider = new ScriptedProvider([
+      '{"name":"read_file","arguments":{"path":"a.txt"}}',
+      '{"answer":"done"}'
+    ]);
+    const agent = new Agent({ provider });
+
+    const result = await agent.run('read the file');
+    // The drift must not become the user-visible answer; the model is steered
+    // back to the protocol and the next valid answer is used.
+    expect(result.answer).toBe('done');
+    expect(result.answer).not.toContain('read_file');
+  });
+
+  it('stops protocol-drift recovery after the retry cap instead of looping forever', async () => {
+    // maxTurns null = unlimited; the protocol-retry cap is the only thing that
+    // can terminate a persistently drifting model. If the cap regressed, this
+    // test would hang.
+    const provider = new AlwaysProtocolDriftProvider();
+    const agent = new Agent({ provider, maxTurns: null });
+
+    const result = await agent.run('do something');
+    expect(result.completionStatus).toBe('incomplete');
+    expect(result.answer).toContain('protocol-drifting or looping output');
+    expect(provider.callCount).toBeGreaterThan(1);
+    expect(provider.callCount).toBeLessThanOrEqual(5);
   });
 
   it('does not crash when a model emits malformed JSON text', async () => {

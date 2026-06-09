@@ -11,9 +11,9 @@ import {
   Tray,
 } from 'electron'
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'url'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 import { installMainConsoleFormatting } from './consoleLogging'
 import {
   captureAndQueueMacOSScreenshotToActiveSession,
@@ -694,10 +694,25 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 void app.whenReady().then(async () => {
-  protocol.handle('gemma-desktop-file', (request) => {
+  protocol.handle('gemma-desktop-file', async (request) => {
     const filePath = decodeURIComponent(
       request.url.replace('gemma-desktop-file://', ''),
     )
+    // This scheme previews user-attached files and app-generated audio, so the
+    // path is legitimately arbitrary. Still apply defense-in-depth: reject null
+    // bytes, require an absolute path, and only serve regular files so the
+    // renderer cannot stream special files (e.g. /dev/*) or directories.
+    if (!filePath || filePath.includes('\0') || !isAbsolute(filePath)) {
+      return new Response(null, { status: 400 })
+    }
+    try {
+      const stats = await stat(filePath)
+      if (!stats.isFile()) {
+        return new Response(null, { status: 404 })
+      }
+    } catch {
+      return new Response(null, { status: 404 })
+    }
     return net.fetch(pathToFileURL(filePath).toString())
   })
 

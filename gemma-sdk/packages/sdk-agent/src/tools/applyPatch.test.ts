@@ -64,6 +64,43 @@ describe('parsePatch', () => {
     expect(files[1]?.newPath).toBe('two.ts');
   });
 
+  it('keeps a blank context line whose leading space was stripped in transit', () => {
+    // A blank context line inside the hunk arrives as "" instead of " " because
+    // transport stripped the trailing space. The hunk must not terminate early.
+    const patch = [
+      '--- a/f.txt',
+      '+++ b/f.txt',
+      '@@ -1,6 +1,6 @@',
+      ' line1',
+      '-line2',
+      '+LINE2',
+      ' line3',
+      '',
+      '-line5',
+      '+LINE5',
+      ' line6',
+      ''
+    ].join('\n');
+    const files = parsePatch(patch);
+    expect(files[0]?.hunks).toHaveLength(1);
+    expect(files[0]?.hunks[0]?.lines).toEqual([
+      ' line1',
+      '-line2',
+      '+LINE2',
+      ' line3',
+      ' ',
+      '-line5',
+      '+LINE5',
+      ' line6'
+    ]);
+  });
+
+  it('does not consume the trailing blank line after a complete hunk', () => {
+    const patch = ['--- a/f', '+++ b/f', '@@ -1,2 +1,2 @@', ' a', '-b', '+B', ''].join('\n');
+    const files = parsePatch(patch);
+    expect(files[0]?.hunks[0]?.lines).toEqual([' a', '-b', '+B']);
+  });
+
   it('throws on missing +++ header', () => {
     expect(() => parsePatch('--- a/foo.ts\nrest')).toThrow(/Expected "\+\+\+"/);
   });
@@ -187,6 +224,26 @@ describe('applyHunks', () => {
 `)[0]!;
 
     expect(() => applyHunks(file, 'a\nb\nc\n')).toThrow(/did not match/);
+  });
+
+  it('applies edits on both sides of a stripped blank context line', () => {
+    const file = parsePatch([
+      '--- a/f.txt',
+      '+++ b/f.txt',
+      '@@ -1,6 +1,6 @@',
+      ' line1',
+      '-line2',
+      '+LINE2',
+      ' line3',
+      '',
+      '-line5',
+      '+LINE5',
+      ' line6',
+      ''
+    ].join('\n'))[0]!;
+    expect(applyHunks(file, 'line1\nline2\nline3\n\nline5\nline6\n')).toBe(
+      'line1\nLINE2\nline3\n\nLINE5\nline6\n'
+    );
   });
 
   it('creates a new file from a /dev/null patch', () => {

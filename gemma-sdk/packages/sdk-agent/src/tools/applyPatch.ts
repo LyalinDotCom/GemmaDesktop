@@ -56,18 +56,52 @@ export function parsePatch(text: string): PatchFile[] {
           lines: []
         };
         i += 1;
+        // Track how many old-side (context + deletion) and new-side
+        // (context + addition) lines we have consumed so we can tell a blank
+        // *context* line inside the hunk from the blank separator that follows
+        // it. Transport (LLM output, JSON) frequently strips the leading space
+        // off a blank context line, turning " " into "", which previously
+        // terminated the hunk body early and silently truncated the rest of the
+        // hunk while still reporting success.
+        let oldSeen = 0;
+        let newSeen = 0;
         while (i < lines.length && !lines[i]!.startsWith('@@') && !lines[i]!.startsWith('--- ')) {
           const body = lines[i]!;
           if (body === '\\ No newline at end of file') {
             i += 1;
             continue;
           }
-          if (body === '' && hunk.lines.length === 0) {
+          if (body === '') {
+            if (hunk.lines.length === 0) {
+              // A blank line before any hunk content is a formatting artifact.
+              i += 1;
+              continue;
+            }
+            if (oldSeen >= hunk.oldCount && newSeen >= hunk.newCount) {
+              // The declared counts are satisfied, so this blank line is the
+              // separator after the hunk (or trailing patch whitespace), not
+              // content. Stop here.
+              break;
+            }
+            // Otherwise this is a blank context line whose leading space was
+            // stripped in transit. Treat it as " " instead of truncating.
+            hunk.lines.push(' ');
+            oldSeen += 1;
+            newSeen += 1;
             i += 1;
             continue;
           }
           if (!isHunkBodyLine(body)) {
             break;
+          }
+          const marker = body[0]!;
+          if (marker === ' ') {
+            oldSeen += 1;
+            newSeen += 1;
+          } else if (marker === '-') {
+            oldSeen += 1;
+          } else if (marker === '+') {
+            newSeen += 1;
           }
           hunk.lines.push(body);
           i += 1;

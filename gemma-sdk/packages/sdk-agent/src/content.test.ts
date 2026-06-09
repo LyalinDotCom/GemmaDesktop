@@ -86,4 +86,33 @@ describe('content attachment capabilities', () => {
   it('rejects missing media paths before provider requests', async () => {
     await expect(buildPromptContentWithMedia('look at @missing.png', '/tmp')).rejects.toThrow('Attachment path does not exist');
   });
+
+  it('does not abort when an incidental output path mention does not exist', async () => {
+    const result = await buildPromptContentWithMedia(
+      'Create a landing page and save the hero image to ./assets/hero.png',
+      '/tmp'
+    );
+    // No @ marker and the file does not exist: treat it as an output target, not
+    // a precondition. The run must continue with the prompt unchanged.
+    expect(result.content).toBe('Create a landing page and save the hero image to ./assets/hero.png');
+    expect(result.notices).toEqual([]);
+  });
+
+  it('still attaches an incidental path mention when the file exists', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'gemma-cli-content-'));
+    await writeFile(join(cwd, 'hero.png'), 'not-a-real-image', 'utf8');
+
+    const result = await buildPromptContentWithMedia('compare with ./hero.png please', cwd, {
+      image: true,
+      audio: false,
+      video: true,
+      pdf: false,
+      source: 'test'
+    });
+
+    expect(result.content).toEqual([
+      { type: 'text', text: 'compare with ./hero.png please' },
+      { type: 'image_url', url: join(cwd, 'hero.png'), mediaType: 'image/png' }
+    ]);
+  });
 });

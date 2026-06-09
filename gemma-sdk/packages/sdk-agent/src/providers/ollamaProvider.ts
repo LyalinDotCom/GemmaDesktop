@@ -66,6 +66,7 @@ export class OllamaProvider implements ModelProvider {
       contextTokens: options.contextTokens ?? defaultContextTokens,
       temperature: options.temperature ?? defaultTemperature,
       topP: options.topP ?? defaultTopP,
+      topK: options.topK,
       maxTokens: options.maxTokens,
       autoDisablesProviderReasoning: true,
       generationStartTimeoutMs: options.generationStartTimeoutMs ?? defaultOllamaGenerationStartTimeoutMs,

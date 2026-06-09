@@ -1221,6 +1221,9 @@ export async function streamPrompt(session: TuiSession, prompt: string, output: 
       }
     });
     appendRunTurnsToHistory(session, result, progress);
+    for (const notice of session.runtime.lastMediaNotices ?? []) {
+      addHistory(session, 'notice', notice);
+    }
     const elapsedMs = Date.now() - startedAt;
     session.lastStats = statsLine(session, result.stats, result.completionStatus, elapsedMs);
     recordModelRunStats(session, result.stats);

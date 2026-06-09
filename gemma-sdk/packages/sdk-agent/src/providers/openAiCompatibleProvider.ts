@@ -13,6 +13,7 @@ export interface OpenAICompatibleLocalProviderOptions {
   contextTokens?: number;
   temperature?: number;
   topP?: number;
+  topK?: number;
   maxTokens?: number;
   supportsReasoning?: boolean;
   autoDisablesProviderReasoning?: boolean;
@@ -57,6 +58,7 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
   private readonly model: string;
   private readonly temperature?: number;
   private readonly topP?: number;
+  private readonly topK?: number;
   private readonly maxTokens?: number;
   private readonly supportsReasoning: boolean;
   private readonly autoDisablesProviderReasoning: boolean;
@@ -73,6 +75,7 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
     this.model = options.model;
     this.temperature = options.temperature;
     this.topP = options.topP;
+    this.topK = options.topK;
     this.maxTokens = options.maxTokens;
     this.supportsReasoning = options.supportsReasoning ?? true;
     this.autoDisablesProviderReasoning = options.autoDisablesProviderReasoning ?? false;
@@ -90,7 +93,14 @@ export class OpenAICompatibleLocalProvider implements ModelProvider {
       includeUsage: true,
       supportedUrls: () => ({
         'image/*': [/^data:/, /^https?:/]
-      })
+      }),
+      // The AI SDK's openai-compatible layer drops the standard `topK` setting
+      // (it pushes an "unsupported" warning). Local runners (Ollama, LM Studio,
+      // llama.cpp, LiteRT-LM) honor a `top_k` body field, which matters for
+      // Gemma sampling, so inject it here. Servers that don't support it ignore
+      // the extra field.
+      transformRequestBody: (body) =>
+        this.topK != null ? { ...(body as Record<string, unknown>), top_k: this.topK } : body
     });
     this.languageModel = provider.chatModel(options.model);
   }

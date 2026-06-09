@@ -605,7 +605,12 @@ export function useAppState() {
             summarizeMessageThinkingBlocks(e.message)
             break
           case 'generation_stopping':
-            dispatch({ type: 'SET_GENERATING', generating: false })
+            // Keep isGenerating true until the turn actually ends
+            // (generation_cancelled / turn_complete). The main process is still
+            // busy while the abort unwinds a running tool, so clearing it here
+            // would prematurely drain queued messages into a busy session and
+            // spin a tight retry loop. The stopping visual comes from
+            // MARK_STREAMING_CONTENT_STOPPING, not from isGenerating.
             dispatch({ type: 'MARK_STREAMING_CONTENT_STOPPING' })
             break
           case 'generation_cancelled':
@@ -1319,10 +1324,14 @@ export function useAppState() {
           errorMessage.includes('already generating a response')
           || isConversationExecutionBlockedError(errorMessage)
         ) {
+          // The session was still busy. Restore this message to the front of the
+          // queue (its original position) so order is preserved when it is
+          // re-drained after the turn truly ends.
           dispatch({
             type: 'QUEUE_MESSAGE',
             sessionId,
             message: nextQueuedMessage,
+            front: true,
           })
           return
         }

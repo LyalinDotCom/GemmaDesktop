@@ -250,10 +250,10 @@ export function useGlobalChatSession() {
                   }
                 : current
             case 'generation_stopping':
-              return {
-                ...current,
-                isGenerating: false,
-              }
+              // Keep isGenerating true until the turn actually ends. The session
+              // is still busy while the abort unwinds, so clearing it here would
+              // prematurely drain queued messages and spin a busy retry loop.
+              return current
             case 'generation_cancelled':
               return {
                 ...current,

@@ -471,7 +471,7 @@ Supported methods:
 
 - `initialize`
 - `session/new`
-- `session/prompt`
+- `session/prompt` (conversation history is retained across prompts in the session)
 - `models/list`
 - `skills/list`
 

@@ -1441,10 +1441,16 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions = {}): Tool[
             return { ok: false, output: `No running command found for ${id}.` };
           }
           const elapsedMs = Date.now() - managed.startedAt;
-          terminateManagedCommand(managed);
+          const alreadyExited = managed.status === 'exited';
+          if (!alreadyExited) {
+            terminateManagedCommand(managed);
+          }
           runningCommands.delete(id);
+          const headline = alreadyExited
+            ? `Command ${id} had already exited${managed.exitCode !== undefined && managed.exitCode !== null ? ` with code ${managed.exitCode}` : managed.signal ? ` (signal ${managed.signal})` : ''} after ${formatDuration(elapsedMs)}; nothing to cancel.`
+            : `Cancelled running command ${id} after ${formatDuration(elapsedMs)}.`;
           return ok([
-            `Cancelled running command ${id} after ${formatDuration(elapsedMs)}.`,
+            headline,
             `command: ${managed.command}`,
             managed.output.slice(managed.outputCursor).trimEnd() ? `\nNew output:\n${managed.output.slice(managed.outputCursor).trimEnd()}` : '',
             managed.output.trimEnd() ? `\nLatest output:\n${managed.output.trimEnd()}` : ''
@@ -2248,7 +2254,7 @@ function boundedPositiveInteger(value: unknown, fallback: number, min: number, m
   }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < min) {
-    throw new Error('timeout values must be positive integers.');
+    throw new Error(`value must be an integer >= ${min}.`);
   }
   return Math.min(Math.max(parsed, min), max);
 }
@@ -2361,6 +2367,9 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
       }
     };
 
+    const onStdout = (chunk: Buffer) => append(chunk, 'stdout');
+    const onStderr = (chunk: Buffer) => append(chunk, 'stderr');
+
     const handoffRunningCommand = (reason: string) => {
       if (settled || childExited || !options.runningCommands) {
         return;
@@ -2377,6 +2386,14 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
         status: 'running'
       };
       handedOff = true;
+      // Ownership of the child transfers to runningCommands. Detach the
+      // foreground watchdogs (idle timer + output-limit accounting in `append`)
+      // before wiring the managed listeners, otherwise the next output chunk
+      // would re-arm the idle timer and eventually SIGTERM/SIGKILL the very
+      // process we just promised to keep running.
+      clearTimeout(idleTimer);
+      child.stdout.removeListener('data', onStdout);
+      child.stderr.removeListener('data', onStderr);
       options.runningCommands.set(id, managed);
       child.stdout.on('data', (chunk: Buffer) => {
         appendManagedOutput(managed, chunk.toString('utf8'), options.outputLimit);
@@ -2454,8 +2471,8 @@ async function runShellCommand(command: string, cwd: string, options: ShellComma
       return;
     }
 
-    child.stdout.on('data', (chunk: Buffer) => append(chunk, 'stdout'));
-    child.stderr.on('data', (chunk: Buffer) => append(chunk, 'stderr'));
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
     child.on('error', (error) => finish(fail(error)));
     child.on('exit', scheduleShellExitFinish);
     child.on('close', (code, signal) => {

@@ -120,6 +120,30 @@ describe('direct media requests', () => {
       completionStatus: 'completed'
     });
   });
+
+  it('includes prior conversation history so follow-up media questions keep context', async () => {
+    const provider = new CapturingProvider('It is brighter than the first image.');
+    const history: ChatMessage[] = [
+      { role: 'user', content: 'Describe the first image.' },
+      { role: 'assistant', content: 'A dim sunset over water.' }
+    ];
+
+    await runDirectMediaRequest({
+      provider,
+      systemPrompt: buildDirectMediaSystemPrompt('gemma4:e2b', 'off'),
+      promptText: 'How does this differ from the first image?',
+      attachments: [{ type: 'image_url', url: '/tmp/second.png', mediaType: 'image/png' }],
+      history,
+      generation: { reasoningMode: 'off', includeRawChunks: true }
+    });
+
+    expect(provider.messages).toMatchObject([
+      { role: 'system' },
+      { role: 'user', content: 'Describe the first image.' },
+      { role: 'assistant', content: 'A dim sunset over water.' },
+      { role: 'user', content: [{ type: 'text', text: 'How does this differ from the first image?' }, { type: 'image_url', url: '/tmp/second.png', mediaType: 'image/png' }] }
+    ]);
+  });
 });
 
 function installReactSkillFixture(root: string): string {

@@ -78,6 +78,49 @@ describe('GeminiProvider', () => {
     });
   });
 
+  it('passes topK into the Gemini generationConfig', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const provider = new GeminiProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://gemini.local/v1beta',
+      model: 'gemini-3.5-flash',
+      topK: 64,
+      fetchImpl: (async (_url, init) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+        return sseResponse([{ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }]);
+      }) as typeof fetch
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hi' }])).resolves.toBe('ok');
+    expect(calls[0]?.body).toMatchObject({ generationConfig: { topK: 64 } });
+  });
+
+  it('parses SSE events even when separators use mixed line endings', async () => {
+    // "\r\n\n" is a valid 3-char separator. The boundary skip must consume
+    // exactly the matched length, not eat the first char of the next event.
+    const provider = new GeminiProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://gemini.local/v1beta',
+      model: 'gemini-3.5-flash',
+      fetchImpl: (async () => {
+        const encoder = new TextEncoder();
+        const payloads = [
+          { candidates: [{ content: { parts: [{ text: 'first ' }] } }] },
+          { candidates: [{ content: { parts: [{ text: 'second' }] } }] }
+        ];
+        const body = `data: ${JSON.stringify(payloads[0])}\r\n\ndata: ${JSON.stringify(payloads[1])}\r\n\n`;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(body));
+            controller.close();
+          }
+        }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }) as typeof fetch
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'hi' }])).resolves.toBe('first second');
+  });
+
   it('normalizes Gemini API base URLs from host and copied endpoint shapes', () => {
     expect(normalizeGeminiApiBaseUrl('generativelanguage.googleapis.com')).toBe('https://generativelanguage.googleapis.com/v1beta');
     expect(normalizeGeminiApiBaseUrl('localhost:8080/v1beta/models')).toBe('http://localhost:8080/v1beta');

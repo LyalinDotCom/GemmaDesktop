@@ -260,7 +260,7 @@ export type AppStateAction =
   | { type: 'SET_READ_ALOUD_STATUS'; readAloudStatus: ReadAloudInspection | null }
   | { type: 'UPDATE_SESSION_IN_LIST'; session: SessionSummary }
   | { type: 'REMOVE_SESSION'; sessionId: string }
-  | { type: 'QUEUE_MESSAGE'; sessionId: string; message: QueuedUserMessage }
+  | { type: 'QUEUE_MESSAGE'; sessionId: string; message: QueuedUserMessage; front?: boolean }
   | {
       type: 'UPDATE_QUEUED_MESSAGE'
       sessionId: string
@@ -816,17 +816,22 @@ export function appStateReducer(state: AppState, action: AppStateAction): AppSta
           selectionBySession: nextSelectionBySession,
         }
       }
-    case 'QUEUE_MESSAGE':
+    case 'QUEUE_MESSAGE': {
+      const existing = state.queuedMessagesBySession[action.sessionId] ?? []
+      // `front` re-inserts a message that was popped for draining but bounced
+      // (session still busy), preserving its original queue position instead of
+      // moving it behind later messages.
+      const nextQueue = action.front
+        ? [action.message, ...existing]
+        : [...existing, action.message]
       return {
         ...state,
         queuedMessagesBySession: {
           ...state.queuedMessagesBySession,
-          [action.sessionId]: [
-            ...(state.queuedMessagesBySession[action.sessionId] ?? []),
-            action.message,
-          ],
+          [action.sessionId]: nextQueue,
         },
       }
+    }
     case 'UPDATE_QUEUED_MESSAGE':
       return {
         ...state,

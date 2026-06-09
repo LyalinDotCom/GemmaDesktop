@@ -1,4 +1,4 @@
-import { createRuntime, type Runtime } from './runtime.js';
+import { appendExchangeToRuntimeHistory, createRuntime, type Runtime } from './runtime.js';
 import type { CliOptions } from './args.js';
 import { listGeminiModels, listLiteRtLmModels, listLlamaCppModels, listLmStudioModels, listOllamaModels } from '@gemma-sdk/agent';
 import { cliVersion } from './version.js';
@@ -38,6 +38,7 @@ export class AcpRuntime {
             return this.error(request.id, -32602, 'params.prompt is required.');
           }
           const response = await runtime.run(prompt);
+          appendExchangeToRuntimeHistory(runtime, prompt, response);
           return this.result(request.id, { answer: response.answer, turns: response.turns, stats: response.stats });
         }
         case 'models/list':

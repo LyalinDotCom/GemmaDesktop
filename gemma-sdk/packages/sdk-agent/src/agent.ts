@@ -98,6 +98,7 @@ export class Agent {
     let outputLimitRetryCount = 0;
     let transientTransportRetryCount = 0;
     let malformedResponseRetryCount = 0;
+    let protocolRetryCount = 0;
     let forceReasoningOffNextTurn = false;
 
     const maxTurns = this.maxTurns;
@@ -124,6 +125,23 @@ export class Agent {
           raw = error.raw;
           forceReasoningOffNextTurn = false;
         } else if (error instanceof ProtocolRetryError) {
+          protocolRetryCount += 1;
+          if (protocolRetryCount > MAX_PROTOCOL_RETRIES) {
+            const answer = [
+              'Stopped because the model repeatedly produced protocol-drifting or looping output',
+              `(${protocolRetryCount - 1} recovery attempts) and could not return a valid Gemma CLI action.`
+            ].join(' ');
+            const finalTurn = { kind: 'final' as const, content: answer };
+            const nextTurns = [...turns, finalTurn];
+            await options.onTurn?.({ index: nextTurns.length - 1, turn: finalTurn });
+            return {
+              answer,
+              turns: nextTurns,
+              stats: this.stats(startedAt, nextTurns),
+              completionStatus: 'incomplete',
+              completionReason: 'model_response_malformed'
+            };
+          }
           forceReasoningOffNextTurn = true;
           messages.push({ role: 'user', content: error.retryInstruction });
           continue;
@@ -169,6 +187,7 @@ export class Agent {
         continue;
       }
       malformedResponseRetryCount = 0;
+      protocolRetryCount = 0;
 
       if ('answer' in action) {
         const noToolActionRetry = buildNoToolActionRetryInstruction(prompt, action.answer, turns, [...this.tools.values()]);
@@ -245,7 +264,7 @@ export class Agent {
       }
 
       const evidenceFailure = validateToolCallEvidence(action, turns, prompt);
-      const result = evidenceFailure ?? await runToolSafely(tool, action);
+      const result = evidenceFailure ?? await runToolSafely(tool, action, this.generation.signal);
       const toolTurn = {
         kind: 'tool',
         content: result.output,
@@ -470,6 +489,10 @@ const TOOL_RESULT_PROTECTION_CHARS = 200_000;
 const TOOL_RESULT_PRUNABLE_TRIGGER_CHARS = 120_000;
 const TOOL_RESULT_PREVIEW_LINE_COUNT = 20;
 const TOOL_RESULT_PREVIEW_CHARS = 1_200;
+// Cap protocol-drift/stream-repetition recovery attempts. With unlimited
+// maxTurns a persistently drifting model would otherwise loop forever in a
+// headless run (no turn cap, no abort signal). Resets after any successful turn.
+const MAX_PROTOCOL_RETRIES = 3;
 
 function messagesForContext(messages: ChatMessage[], contextTokens: number | undefined): ChatMessage[] {
   const contextMessages = maskOlderBulkyToolResults(messages);
@@ -2631,9 +2654,15 @@ function renderTool(tool: Tool): string {
   ].filter(Boolean).join('\n');
 }
 
-async function runToolSafely(tool: Tool, action: ToolCall): Promise<ToolResult> {
+async function runToolSafely(tool: Tool, action: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
   try {
-    return await tool.run(action.args);
+    // Thread the run's abort signal into tool args so long-running tools
+    // (e.g. exec_command on a build/test) can be cancelled with Esc instead of
+    // running to completion while the model call waits. Tools that don't read
+    // `signal` ignore it; the model never supplies one through JSON. The signal
+    // is added to a shallow copy so it never leaks into recorded history.
+    const args = signal ? { ...action.args, signal } : action.args;
+    return await tool.run(args);
   } catch (error) {
     return {
       ok: false,
@@ -2723,14 +2752,24 @@ function parseAction(text: string): { answer: string } | ToolCall {
     if (looksLikeProtocolJsonObject(parsed.value)) {
       throw new Error('Model response must include either answer or tool plus args.');
     }
-    return { answer: jsonText };
+    // Only treat a bare JSON object as the final answer when the model's entire
+    // response IS that JSON (e.g. the user explicitly asked for JSON output).
+    // When the JSON is embedded in surrounding prose, returning just the JSON
+    // span would silently drop the rest of the response, so keep the full text.
+    if (jsonText.length === trimmed.length) {
+      return { answer: jsonText };
+    }
+    return { answer: text.trim() };
   }
 
   return candidate;
 }
 
 function looksLikeProtocolJsonObject(value: object): boolean {
-  return 'tool' in value || 'args' in value;
+  // `tool`/`args` is our protocol shape. `name`/`arguments` is the common
+  // OpenAI-style tool-call drift; treat it as protocol drift (so the model is
+  // steered back to {"tool":...,"args":...}) rather than a final answer.
+  return 'tool' in value || 'args' in value || ('name' in value && 'arguments' in value);
 }
 
 function normalizeToolCall(toolCall: ToolCall): ToolCall {

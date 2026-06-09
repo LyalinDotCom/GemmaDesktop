@@ -556,6 +556,11 @@ let currentTalkSessionId: string | null = null
 const liveSessions = new Map<string, GemmaDesktopSession>()
 const activeAbortControllers = new Map<string, AbortController>()
 const pendingSessionTasks = new Map<string, SessionConversationExecutionTask>()
+// Identity tokens for pending gates. The task string alone is not unique, so a
+// stale gate release could otherwise delete a successor turn's pending gate
+// (both labelled 'generation') and momentarily mark the session not-busy.
+const pendingSessionGateTokens = new Map<string, number>()
+let pendingSessionGateSequence = 0
 const activeSessionTasks = new Map<string, SessionConversationExecutionTask>()
 const activeAutomationRuns = new Set<string>()
 const activeAutomationAbortControllers = new Map<string, AbortController>()
@@ -685,11 +690,16 @@ function beginConversationExecutionGate(
     return () => {}
   }
 
+  const gateToken = ++pendingSessionGateSequence
   pendingSessionTasks.set(sessionId, task)
+  pendingSessionGateTokens.set(sessionId, gateToken)
   broadcastSessionsChangedInBackground()
 
   return () => {
-    if (pendingSessionTasks.get(sessionId) === task) {
+    // Only release if this exact gate is still pending. A double-release or a
+    // stale release from a previous turn must not clear a successor turn's gate.
+    if (pendingSessionGateTokens.get(sessionId) === gateToken) {
+      pendingSessionGateTokens.delete(sessionId)
       pendingSessionTasks.delete(sessionId)
       broadcastSessionsChangedInBackground()
     }
@@ -709,6 +719,7 @@ function markConversationExecutionActive(
 ): void {
   if (pendingSessionTasks.get(sessionId) === task) {
     pendingSessionTasks.delete(sessionId)
+    pendingSessionGateTokens.delete(sessionId)
   }
   activeSessionTasks.set(sessionId, task)
 }
@@ -6643,18 +6654,24 @@ async function persistSessionStateWithRecoveredUserHistory(
     currentSnapshot,
     appMessages,
   )
+  // Preserve a mid-turn approval-mode change on every persist path. The live
+  // session object is intentionally not swapped mid-turn, so its snapshot still
+  // carries the old mode; the abort/error cleanup would otherwise overwrite the
+  // busy-path-persisted snapshot and silently revert the user's change (which
+  // the in-memory override map still enforces until the next non-busy update).
+  const nextSnapshot = await applyActiveApprovalModeOverride(sessionId, repairedSnapshot)
   let nextSession = session
 
-  if (repairedSnapshot !== currentSnapshot) {
+  if (nextSnapshot !== currentSnapshot) {
     nextSession = await gemmaDesktop.sessions.resume({
-      snapshot: repairedSnapshot,
+      snapshot: nextSnapshot,
     })
     liveSessions.set(sessionId, nextSession)
   }
 
   await store.save(
     sessionId,
-    repairedSnapshot,
+    nextSnapshot,
     options?.metaPatch,
     appMessages,
     { preserveUpdatedAt: options?.preserveUpdatedAt },
@@ -8464,12 +8481,21 @@ async function ensureTalkSessionInternal(
     storageScope: talkConfig.storageScope,
   })
 
+  // Never swap the live session or persist a recomposed snapshot while a turn is
+  // in flight. ensureLiveSessionCurrent guards on the same condition; doing so
+  // here too prevents tearing the live (e.g. CoBrowse) session out mid-turn and
+  // prevents the captured-before-awaits snapshot from clobbering the turn's
+  // just-persisted final history.
+  const talkSessionBusy = isSessionExecutionBusy(talkSessionId)
   if (
-    snapshot.workingDirectory !== talkWorkingDirectory
-    || snapshot.sessionId !== talkSessionId
-    || JSON.stringify(reconciledComposition.mode) !== JSON.stringify(snapshot.mode)
-    || reconciledComposition.systemInstructions !== snapshot.systemInstructions
-    || JSON.stringify(reconciledComposition.metadata ?? {}) !== JSON.stringify(snapshot.metadata ?? {})
+    !talkSessionBusy
+    && (
+      snapshot.workingDirectory !== talkWorkingDirectory
+      || snapshot.sessionId !== talkSessionId
+      || JSON.stringify(reconciledComposition.mode) !== JSON.stringify(snapshot.mode)
+      || reconciledComposition.systemInstructions !== snapshot.systemInstructions
+      || JSON.stringify(reconciledComposition.metadata ?? {}) !== JSON.stringify(snapshot.metadata ?? {})
+    )
   ) {
     const nextSnapshot: SessionSnapshot = {
       ...snapshot,
@@ -8495,8 +8521,11 @@ async function ensureTalkSessionInternal(
   }
 
   if (
-    talkMeta.title !== effectivePersisted.meta.title
-    || talkMeta.titleSource !== effectivePersisted.meta.titleSource
+    !talkSessionBusy
+    && (
+      talkMeta.title !== effectivePersisted.meta.title
+      || talkMeta.titleSource !== effectivePersisted.meta.titleSource
+    )
   ) {
     await store.save(
       talkSessionId,
@@ -12202,13 +12231,17 @@ async function sendSessionMessageInternal(
               durationMs,
             }) as AppMessage | null
           } catch (recoveryError) {
-            if (abortController.signal.aborted) {
-              throw recoveryError
-            }
+            // If the user cancelled during recovery, do not rethrow: rethrowing
+            // here escapes to the generic outer catch, which posts an assistant
+            // error bubble and a "completed" notification for what was actually
+            // a cancellation. Fall through instead so the cancelled partial
+            // content below becomes the turn's final message.
             appendDebugLog(sessionId, {
               layer: 'ipc',
               direction: 'app->sdk',
-              event: 'sessions.assistant-heartbeat.recovery-failed',
+              event: abortController.signal.aborted
+                ? 'sessions.assistant-heartbeat.recovery-cancelled'
+                : 'sessions.assistant-heartbeat.recovery-failed',
               summary:
                 recoveryError instanceof Error
                   ? recoveryError.message
@@ -13804,11 +13837,19 @@ export function registerIpcHandlers(): void {
         throw new Error('Hidden instruction cannot be empty.')
       }
 
+      // CoBrowse must be derived from the live Project Browser state for this
+      // session, never assumed. Hardcoding coBrowse: true would force CoBrowse
+      // tool routing (blocking fetch_url/browser/web_research_agent and routing
+      // search_web to the visible browser) for any caller, even outside CoBrowse.
+      const browserState = projectBrowserManager.getState()
+      const coBrowse =
+        browserState.coBrowseActive === true && browserState.sessionId === sessionId
+
       return await sendSessionMessageInternal(
         sessionId,
         { text: instruction },
         'renderer',
-        { hiddenUserMessage: true, coBrowse: true },
+        { hiddenUserMessage: true, coBrowse },
       )
     },
   )

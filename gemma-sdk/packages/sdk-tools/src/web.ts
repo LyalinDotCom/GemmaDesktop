@@ -197,6 +197,13 @@ const DEFAULT_DEEP_MAX_PAGES = 6;
 const DEFAULT_MAX_CHARS_PER_PAGE = 8_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const SEARCH_CACHE_TTL_MS = 5 * 60_000;
+// fetch_url is the default read path for live pages and feeds, so a stale entry
+// must not be served indefinitely. Bound the cache so a long-lived CLI/desktop
+// process (or a deep research run touching hundreds of URLs) can't grow without
+// limit either.
+const PAGE_CACHE_TTL_MS = 2 * 60_000;
+const PAGE_CACHE_MAX_ENTRIES = 64;
+const SEARCH_CACHE_MAX_ENTRIES = 128;
 const MIN_SEARCH_DELAY_MS = 1_000;
 const MAX_SEARCH_DELAY_MS = 3_000;
 
@@ -225,8 +232,18 @@ const TEXT_RESPONSE_HEADERS = {
 } as const;
 
 const SEARCH_CACHE = new Map<string, CachedSearchOutcome>();
-const PAGE_CACHE = new Map<string, CachedFetchRecord>();
+const PAGE_CACHE = new Map<string, { expiresAt: number; record: CachedFetchRecord }>();
 const SEARCH_HOST_LAST_REQUEST_AT = new Map<string, number>();
+
+function evictOldestWhileOverCapacity(cache: Map<string, unknown>, maxEntries: number): void {
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+}
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -1667,16 +1684,19 @@ async function fetchAndExtractUrl(
   });
   const requestedUrl = normalizeUrl(input.url);
   const cached = PAGE_CACHE.get(requestedUrl);
-  if (cached) {
+  if (cached && cached.expiresAt > Date.now()) {
     emitWebProgress(options, {
       id: "fetch-cache",
       label: "Using cached page",
       tone: "success",
     });
     return {
-      record: cached,
+      record: cached.record,
       cacheHit: true,
     };
+  }
+  if (cached) {
+    PAGE_CACHE.delete(requestedUrl);
   }
 
   const fetchUrl = convertGithubBlobUrlToRaw(requestedUrl);
@@ -1738,7 +1758,8 @@ async function fetchAndExtractUrl(
     contentType: response.contentType,
     parsed,
   };
-  PAGE_CACHE.set(requestedUrl, record);
+  PAGE_CACHE.set(requestedUrl, { expiresAt: Date.now() + PAGE_CACHE_TTL_MS, record });
+  evictOldestWhileOverCapacity(PAGE_CACHE, PAGE_CACHE_MAX_ENTRIES);
   return {
     record,
     cacheHit: false,
@@ -1909,6 +1930,7 @@ async function executeSearchOnEngine(
       expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
       outcome,
     });
+    evictOldestWhileOverCapacity(SEARCH_CACHE, SEARCH_CACHE_MAX_ENTRIES);
     return outcome;
   } catch (error) {
     const message = error instanceof Error && error.message.trim().length > 0 ? error.message : String(error);
@@ -2398,6 +2420,21 @@ async function _executeDeepSearch(
   };
 }
 
+function recencyQueryHint(recency: SearchRecency): string | undefined {
+  switch (recency) {
+    case "day":
+      return "(results from the past 24 hours)";
+    case "week":
+      return "(results from the past week)";
+    case "month":
+      return "(results from the past month)";
+    case "year":
+      return "(results from the past year)";
+    case "any":
+      return undefined;
+  }
+}
+
 export async function executeSearchWeb(
   input: SearchWebInput,
   options: WebExecutionOptions = {},
@@ -2434,8 +2471,12 @@ export async function executeSearchWeb(
     );
   }
 
+  const recencyHint = recencyQueryHint(normalized.recency);
   const geminiInput: GeminiApiSearchInput = {
-    query: normalized.query,
+    // Gemini google_search grounding has no structured recency parameter, so
+    // honor the requested window by folding it into the query instead of
+    // silently ignoring it.
+    query: recencyHint ? `${normalized.query} ${recencyHint}` : normalized.query,
     maxResults: normalized.maxResults,
     includeDomains: normalized.includeDomains,
     excludeDomains: normalized.excludeDomains,

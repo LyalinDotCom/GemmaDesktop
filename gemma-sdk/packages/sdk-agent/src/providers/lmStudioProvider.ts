@@ -45,6 +45,7 @@ const defaultModel = 'gemma-3-27b-it';
 const defaultContextTokens = 262_144;
 const defaultTemperature = 1;
 const defaultTopP = 0.95;
+const lmStudioNativeProbeTimeoutMs = 5_000;
 
 export class LmStudioProvider implements ModelProvider {
   readonly name = 'lmstudio';
@@ -59,8 +60,13 @@ export class LmStudioProvider implements ModelProvider {
       contextTokens: options.contextTokens ?? defaultContextTokens,
       temperature: options.temperature ?? defaultTemperature,
       topP: options.topP ?? defaultTopP,
+      topK: options.topK,
       maxTokens: options.maxTokens,
-      supportsReasoning: options.reasoning ?? false,
+      // `undefined` means "reasoning support unknown" — let the inner provider
+      // default to attempting reasoning (with a retry-without-reasoning fallback)
+      // so an explicit `--think on` is honored instead of being silently dropped.
+      // Only an explicit `false` (model known not to support it) disables it.
+      supportsReasoning: options.reasoning,
       fetchImpl: options.fetchImpl,
       emptyResponseLabel: 'LM Studio OpenAI-compatible response'
     });
@@ -101,7 +107,9 @@ export async function listLmStudioModelInfos(baseUrl = defaultBaseUrl, fetchImpl
 async function listLmStudioNativeModelInfos(baseUrl: string, fetchImpl: typeof fetch): Promise<LmStudioModelInfo[]> {
   try {
     const root = lmStudioRootUrl(baseUrl);
-    const response = await fetchImpl(`${root}/api/v0/models`);
+    // Bound the native capability probe so a stalled LM Studio cannot hang model
+    // listing / capability resolution at startup.
+    const response = await fetchImpl(`${root}/api/v0/models`, { signal: AbortSignal.timeout(lmStudioNativeProbeTimeoutMs) });
     if (!response.ok) {
       return [];
     }
@@ -124,7 +132,11 @@ async function listLmStudioNativeModelInfos(baseUrl: string, fetchImpl: typeof f
         loadedInstanceId: typeof model.loaded_instance_id === 'string' ? model.loaded_instance_id : undefined,
         supportsImage: supportsImage ? true : undefined,
         supportsAudio: supportsAudio ? true : undefined,
-        supportsReasoning: capabilities.some((capability) => /reason|think/.test(capability))
+        // Match the image/audio handling: a model that does not advertise a
+        // reasoning capability (or an older LM Studio build with no capability
+        // list) is "unknown", not "unsupported". Returning `false` here would
+        // silently override an explicit `--think on`.
+        supportsReasoning: capabilities.some((capability) => /reason|think/.test(capability)) ? true : undefined
       }];
     });
   } catch {

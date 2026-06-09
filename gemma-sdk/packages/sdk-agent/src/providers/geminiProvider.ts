@@ -7,6 +7,7 @@ export interface GeminiProviderOptions {
   model?: string;
   temperature?: number;
   topP?: number;
+  topK?: number;
   maxTokens?: number;
   fetchImpl?: typeof fetch;
 }
@@ -55,6 +56,7 @@ export class GeminiProvider implements ModelProvider {
   private readonly model: string;
   private readonly temperature?: number;
   private readonly topP?: number;
+  private readonly topK?: number;
   private readonly maxTokens?: number;
   private readonly fetchImpl: typeof fetch;
 
@@ -64,6 +66,7 @@ export class GeminiProvider implements ModelProvider {
     this.model = options.model ?? defaultModel;
     this.temperature = options.temperature;
     this.topP = options.topP;
+    this.topK = options.topK;
     this.maxTokens = options.maxTokens;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
@@ -88,6 +91,7 @@ export class GeminiProvider implements ModelProvider {
       body: JSON.stringify(await buildRequestBody(messages, {
         temperature: options.temperature ?? this.temperature,
         topP: options.topP ?? this.topP,
+        topK: options.topK ?? this.topK,
         maxTokens: options.maxTokens ?? this.maxTokens,
       })),
     });
@@ -152,7 +156,7 @@ export async function listGeminiModels(
 
 async function buildRequestBody(
   messages: ChatMessage[],
-  options: { temperature?: number; topP?: number; maxTokens?: number },
+  options: { temperature?: number; topP?: number; topK?: number; maxTokens?: number },
 ): Promise<Record<string, unknown>> {
   const systemTexts: string[] = [];
   const contents = [];
@@ -170,6 +174,7 @@ async function buildRequestBody(
   const generationConfig: Record<string, unknown> = {};
   if (typeof options.temperature === 'number') generationConfig.temperature = options.temperature;
   if (typeof options.topP === 'number') generationConfig.topP = options.topP;
+  if (typeof options.topK === 'number') generationConfig.topK = options.topK;
   if (typeof options.maxTokens === 'number') generationConfig.maxOutputTokens = options.maxTokens;
   return {
     contents,
@@ -278,17 +283,25 @@ async function* parseSse(body: ReadableStream<Uint8Array>, signal?: AbortSignal)
       break;
     }
     buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.search(/\r?\n\r?\n/);
-    while (boundary !== -1) {
-      const raw = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + (buffer[boundary] === '\r' ? 4 : 2));
+    const separator = /\r?\n\r?\n/g;
+    let match = separator.exec(buffer);
+    let consumed = 0;
+    while (match) {
+      const raw = buffer.slice(consumed, match.index);
+      // Skip exactly the matched separator length so mixed line endings
+      // (e.g. "\r\n\n") do not eat the first character of the next event.
+      consumed = match.index + match[0].length;
       const data = raw
         .split(/\r?\n/)
         .filter((line) => line.startsWith('data:'))
         .map((line) => line.slice(5).trim())
         .join('\n');
       if (data) yield data;
-      boundary = buffer.search(/\r?\n\r?\n/);
+      separator.lastIndex = consumed;
+      match = separator.exec(buffer);
+    }
+    if (consumed > 0) {
+      buffer = buffer.slice(consumed);
     }
   }
 }

@@ -405,6 +405,34 @@ describe("LM Studio OpenAI-compatible output sanitization", () => {
     }]);
   });
 
+  it("surfaces a mid-stream OpenAI-compatible error envelope instead of truncating", async () => {
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        return {
+          sse: [
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial \"},\"finish_reason\":null}]}\n\n",
+            // The runner fails mid-stream with a 200 + error envelope.
+            "data: {\"error\":{\"message\":\"context window exceeded\",\"type\":\"server_error\"}}\n\n",
+          ],
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioOpenAICompatibleAdapter({ baseUrl: server.url });
+
+    await expect((async () => {
+      for await (const _event of adapter.stream({
+        model: "gemma-4-31b-it-mlx",
+        messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "hi" }], createdAt: new Date().toISOString() }],
+      })) {
+        // drain
+      }
+    })()).rejects.toThrow(/context window exceeded|streaming error/i);
+  });
+
   it("passes through normal streamed assistant text unchanged", async () => {
     const server = await createMockServer((request) => {
       if (request.path === "/v1/chat/completions") {

@@ -159,6 +159,52 @@ describe("session cancellation", () => {
     expect(forwardedSignal).toBe(controller.signal);
   });
 
+  it("pairs every assistant tool_call with a tool message after cancellation", async () => {
+    const engine = new SessionEngine({
+      adapter: new MockAdapter(),
+      model: "mock-model",
+      mode: "cowork",
+      workingDirectory: process.cwd(),
+      tools: createDelegatingTools(async (context) => {
+        // Wait for the abort, then surface a cancellation from inside the tool.
+        for (let i = 0; i < 200 && !context.signal?.aborted; i += 1) {
+          await sleep(10);
+        }
+        throw new GemmaDesktopError("cancellation", "Tool cancelled mid-run.");
+      }),
+    });
+
+    const controller = new AbortController();
+    const streamed = await engine.runStreamed("Start", { signal: controller.signal });
+    const iterator = streamed.events[Symbol.asyncIterator]();
+
+    let sawToolCall = false;
+    while (!sawToolCall) {
+      const next = await iterator.next();
+      if (next.done) {
+        throw new Error("Event stream ended before the tool call was emitted.");
+      }
+      sawToolCall = next.value.type === "tool.call";
+    }
+    controller.abort();
+
+    await expect(streamed.completed).rejects.toMatchObject({ kind: "cancellation" });
+
+    // The interrupted assistant tool_call must still be paired with a tool
+    // message so the persisted history is resumable.
+    const snapshot = engine.snapshot();
+    const toolCallIds = snapshot.history
+      .filter((message) => message.role === "assistant" && Array.isArray(message.toolCalls))
+      .flatMap((message) => (message.toolCalls ?? []).map((call) => call.id));
+    const toolMessageCallIds = new Set(
+      snapshot.history.filter((message) => message.role === "tool").map((message) => message.toolCallId),
+    );
+    expect(toolCallIds.length).toBeGreaterThan(0);
+    for (const callId of toolCallIds) {
+      expect(toolMessageCallIds.has(callId)).toBe(true);
+    }
+  });
+
   it("closes the streamed event queue immediately after cancellation", async () => {
     const engine = new SessionEngine({
       adapter: new MockAdapter(),

@@ -558,6 +558,13 @@ export class ToolRuntime implements ToolExecutor {
         metadata: result.metadata,
       };
     } catch (error) {
+      // A user cancellation (or timeout) that surfaces from the tool is not a
+      // tool bug. Pass it through unchanged so the session engine treats it as a
+      // cancelled turn instead of recording a permanent failed-tool result and
+      // skewing the repeated-failure counters.
+      if (error instanceof GemmaDesktopError && (error.kind === "cancellation" || error.kind === "timeout")) {
+        throw error;
+      }
       const details: Record<string, unknown> = {};
       if (error instanceof GemmaDesktopError) {
         details.causeKind = error.kind;
