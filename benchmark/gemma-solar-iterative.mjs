@@ -65,25 +65,69 @@ const PROMPTS = [
 const PROGRESS_EVENTS = new Set(['run_started', 'model_start', 'tool_start', 'tool_result', 'final_turn', 'run_completed', 'run_failed']);
 
 function parseArgs(argv) {
-  const options = { model: undefined, attempts: 1, runCapMin: 15, stallMin: 6, turnStallMin: 12, attemptCapMin: 60 };
+  const options = {
+    provider: 'ollama',
+    endpoint: undefined,
+    model: undefined,
+    attempts: 1,
+    runCapMin: 15,
+    stallMin: 6,
+    turnStallMin: 12,
+    attemptCapMin: 60,
+    temperature: undefined,
+    topK: undefined,
+    topP: undefined,
+    reasoningMode: undefined,
+  };
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--model') options.model = argv[++i];
+    if (arg === '--provider') options.provider = readProvider(argv[++i]);
+    else if (arg === '--endpoint') options.endpoint = argv[++i];
+    else if (arg === '--model') options.model = argv[++i];
     else if (arg === '--attempts') options.attempts = Number(argv[++i]);
     else if (arg === '--run-cap-min') options.runCapMin = Number(argv[++i]);
     else if (arg === '--stall-min') options.stallMin = Number(argv[++i]);
     else if (arg === '--turn-stall-min') options.turnStallMin = Number(argv[++i]);
     else if (arg === '--attempt-cap-min') options.attemptCapMin = Number(argv[++i]);
+    else if (arg === '--temperature') options.temperature = Number(argv[++i]);
+    else if (arg === '--top-k') options.topK = Number(argv[++i]);
+    else if (arg === '--top-p') options.topP = Number(argv[++i]);
+    else if (arg === '--think') options.reasoningMode = readReasoningMode(argv[++i]);
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.model) {
-    throw new Error('Usage: node gemma-solar-iterative.mjs --model <ollama-model> [--attempts N] [--run-cap-min M] [--stall-min M] [--turn-stall-min M] [--attempt-cap-min M]');
+    throw new Error('Usage: node gemma-solar-iterative.mjs --model <model> [--provider ollama|openai-compatible] [--endpoint URL] [--attempts N] [--run-cap-min M] [--stall-min M] [--turn-stall-min M] [--attempt-cap-min M]');
+  }
+  if (options.provider !== 'ollama' && !options.endpoint) {
+    throw new Error('--endpoint is required when --provider is not ollama');
+  }
+  if (options.provider === 'openai-compatible') {
+    options.temperature ??= 1;
+    options.topK ??= 64;
+    options.topP ??= 0.95;
   }
   if (!Number.isInteger(options.attempts) || options.attempts < 1) throw new Error('--attempts must be a positive integer');
   for (const key of ['runCapMin', 'stallMin', 'turnStallMin', 'attemptCapMin']) {
     if (!Number.isFinite(options[key]) || options[key] <= 0) throw new Error(`${key} must be positive`);
   }
+  for (const key of ['temperature', 'topK', 'topP']) {
+    if (!Number.isFinite(options[key])) throw new Error(`${key} must be finite`);
+  }
   return options;
+}
+
+function readProvider(value) {
+  if (value === 'ollama' || value === 'openai-compatible') return value;
+  throw new Error('--provider must be ollama or openai-compatible');
+}
+
+function readReasoningMode(value) {
+  if (value === 'auto' || value === 'on' || value === 'off') return value;
+  throw new Error('--think must be auto, on, or off');
+}
+
+function cliProviderFor(provider) {
+  return provider === 'openai-compatible' ? 'llamacpp' : provider;
 }
 
 const fmt = (ms) => `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
@@ -125,10 +169,13 @@ function clearOllama() {
   return { unloaded: before, residentAfter: resident };
 }
 
-function collectStackMetadata() {
+function collectStackMetadata(options) {
   return {
     timestamp: new Date().toISOString(),
-    ollamaVersion: exec('ollama', ['--version']),
+    provider: options.provider,
+    cliProvider: cliProviderFor(options.provider),
+    endpoint: options.endpoint,
+    ollamaVersion: options.provider === 'ollama' ? exec('ollama', ['--version']) : undefined,
     gemmaCliVersion: exec('node', [CLI, '--version']),
     node: process.version,
     platform: `${os.type()} ${os.release()}`,
@@ -140,7 +187,18 @@ function collectStackMetadata() {
 
 function runSupervised({ model, workspace, prompt, resume, logPath, runNumber, options, runCapMs }) {
   return new Promise((resolvePromise) => {
-    const args = [CLI, '--cwd', workspace, '--provider', 'ollama', '--model', model, '--json-stream'];
+    const args = [
+      CLI,
+      '--cwd', workspace,
+      '--provider', cliProviderFor(options.provider),
+      '--model', model,
+      '--json-stream',
+    ];
+    if (options.temperature !== undefined) args.push('--temperature', String(options.temperature));
+    if (options.topK !== undefined) args.push('--top-k', String(options.topK));
+    if (options.topP !== undefined) args.push('--top-p', String(options.topP));
+    if (options.endpoint) args.push('--endpoint', options.endpoint);
+    if (options.reasoningMode) args.push('--think', options.reasoningMode);
     if (resume) args.push('--resume');
     args.push('--prompt', prompt);
 
@@ -298,7 +356,7 @@ const options = parseArgs(process.argv);
 if (!statSync(CLI, { throwIfNoEntry: false })) {
   throw new Error(`Gemma CLI build not found at ${CLI}. Run npm run build:gemma-cli first.`);
 }
-const modelTag = options.model.replace(/[:/]/g, '_');
+const modelTag = (options.provider === 'ollama' ? options.model : `${options.provider}-${options.model}`).replace(/[:/]/g, '_');
 const modelReports = join(REPORTS_ROOT, modelTag);
 mkdirSync(modelReports, { recursive: true });
 mkdirSync(WORKSPACES_ROOT, { recursive: true });
@@ -310,16 +368,24 @@ for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
   mkdirSync(attemptDir, { recursive: true });
   mkdirSync(workspace, { recursive: true });
 
-  log(`=== ${options.model} attempt ${attempt}/${options.attempts} (slot ${slot}) ===`);
+  log(`=== ${options.provider}/${options.model} attempt ${attempt}/${options.attempts} (slot ${slot}) ===`);
   log(`supervision: stall ${options.stallMin}m | runaway ${options.turnStallMin}m | run cap ${options.runCapMin}m | attempt cap ${options.attemptCapMin}m`);
-
-  log('clearing Ollama for a cold start');
-  const ollamaClear = clearOllama();
-  if (ollamaClear.residentAfter.length > 0) {
-    log(`WARNING: models still resident after clear: ${ollamaClear.residentAfter.join(', ')}`);
+  if (options.temperature !== undefined || options.topK !== undefined || options.topP !== undefined) {
+    log(`sampling: temperature ${options.temperature} | top_k ${options.topK} | top_p ${options.topP}`);
   }
-  const stack = collectStackMetadata();
-  log(`stack: ollama "${stack.ollamaVersion}" | gemma-cli ${stack.gemmaCliVersion} | node ${stack.node} | ${stack.arch} ${stack.memoryGb}GB`);
+
+  let ollamaClear;
+  if (options.provider === 'ollama') {
+    log('clearing Ollama for a cold start');
+    ollamaClear = clearOllama();
+    if (ollamaClear.residentAfter.length > 0) {
+      log(`WARNING: models still resident after clear: ${ollamaClear.residentAfter.join(', ')}`);
+    }
+  } else {
+    log(`using external ${options.provider} endpoint ${options.endpoint}`);
+  }
+  const stack = collectStackMetadata(options);
+  log(`stack: provider ${stack.provider}${stack.endpoint ? ` at ${stack.endpoint}` : ''}${stack.ollamaVersion ? ` | ollama "${stack.ollamaVersion}"` : ''} | gemma-cli ${stack.gemmaCliVersion} | node ${stack.node} | ${stack.arch} ${stack.memoryGb}GB`);
 
   const attemptStartedAt = Date.now();
   const runs = [];
@@ -363,12 +429,25 @@ for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
   const allRunsCompleted = runs.length === 4 && runs.every((r) => r.status === 'completed');
   const summary = {
     benchmark: 'solar-iterative',
+    provider: options.provider,
+    cliProvider: cliProviderFor(options.provider),
+    endpoint: options.endpoint,
     model: options.model,
     attemptSlot: slot,
     attemptDir,
     workspace,
     stack,
     ollamaClear,
+    ...(options.temperature !== undefined || options.topK !== undefined || options.topP !== undefined || options.reasoningMode
+      ? {
+          sampling: {
+            temperature: options.temperature,
+            topK: options.topK,
+            topP: options.topP,
+            reasoningMode: options.reasoningMode ?? 'auto',
+          },
+        }
+      : {}),
     supervision: {
       runCapMin: options.runCapMin,
       stallMin: options.stallMin,
@@ -388,6 +467,8 @@ for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
   log(`attempt outcome: ${summary.outcome} | total ${fmt(totalMs)} | validation ${checksPassed}`);
 }
 
-log('clearing Ollama (final cleanup)');
-clearOllama();
+if (options.provider === 'ollama') {
+  log('clearing Ollama (final cleanup)');
+  clearOllama();
+}
 log('round done');
