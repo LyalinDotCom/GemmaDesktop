@@ -2076,6 +2076,34 @@ describe('Agent', () => {
     });
   });
 
+  it('treats {"<tool_name>":{...}} wrapper drift as protocol drift, not a final answer', async () => {
+    // Observed live with the gemma4:26b-mlx import: the model wrapped a file
+    // write as {"write_file":{...},"path":...} and the agent accepted it as a
+    // completed text answer with zero tools executed — a silent fake success.
+    const writes: unknown[] = [];
+    const provider = new ScriptedProvider([
+      '```json\n{"write_file":{"content":"const canvas = 1;"} , "path":"app.js"}\n```',
+      '{"tool":"write_file","args":{"path":"app.js","content":"const canvas = 1;"}}',
+      '{"answer":"done"}'
+    ]);
+    const agent = new Agent({
+      provider,
+      tools: [{
+        name: 'write_file',
+        description: 'write',
+        async run(args) {
+          writes.push(args.path);
+          return { ok: true, output: 'wrote' };
+        }
+      }]
+    });
+
+    const result = await agent.run('update app.js');
+    expect(writes).toEqual(['app.js']);
+    expect(result.answer).toBe('done');
+    expect(result.stats.toolCalls).toBe(1);
+  });
+
   it('keeps surrounding prose instead of truncating to an embedded JSON object', async () => {
     const agent = new Agent({
       provider: new ScriptedProvider(['Here is the summary you asked for: {"status":"ok","count":17} Let me know if you need more.'])

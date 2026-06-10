@@ -164,7 +164,7 @@ export class Agent {
           throw error;
         }
       }
-      const action = parseActionOrRecoveryInstruction(raw);
+      const action = parseActionOrRecoveryInstruction(raw, new Set(this.tools.keys()));
       if ('retryInstruction' in action) {
         malformedResponseRetryCount += 1;
         if (malformedResponseRetryCount > 2) {
@@ -361,7 +361,7 @@ export class Agent {
         await options.onModelActivity?.({ index: maxTurns, chunk, finalization: true });
       }
     });
-    const action = parseActionOrRecoveryInstruction(raw);
+    const action = parseActionOrRecoveryInstruction(raw, new Set(this.tools.keys()));
     let answer: string;
     let completionStatus: AgentRunResult['completionStatus'] = 'completed';
     let completionReason: string | undefined;
@@ -2200,9 +2200,9 @@ function isTransientModelTransportError(error: unknown): boolean {
   return error instanceof Error && /fetch failed|network error|socket hang up|ECONNRESET|ECONNREFUSED|terminated|AbortError|operation was aborted|stream was aborted/i.test(error.message);
 }
 
-function parseActionOrRecoveryInstruction(text: string): ({ answer: string } | ToolCall) | { retryInstruction: string } {
+function parseActionOrRecoveryInstruction(text: string, toolNames?: ReadonlySet<string>): ({ answer: string } | ToolCall) | { retryInstruction: string } {
   try {
-    return parseAction(text);
+    return parseAction(text, toolNames);
   } catch (error) {
     return {
       retryInstruction: [
@@ -2682,7 +2682,7 @@ function unknownToolMessage(toolName: string): string {
   return `Unknown tool: ${toolName}`;
 }
 
-function parseAction(text: string): { answer: string } | ToolCall {
+function parseAction(text: string, toolNames?: ReadonlySet<string>): { answer: string } | ToolCall {
   const normalized = normalizeGemmaModelOutput(text);
   if (!normalized && text.trim()) {
     throw new Error('Model response contained thinking only and no JSON content.');
@@ -2752,6 +2752,14 @@ function parseAction(text: string): { answer: string } | ToolCall {
     if (looksLikeProtocolJsonObject(parsed.value)) {
       throw new Error('Model response must include either answer or tool plus args.');
     }
+    // Drift shape observed live with local models: the tool call wrapped as
+    // {"write_file":{...}} (the tool name as the key) instead of
+    // {"tool":"write_file","args":{...}}. Without this check it would be
+    // accepted as a final text answer — a silent fake success where the model
+    // believes it wrote a file and nothing happened.
+    if (toolNames && looksLikeToolWrapperObject(parsed.value, toolNames)) {
+      throw new Error('Model response wrapped a tool call as {"<tool_name>":{...}}. Use {"tool":"tool_name","args":{...}} instead.');
+    }
     // Only treat a bare JSON object as the final answer when the model's entire
     // response IS that JSON (e.g. the user explicitly asked for JSON output).
     // When the JSON is embedded in surrounding prose, returning just the JSON
@@ -2763,6 +2771,11 @@ function parseAction(text: string): { answer: string } | ToolCall {
   }
 
   return candidate;
+}
+
+function looksLikeToolWrapperObject(value: object, toolNames: ReadonlySet<string>): boolean {
+  return Object.entries(value).some(([key, child]) =>
+    toolNames.has(normalizeToolName(key)) && Boolean(child) && typeof child === 'object');
 }
 
 function looksLikeProtocolJsonObject(value: object): boolean {
