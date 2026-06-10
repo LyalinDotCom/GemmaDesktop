@@ -1,6 +1,6 @@
 {
   "name": "gemma-cli",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Unofficial local-first coding agent optimized for Gemma models.",
   "type": "module",
   "main": "dist/index.js",

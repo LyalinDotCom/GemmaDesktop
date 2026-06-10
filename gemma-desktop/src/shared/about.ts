@@ -146,7 +146,7 @@ export const ABOUT_CREDIT_SECTIONS: readonly AboutCreditSection[] = [
         version: '1.50.1',
         license: 'Apache-2.0',
         website: 'https://github.com/googleapis/js-genai',
-        role: 'Gemini API client used for Google Search grounding in the web search tool.',
+        role: 'Gemini API client used for Google Search grounding in the web search tool and the Gemini Live voice mode.',
         kind: 'open-source',
       },
       {

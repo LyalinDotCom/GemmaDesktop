@@ -30,6 +30,10 @@ import {
   SpeechComposerControl,
   type SpeechComposerVisualState,
 } from '@/components/SpeechComposerControl'
+import {
+  VoiceModeControl,
+  type VoiceModeControlProps,
+} from '@/components/VoiceModeControl'
 import type { ReadAloudPlaybackControls } from '@/hooks/useReadAloudPlayer'
 import { copyText } from '@/lib/clipboard'
 import {
@@ -168,6 +172,7 @@ export interface InputBarProps {
   onRemovePinnedQuote: (quoteId: string) => void
   onClearPinnedQuotes: () => void
   readAloudPlayback?: ReadAloudPlaybackControls
+  voiceMode?: VoiceModeControlProps | null
   assistantNarrationMode?: AssistantNarrationMode
   assistantNarrationAvailable?: boolean
   assistantNarrationDisabledReason?: string | null
@@ -354,6 +359,7 @@ export function InputBar({
   onRemovePinnedQuote,
   onClearPinnedQuotes,
   readAloudPlayback,
+  voiceMode = null,
   assistantNarrationMode = 'off',
   assistantNarrationAvailable = true,
   assistantNarrationDisabledReason = null,
@@ -2580,6 +2586,9 @@ const [historyIndex, setHistoryIndex] = useState<number | null>(null)
                   onRepair={onRepairSpeech}
                   onOpenSettings={onOpenSpeechSettings}
                 />
+              )}
+              {voiceMode && !isShellMode && (
+                <VoiceModeControl {...voiceMode} />
               )}
               {onToggleAssistantNarration && !isShellMode && (
                 <button

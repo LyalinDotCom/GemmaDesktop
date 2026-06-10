@@ -31,6 +31,8 @@ import { StartupLoadingOverlay } from '@/components/StartupLoadingOverlay'
 import { StartupRiskDialog } from '@/components/StartupRiskDialog'
 import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
+import { useVoiceMode, type VoiceModeDelegate } from '@/hooks/useVoiceMode'
+import type { VoiceModeControlProps } from '@/components/VoiceModeControl'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
   FileAttachment,
@@ -2061,6 +2063,61 @@ export function App() {
     </>
   )
 
+  // ── Voice mode (Gemini Live) ──
+  // Bound to one conversation surface at a time: the Assistant Chat (initial
+  // chat mode) or the active project session (work mode). Any surface switch
+  // turns voice mode off via the hook's surfaceKey reset.
+  const voiceSurfaceIsGlobalChat = assistantHomeVisible || !state.activeSession
+  const voiceSurfaceKey = voiceSurfaceIsGlobalChat
+    ? `assistant:${globalChatSession.sessionId ?? 'pending'}`
+    : `session:${state.activeSession?.id ?? 'none'}`
+  const voiceModeDelegate: VoiceModeDelegate = {
+    isChatBusy: () => (voiceSurfaceIsGlobalChat ? globalChatBusy : isBusy),
+    sendToChat: async (prompt: string) => {
+      if (voiceSurfaceIsGlobalChat) {
+        const sessionId = globalChatSession.sessionId
+        if (!sessionId || !globalChatDetail) {
+          throw new Error('The Assistant Chat is not ready yet.')
+        }
+        const previousAssistantIds =
+          collectAssistantMessageIds(globalChatDetail.messages)
+        await handleGlobalChatSend({ text: prompt })
+        const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
+        return findLatestNewAssistantText(detail.messages, previousAssistantIds)
+      }
+
+      const sessionId = state.activeSessionId
+      if (!sessionId || !state.activeSession) {
+        throw new Error('No active conversation is open.')
+      }
+      const previousAssistantIds =
+        collectAssistantMessageIds(state.activeSession.messages)
+      await sendMessage({ text: prompt })
+      const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
+      return findLatestNewAssistantText(detail.messages, previousAssistantIds)
+    },
+  }
+  const voiceMode = useVoiceMode({
+    apiKey: state.settings.integrations.geminiApi.apiKey,
+    surfaceKey: voiceSurfaceKey,
+    surfaceLabel: voiceSurfaceIsGlobalChat
+      ? 'the Assistant Chat conversation'
+      : `the project conversation "${state.activeSession?.title ?? 'Untitled'}"`,
+    modelLabel: (voiceSurfaceIsGlobalChat
+      ? globalChatDetail?.modelId
+      : state.activeSession?.modelId) ?? 'the configured chat model',
+    delegate: voiceModeDelegate,
+  })
+  const voiceModeControlProps: VoiceModeControlProps = {
+    status: voiceMode.status,
+    hasApiKey: voiceMode.hasApiKey,
+    chatPending: voiceMode.chatPending,
+    errorMessage: voiceMode.errorMessage,
+    onToggle: voiceMode.toggle,
+    onDismissError: voiceMode.dismissError,
+    onOpenSettings: () => openSettings('gemini'),
+  }
+
   const handlePrimaryInputSend = useCallback(async (
     message: { text: string; attachments?: FileAttachment[] },
   ) => {
@@ -2174,6 +2231,7 @@ export function App() {
       onRemovePinnedQuote={removePinnedQuote}
       onClearPinnedQuotes={clearPinnedQuotes}
       readAloudPlayback={readAloudPlayer.playbackControls}
+      voiceMode={voiceModeControlProps}
       assistantNarrationMode={assistantNarrationMode}
       assistantNarrationAvailable={assistantNarrationAvailable}
       assistantNarrationDisabledReason={assistantNarrationDisabledReason}
@@ -2277,6 +2335,7 @@ export function App() {
       onRemovePinnedQuote={handleRemoveGlobalPinnedQuote}
       onClearPinnedQuotes={handleClearGlobalPinnedQuotes}
       readAloudPlayback={readAloudPlayer.playbackControls}
+      voiceMode={voiceModeControlProps}
       presentation="floating"
       layout="expanded"
       showMainModelLabel
