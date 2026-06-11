@@ -14,6 +14,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai'
 import { GEMINI_LIVE_VOICE_MODEL } from '../../src/shared/geminiModels'
+import { GEMINI_LIVE_DEFAULT_VOICE } from '../../src/shared/voiceMode'
 import {
   VOICE_LIVE_RESEARCH_TOOL_NAME,
   VOICE_LIVE_SEND_TOOL_NAME,
@@ -163,6 +164,11 @@ describeLive('gemini live voice contract (live)', () => {
           }),
           tools: [{ functionDeclarations: buildVoiceLiveToolDeclarations() }],
           outputAudioTranscription: {},
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: GEMINI_LIVE_DEFAULT_VOICE },
+            },
+          },
         },
         callbacks: {
           onmessage: (message) => inbox.push(message),
@@ -255,6 +261,11 @@ describeLive('gemini live voice contract (live)', () => {
           }),
           tools: [{ functionDeclarations: buildVoiceLiveToolDeclarations() }],
           outputAudioTranscription: {},
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: GEMINI_LIVE_DEFAULT_VOICE },
+            },
+          },
         },
         callbacks: {
           onmessage: (message) => inbox.push(message),

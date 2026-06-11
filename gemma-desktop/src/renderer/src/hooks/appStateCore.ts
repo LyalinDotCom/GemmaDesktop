@@ -15,6 +15,7 @@ import { getDefaultOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import { getDefaultLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
 import { getDefaultOmlxSettings } from '@shared/omlxRuntimeConfig'
 import { getDefaultGeminiApiSettings } from '@shared/geminiApiRuntimeConfig'
+import { getDefaultVoiceModeSettings } from '@shared/voiceMode'
 import { getDefaultReasoningSettings } from '@shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '@shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
@@ -412,6 +413,7 @@ const defaultSettings: AppSettings = {
       model: ASK_GEMINI_DEFAULT_MODEL,
     },
   },
+  voiceMode: getDefaultVoiceModeSettings(),
 }
 
 export const initialState: AppState = {

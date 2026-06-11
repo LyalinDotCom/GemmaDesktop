@@ -61,6 +61,10 @@ import {
 } from '@shared/reasoningSettings'
 import { ASK_GEMINI_DEFAULT_MODEL } from '@shared/geminiModels'
 import {
+  GEMINI_LIVE_VOICE_OPTIONS,
+  formatGeminiLiveVoiceLabel,
+} from '@shared/voiceMode'
+import {
   Button,
   MetaList,
   Note,
@@ -1515,6 +1519,33 @@ export function SettingsModal({
                   <Note>
                     Gemma Desktop downloads Kokoro voice files automatically the first time you preview or read a response aloud, then reuses them locally one message at a time.
                   </Note>
+                </SettingsSection>
+              )}
+
+              {activeTab === 'voice' && (
+                <SettingsSection
+                  title="Voice Mode (Gemini Live)"
+                  description="The spoken voice used by the live voice assistant in the composer. Every supported Gemini Live prebuilt voice is listed; changes apply the next time voice mode starts."
+                >
+                  <SettingsField label="Voice">
+                    <Select
+                      value={local.voiceMode.voiceName}
+                      onChange={(event) => {
+                        const voiceMode = {
+                          ...local.voiceMode,
+                          voiceName: event.target.value,
+                        }
+                        setLocal({ ...local, voiceMode })
+                        commitUpdate({ voiceMode })
+                      }}
+                    >
+                      {GEMINI_LIVE_VOICE_OPTIONS.map((voice) => (
+                        <option key={voice.id} value={voice.id}>
+                          {formatGeminiLiveVoiceLabel(voice)}
+                        </option>
+                      ))}
+                    </Select>
+                  </SettingsField>
                 </SettingsSection>
               )}
 

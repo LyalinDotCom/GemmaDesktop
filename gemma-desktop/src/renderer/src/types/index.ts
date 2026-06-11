@@ -47,6 +47,7 @@ import type { AppOllamaSettings } from '@shared/ollamaRuntimeConfig'
 import type { AppLmStudioSettings } from '@shared/lmstudioRuntimeConfig'
 import type { AppOmlxSettings } from '@shared/omlxRuntimeConfig'
 import type { AppGeminiApiSettings } from '@shared/geminiApiRuntimeConfig'
+import type { AppVoiceModeSettings } from '@shared/voiceMode'
 import type { AppReasoningSettings } from '@shared/reasoningSettings'
 import type {
   LoadDefaultModelsResult,
@@ -663,6 +664,7 @@ export interface AppSettings {
       model: string
     }
   }
+  voiceMode: AppVoiceModeSettings
 }
 
 // ── IPC Bridge ──

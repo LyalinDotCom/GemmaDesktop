@@ -2252,6 +2252,7 @@ export function App() {
   }
   const voiceMode = useVoiceMode({
     apiKey: state.settings.integrations.geminiApi.apiKey,
+    voiceName: state.settings.voiceMode.voiceName,
     surfaceKey: voiceSurfaceKey,
     surfaceLabel: voiceSurfaceLabel,
     delegate: voiceModeDelegate,

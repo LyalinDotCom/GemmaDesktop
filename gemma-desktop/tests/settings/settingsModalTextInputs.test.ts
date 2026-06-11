@@ -8,6 +8,7 @@ import { SettingsModal } from '../../src/renderer/src/components/SettingsModal'
 import type { AppSettings } from '../../src/renderer/src/types'
 import { getDefaultGeminiApiSettings } from '../../src/shared/geminiApiRuntimeConfig'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../../src/shared/geminiModels'
+import { getDefaultVoiceModeSettings } from '../../src/shared/voiceMode'
 import { getDefaultLmStudioSettings } from '../../src/shared/lmstudioRuntimeConfig'
 import { getDefaultOllamaSettings } from '../../src/shared/ollamaRuntimeConfig'
 import { getDefaultOmlxSettings } from '../../src/shared/omlxRuntimeConfig'
@@ -110,6 +111,7 @@ function makeSettings(): AppSettings {
         model: ASK_GEMINI_DEFAULT_MODEL,
       },
     },
+    voiceMode: getDefaultVoiceModeSettings(),
   }
 }
 

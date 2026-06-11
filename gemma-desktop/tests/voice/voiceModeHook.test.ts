@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mockSessions = vi.hoisted(() => ({
   instances: [] as Array<{
     options: {
+      voiceName: string
       systemInstruction: string
       onToolCall: (call: { name: string; args: Record<string, unknown> }) => Record<string, unknown>
       onEvent: (event: unknown) => void
@@ -108,6 +109,7 @@ function makeOptions(
 ): UseVoiceModeOptions {
   return {
     apiKey: 'test-key',
+    voiceName: 'Aoede',
     surfaceKey: 'assistant:talk',
     surfaceLabel: 'the Assistant Chat conversation',
     delegate: makeDelegate(),
@@ -161,6 +163,17 @@ describe('useVoiceMode lifecycle', () => {
     expect(session.options.systemInstruction).toContain('Gemma 4 26B')
     expect(session.options.systemInstruction).toContain('Recent conversation history')
     expect(session.options.systemInstruction).toContain('earlier question')
+  })
+
+  it('uses the configured voice and normalizes unknown names to the default', async () => {
+    const session = await startVoice(makeOptions({ voiceName: 'Aoede' }))
+    expect(session.options.voiceName).toBe('Aoede')
+    await act(async () => {
+      handle!.toggle()
+    })
+
+    const fallbackSession = await startVoice(makeOptions({ voiceName: 'not-a-voice' }))
+    expect(fallbackSession.options.voiceName).toBe('Kore')
   })
 
   it('builds a fresh instruction (new history) on every restart', async () => {

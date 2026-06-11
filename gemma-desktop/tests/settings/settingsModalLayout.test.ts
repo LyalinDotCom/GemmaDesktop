@@ -20,6 +20,7 @@ import { getDefaultGeminiApiSettings } from '../../src/shared/geminiApiRuntimeCo
 import { getDefaultReasoningSettings } from '../../src/shared/reasoningSettings'
 import { DEFAULT_MODEL_SELECTION_SETTINGS } from '../../src/shared/sessionModelDefaults'
 import { ASK_GEMINI_DEFAULT_MODEL } from '../../src/shared/geminiModels'
+import { getDefaultVoiceModeSettings } from '../../src/shared/voiceMode'
 
 function makeSettings(): AppSettings {
   return {
@@ -117,6 +118,7 @@ function makeSettings(): AppSettings {
         model: ASK_GEMINI_DEFAULT_MODEL,
       },
     },
+    voiceMode: getDefaultVoiceModeSettings(),
   }
 }
 

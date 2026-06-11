@@ -57,6 +57,7 @@ export interface VoiceLiveTransportCallbacks {
 export type VoiceLiveConnect = (options: {
   apiKey: string
   model: string
+  voiceName: string
   systemInstruction: string
   functionDeclarations: FunctionDeclaration[]
   callbacks: VoiceLiveTransportCallbacks
@@ -72,6 +73,13 @@ const connectWithGenAi: VoiceLiveConnect = async (options) => {
       tools: [{ functionDeclarations: options.functionDeclarations }],
       inputAudioTranscription: {},
       outputAudioTranscription: {},
+      // Pin the voice: without an explicit speechConfig the server may pick
+      // a different prebuilt voice on every session.
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: options.voiceName },
+        },
+      },
     },
     callbacks: options.callbacks,
   })
@@ -80,6 +88,7 @@ const connectWithGenAi: VoiceLiveConnect = async (options) => {
 export interface VoiceLiveSessionOptions {
   apiKey: string
   model: string
+  voiceName: string
   systemInstruction: string
   functionDeclarations: FunctionDeclaration[]
   onEvent: (event: VoiceLiveSessionEvent) => void
@@ -114,6 +123,7 @@ export class VoiceLiveSession {
     this.transport = await connect({
       apiKey: this.options.apiKey,
       model: this.options.model,
+      voiceName: this.options.voiceName,
       systemInstruction: this.options.systemInstruction,
       functionDeclarations: this.options.functionDeclarations,
       callbacks: {

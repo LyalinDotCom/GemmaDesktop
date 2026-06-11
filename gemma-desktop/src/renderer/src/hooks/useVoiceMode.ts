@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GEMINI_LIVE_VOICE_MODEL } from '@shared/geminiModels'
+import { normalizeGeminiLiveVoice } from '@shared/voiceMode'
 import {
   VoiceLiveSession,
   type VoiceLiveSessionEvent,
@@ -61,6 +62,9 @@ export interface VoiceModeDelegate {
 
 export interface UseVoiceModeOptions {
   apiKey: string
+  // Prebuilt Gemini Live voice for spoken replies. Applied on the next voice
+  // session start; normalized against the supported voice catalog.
+  voiceName: string
   // Identity of the conversation surface voice mode is bound to. A change
   // turns voice mode off and drops the live context — unless the change was
   // initiated by a voice tool (new chat / research), in which case the hook
@@ -268,6 +272,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
     const session = new VoiceLiveSession({
       apiKey: optionsRef.current.apiKey.trim(),
       model: GEMINI_LIVE_VOICE_MODEL,
+      voiceName: normalizeGeminiLiveVoice(optionsRef.current.voiceName),
       systemInstruction: buildVoiceLiveSystemInstruction({
         surfaceLabel: optionsRef.current.surfaceLabel,
         capabilities: optionsRef.current.delegate.getCapabilities(),

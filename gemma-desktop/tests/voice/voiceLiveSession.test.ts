@@ -21,6 +21,7 @@ interface Harness {
     sendToolResponse: ReturnType<typeof vi.fn>
     close: ReturnType<typeof vi.fn>
   }
+  connectOptions: () => { voiceName?: string; model?: string } | null
   callbacks: () => VoiceLiveTransportCallbacks
   // Server messages are plain JSON over the wire; the SDK type is a class
   // with extra getters, so the harness owns the cast.
@@ -44,6 +45,7 @@ function createHarness(overrides?: {
 }): Harness {
   const events: VoiceLiveSessionEvent[] = []
   let callbacks: VoiceLiveTransportCallbacks | null = null
+  let connectOptions: { voiceName?: string; model?: string } | null = null
   let micChunkHandler: ((base64: string) => void) | null = null
   let playingChange: ((playing: boolean) => void) | null = null
 
@@ -70,12 +72,14 @@ function createHarness(overrides?: {
   const session = new VoiceLiveSession({
     apiKey: 'test-key',
     model: 'test-live-model',
+    voiceName: 'Kore',
     systemInstruction: 'test instruction',
     functionDeclarations: [],
     onEvent: (event) => events.push(event),
     onToolCall: overrides?.onToolCall ?? (() => ({ ok: true })),
     connect: async (options) => {
       callbacks = options.callbacks
+      connectOptions = options
       return transport as VoiceLiveTransport
     },
     createMicrophone: (): VoiceLiveMicrophone => ({
@@ -108,6 +112,7 @@ function createHarness(overrides?: {
     session,
     events,
     transport,
+    connectOptions: () => connectOptions,
     callbacks: () => {
       if (!callbacks) throw new Error('transport callbacks not captured')
       return callbacks
@@ -128,6 +133,16 @@ describe('VoiceLiveSession lifecycle', () => {
 
     expect(harness.mic.started).toBe(true)
     expect(harness.events).toContainEqual({ type: 'open' })
+  })
+
+  it('passes the configured voice through to the live connection', async () => {
+    const harness = createHarness()
+    await harness.session.start()
+
+    expect(harness.connectOptions()).toMatchObject({
+      model: 'test-live-model',
+      voiceName: 'Kore',
+    })
   })
 
   it('forwards microphone chunks as 16kHz PCM realtime input', async () => {

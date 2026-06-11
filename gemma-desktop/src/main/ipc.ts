@@ -216,6 +216,11 @@ import {
   type AppGeminiApiSettings,
 } from '../shared/geminiApiRuntimeConfig'
 import {
+  getDefaultVoiceModeSettings,
+  normalizeGeminiLiveVoice,
+  type AppVoiceModeSettings,
+} from '../shared/voiceMode'
+import {
   buildDoctorReport,
   collectDoctorCommandChecks,
 } from './doctor'
@@ -1203,6 +1208,7 @@ type AppSettingsRecord = {
       model: string
     }
   }
+  voiceMode: AppVoiceModeSettings
 }
 
 type AppDataResetRequest = {
@@ -4272,6 +4278,7 @@ function getDefaultSettings(): AppSettingsRecord {
         model: ASK_GEMINI_DEFAULT_MODEL,
       },
     },
+    voiceMode: getDefaultVoiceModeSettings(),
   }
 }
 
@@ -4541,6 +4548,9 @@ async function loadSettings(): Promise<AppSettingsRecord> {
         defaults.integrations.geminiApi,
       ),
     },
+    voiceMode: {
+      voiceName: normalizeGeminiLiveVoice(reusable.voiceMode?.voiceName),
+    },
     defaultProjectDirectory:
       typeof reusable.defaultProjectDirectory === 'string'
         && reusable.defaultProjectDirectory.trim().length > 0
@@ -4691,6 +4701,11 @@ async function saveSettings(
         ...current.integrations.geminiCli,
         ...(patch.integrations?.geminiCli ?? {}),
       },
+    },
+    voiceMode: {
+      voiceName: normalizeGeminiLiveVoice(
+        patch.voiceMode?.voiceName ?? current.voiceMode.voiceName,
+      ),
     },
     defaultProjectDirectory:
       typeof patch.defaultProjectDirectory === 'string'
