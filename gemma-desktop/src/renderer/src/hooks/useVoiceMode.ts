@@ -5,16 +5,26 @@ import {
   type VoiceLiveSessionEvent,
 } from '@/lib/voiceLiveSession'
 import {
+  VOICE_LIVE_APP_CONTEXT_TOOL_NAME,
+  VOICE_LIVE_NEW_CHAT_TOOL_NAME,
+  VOICE_LIVE_RESEARCH_TOOL_NAME,
   VOICE_LIVE_SEND_TOOL_NAME,
+  buildAppContextResult,
   buildChatAcceptedResult,
   buildChatBusyResult,
   buildChatEmptyResponseUpdate,
   buildChatErrorUpdate,
   buildChatRejectedResult,
   buildChatResponseUpdate,
+  buildCreationFailedUpdate,
+  buildCreationStartingResult,
+  buildNewChatStartedUpdate,
+  buildResearchStartedUpdate,
   buildVoiceLiveSystemInstruction,
   buildVoiceLiveToolDeclarations,
   normalizeVoiceLiveError,
+  type VoiceLiveAppCapabilities,
+  type VoiceLiveHistoryTurn,
 } from '@/lib/voiceLivePrompt'
 
 export type VoiceModeStatus =
@@ -24,22 +34,39 @@ export type VoiceModeStatus =
   | 'speaking'
   | 'error'
 
+export interface VoiceModeCreatedConversation {
+  surfaceKey: string
+  sessionId: string
+  title: string
+}
+
 export interface VoiceModeDelegate {
   isChatBusy: () => boolean
-  // Sends one prompt into the active conversation and resolves with the new
+  // Sends one prompt into the bound conversation and resolves with the new
   // assistant text once the turn completes (null when the turn produced no
   // readable text). Rejects on send failure.
   sendToChat: (prompt: string) => Promise<string | null>
+  // Same contract, but targets an explicit session (used right after this
+  // hook creates a conversation, before the App re-render catches up).
+  sendToSession: (sessionId: string, prompt: string) => Promise<string | null>
+  // Reality-based snapshot of what the app can do right now; rebuilt on every
+  // call so mid-session changes (CoBrowse, model swaps) are visible.
+  getCapabilities: () => VoiceLiveAppCapabilities
+  getHistoryTurns: () => VoiceLiveHistoryTurn[]
+  startNewChat: (input: { title?: string }) => Promise<VoiceModeCreatedConversation>
+  startResearchChat: (input: {
+    title?: string
+  }) => Promise<VoiceModeCreatedConversation>
 }
 
 export interface UseVoiceModeOptions {
   apiKey: string
-  // Identity of the conversation surface voice mode is bound to. Any change
-  // (Assistant Chat ↔ project session, or switching sessions) turns voice
-  // mode off and drops the live context so conversations never bleed over.
+  // Identity of the conversation surface voice mode is bound to. A change
+  // turns voice mode off and drops the live context — unless the change was
+  // initiated by a voice tool (new chat / research), in which case the hook
+  // adopts the new surface and the session continues.
   surfaceKey: string
   surfaceLabel: string
-  modelLabel: string
   delegate: VoiceModeDelegate
 }
 
@@ -64,6 +91,11 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
 
   const sessionRef = useRef<VoiceLiveSession | null>(null)
   const chatPendingRef = useRef(false)
+  const creationPendingRef = useRef(false)
+  // While a voice-initiated conversation creation is in flight, surface-key
+  // changes are adopted instead of stopping the session.
+  const adoptSurfaceChangesRef = useRef(false)
+  const boundSurfaceKeyRef = useRef(options.surfaceKey)
 
   const hasApiKey = options.apiKey.trim().length > 0
 
@@ -76,6 +108,8 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
     const session = sessionRef.current
     sessionRef.current = null
     setPending(false)
+    creationPendingRef.current = false
+    adoptSurfaceChangesRef.current = false
     if (session) {
       void session.stop()
     }
@@ -90,24 +124,16 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
     stopSession('error')
   }, [stopSession])
 
-  const handleToolCall = useCallback((call: { name: string; args: Record<string, unknown> }) => {
-    if (call.name !== VOICE_LIVE_SEND_TOOL_NAME) {
-      return buildChatRejectedResult(`Unknown tool: ${call.name}`) as unknown as Record<string, unknown>
-    }
-    const prompt = typeof call.args.prompt === 'string' ? call.args.prompt.trim() : ''
-    if (!prompt) {
-      return buildChatRejectedResult('The prompt was empty. Ask the user what they want and try again.') as unknown as Record<string, unknown>
-    }
-    if (chatPendingRef.current || optionsRef.current.delegate.isChatBusy()) {
-      return buildChatBusyResult() as unknown as Record<string, unknown>
-    }
-
-    const session = sessionRef.current
+  // Runs one delegated chat request and feeds the outcome back into the live
+  // session as an update message.
+  const runDelegatedChatRequest = useCallback((
+    session: VoiceLiveSession,
+    run: () => Promise<string | null>,
+  ) => {
     setPending(true)
-    optionsRef.current.delegate
-      .sendToChat(prompt)
+    run()
       .then((responseText) => {
-        if (sessionRef.current !== session || !session) return
+        if (sessionRef.current !== session) return
         session.sendSystemUpdate(
           responseText
             ? buildChatResponseUpdate(responseText)
@@ -115,7 +141,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
         )
       })
       .catch((error: unknown) => {
-        if (sessionRef.current !== session || !session) return
+        if (sessionRef.current !== session) return
         session.sendSystemUpdate(
           buildChatErrorUpdate(normalizeVoiceLiveError(error)),
         )
@@ -125,9 +151,111 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
           setPending(false)
         }
       })
-
-    return buildChatAcceptedResult() as unknown as Record<string, unknown>
   }, [setPending])
+
+  const handleCreationToolCall = useCallback((
+    session: VoiceLiveSession,
+    kind: 'chat' | 'research',
+    args: Record<string, unknown>,
+  ) => {
+    const delegate = optionsRef.current.delegate
+    const availability = kind === 'research'
+      ? delegate.getCapabilities().canStartResearchChat
+      : delegate.getCapabilities().canStartNewChat
+    if (!availability.ok) {
+      return buildChatRejectedResult(
+        availability.reason ?? 'Creating a conversation is unavailable right now.',
+      )
+    }
+    if (creationPendingRef.current) {
+      return buildChatRejectedResult('Another conversation is already being created. Wait for its update first.')
+    }
+
+    const title = typeof args.title === 'string' ? args.title.trim() : ''
+    const researchGoal = typeof args.research_goal === 'string'
+      ? args.research_goal.trim()
+      : ''
+    const firstMessage = typeof args.first_message === 'string'
+      ? args.first_message.trim()
+      : ''
+    if (kind === 'research' && !researchGoal) {
+      return buildChatRejectedResult('research_goal was empty. Ask the user what to research and try again.')
+    }
+
+    creationPendingRef.current = true
+    adoptSurfaceChangesRef.current = true
+
+    const create = kind === 'research'
+      ? delegate.startResearchChat({ title: title || undefined })
+      : delegate.startNewChat({ title: title || undefined })
+
+    create
+      .then((created) => {
+        boundSurfaceKeyRef.current = created.surfaceKey
+        if (sessionRef.current !== session) return
+        if (kind === 'research') {
+          session.sendSystemUpdate(buildResearchStartedUpdate(created.title))
+          runDelegatedChatRequest(session, () =>
+            optionsRef.current.delegate.sendToSession(created.sessionId, researchGoal))
+        } else {
+          session.sendSystemUpdate(
+            buildNewChatStartedUpdate(created.title, firstMessage.length > 0),
+          )
+          if (firstMessage) {
+            runDelegatedChatRequest(session, () =>
+              optionsRef.current.delegate.sendToSession(created.sessionId, firstMessage))
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        if (sessionRef.current !== session) return
+        session.sendSystemUpdate(
+          buildCreationFailedUpdate(kind, normalizeVoiceLiveError(error)),
+        )
+      })
+      .finally(() => {
+        creationPendingRef.current = false
+        adoptSurfaceChangesRef.current = false
+      })
+
+    return buildCreationStartingResult(kind)
+  }, [runDelegatedChatRequest])
+
+  const handleToolCall = useCallback((call: { name: string; args: Record<string, unknown> }) => {
+    const session = sessionRef.current
+    if (!session) {
+      return buildChatRejectedResult('Voice mode is shutting down.') as unknown as Record<string, unknown>
+    }
+
+    if (call.name === VOICE_LIVE_APP_CONTEXT_TOOL_NAME) {
+      return buildAppContextResult(
+        optionsRef.current.delegate.getCapabilities(),
+      ) as unknown as Record<string, unknown>
+    }
+
+    if (call.name === VOICE_LIVE_NEW_CHAT_TOOL_NAME) {
+      return handleCreationToolCall(session, 'chat', call.args) as unknown as Record<string, unknown>
+    }
+    if (call.name === VOICE_LIVE_RESEARCH_TOOL_NAME) {
+      return handleCreationToolCall(session, 'research', call.args) as unknown as Record<string, unknown>
+    }
+
+    if (call.name !== VOICE_LIVE_SEND_TOOL_NAME) {
+      return buildChatRejectedResult(`Unknown tool: ${call.name}`) as unknown as Record<string, unknown>
+    }
+
+    const prompt = typeof call.args.prompt === 'string' ? call.args.prompt.trim() : ''
+    if (!prompt) {
+      return buildChatRejectedResult('The prompt was empty. Ask the user what they want and try again.') as unknown as Record<string, unknown>
+    }
+    if (chatPendingRef.current || optionsRef.current.delegate.isChatBusy()) {
+      return buildChatBusyResult() as unknown as Record<string, unknown>
+    }
+
+    runDelegatedChatRequest(session, () =>
+      optionsRef.current.delegate.sendToChat(prompt))
+    return buildChatAcceptedResult() as unknown as Record<string, unknown>
+  }, [handleCreationToolCall, runDelegatedChatRequest])
 
   const start = useCallback(() => {
     if (sessionRef.current || !optionsRef.current.apiKey.trim()) {
@@ -135,13 +263,15 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
     }
     setErrorMessage(null)
     setStatus('connecting')
+    boundSurfaceKeyRef.current = optionsRef.current.surfaceKey
 
     const session = new VoiceLiveSession({
       apiKey: optionsRef.current.apiKey.trim(),
       model: GEMINI_LIVE_VOICE_MODEL,
       systemInstruction: buildVoiceLiveSystemInstruction({
         surfaceLabel: optionsRef.current.surfaceLabel,
-        modelLabel: optionsRef.current.modelLabel,
+        capabilities: optionsRef.current.delegate.getCapabilities(),
+        historyTurns: optionsRef.current.delegate.getHistoryTurns(),
       }),
       functionDeclarations: buildVoiceLiveToolDeclarations(),
       onToolCall: handleToolCall,
@@ -191,18 +321,24 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeHandle {
     setStatus((current) => (current === 'error' ? 'off' : current))
   }, [])
 
-  // Switching conversation surfaces always turns voice mode off and resets
-  // the live context (fresh session on next start).
-  const previousSurfaceKeyRef = useRef(options.surfaceKey)
+  // Manual surface switches (Assistant Chat ↔ project session, or another
+  // session) turn voice mode off and reset the live context. Voice-initiated
+  // switches — a creation tool is in flight or just resolved to this exact
+  // key — are adopted so the session keeps going in the new conversation.
   useEffect(() => {
-    if (previousSurfaceKeyRef.current !== options.surfaceKey) {
-      previousSurfaceKeyRef.current = options.surfaceKey
-      if (sessionRef.current) {
-        stopSession('off')
-      } else {
-        setErrorMessage(null)
-        setStatus('off')
-      }
+    if (boundSurfaceKeyRef.current === options.surfaceKey) {
+      return
+    }
+    if (sessionRef.current && adoptSurfaceChangesRef.current) {
+      boundSurfaceKeyRef.current = options.surfaceKey
+      return
+    }
+    boundSurfaceKeyRef.current = options.surfaceKey
+    if (sessionRef.current) {
+      stopSession('off')
+    } else {
+      setErrorMessage(null)
+      setStatus('off')
     }
   }, [options.surfaceKey, stopSession])
 

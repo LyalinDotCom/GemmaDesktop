@@ -15,12 +15,34 @@ import { describe, expect, it } from 'vitest'
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai'
 import { GEMINI_LIVE_VOICE_MODEL } from '../../src/shared/geminiModels'
 import {
+  VOICE_LIVE_RESEARCH_TOOL_NAME,
   VOICE_LIVE_SEND_TOOL_NAME,
   buildChatAcceptedResult,
   buildChatResponseUpdate,
   buildVoiceLiveSystemInstruction,
   buildVoiceLiveToolDeclarations,
+  type VoiceLiveAppCapabilities,
 } from '../../src/renderer/src/lib/voiceLivePrompt'
+
+const LIVE_TEST_CAPABILITIES: VoiceLiveAppCapabilities = {
+  surfaceLabel: 'the Assistant Chat conversation',
+  conversationKind: 'normal',
+  workMode: 'explore',
+  planMode: false,
+  workingDirectory: '/Users/dev/example',
+  model: {
+    id: 'gemma4:26b',
+    name: 'Gemma 4 26B',
+    runtimeName: 'Ollama',
+    attachments: { image: true, audio: false, video: false, pdf: false },
+    contextLength: 131_072,
+  },
+  coBrowseActive: false,
+  chatBusy: false,
+  addOnTools: [],
+  canStartNewChat: { ok: true },
+  canStartResearchChat: { ok: true },
+}
 
 const runVoiceLive = process.env.GEMMA_DESKTOP_RUN_VOICE_LIVE === '1'
 const describeLive = runVoiceLive ? describe : describe.skip
@@ -134,7 +156,10 @@ describeLive('gemini live voice contract (live)', () => {
           responseModalities: [Modality.AUDIO],
           systemInstruction: buildVoiceLiveSystemInstruction({
             surfaceLabel: 'the Assistant Chat conversation',
-            modelLabel: 'gemma4:26b',
+            capabilities: LIVE_TEST_CAPABILITIES,
+            historyTurns: [
+              { role: 'user', text: 'We were just talking about sea poetry.' },
+            ],
           }),
           tools: [{ functionDeclarations: buildVoiceLiveToolDeclarations() }],
           outputAudioTranscription: {},
@@ -206,6 +231,59 @@ describeLive('gemini live voice contract (live)', () => {
 
         expect(receivedAudio).toBe(true)
         expect(narrated.trim().length).toBeGreaterThan(0)
+      } finally {
+        session.close()
+      }
+    },
+  )
+
+  it(
+    'routes a research request to start_research_chat with the stated goal',
+    { timeout: 120_000 },
+    async () => {
+      const client = new GoogleGenAI({ apiKey: resolveGeminiApiKey() })
+      const inbox = createMessageInbox()
+
+      const session = await client.live.connect({
+        model: GEMINI_LIVE_VOICE_MODEL,
+        config: {
+          responseModalities: [Modality.AUDIO],
+          systemInstruction: buildVoiceLiveSystemInstruction({
+            surfaceLabel: 'the Assistant Chat conversation',
+            capabilities: LIVE_TEST_CAPABILITIES,
+            historyTurns: [],
+          }),
+          tools: [{ functionDeclarations: buildVoiceLiveToolDeclarations() }],
+          outputAudioTranscription: {},
+        },
+        callbacks: {
+          onmessage: (message) => inbox.push(message),
+          onerror: (event) => inbox.fail(new Error(String(event?.message ?? 'live error'))),
+          onclose: (event) => inbox.fail(new Error(`closed: ${event?.reason ?? 'no reason'}`)),
+        },
+      })
+
+      try {
+        session.sendClientContent({
+          turns: [{
+            role: 'user',
+            parts: [{
+              text: 'Please research the current state of small local language models for coding, focusing on Apple Silicon.',
+            }],
+          }],
+          turnComplete: true,
+        })
+
+        const toolCallMessage = await inbox.next(
+          (message) => (message.toolCall?.functionCalls?.length ?? 0) > 0,
+        )
+        const call = toolCallMessage.toolCall!.functionCalls![0]!
+        expect(call.name).toBe(VOICE_LIVE_RESEARCH_TOOL_NAME)
+        const goal = String(
+          (call.args as { research_goal?: unknown } | undefined)?.research_goal ?? '',
+        ).toLowerCase()
+        expect(goal).toContain('local')
+        expect(goal.length).toBeGreaterThan(20)
       } finally {
         session.close()
       }

@@ -33,6 +33,11 @@ import { ProjectBrowserPanel } from '@/components/ProjectBrowserPanel'
 import { useGlobalChatSession } from '@/hooks/useGlobalChatSession'
 import { useVoiceMode, type VoiceModeDelegate } from '@/hooks/useVoiceMode'
 import type { VoiceModeControlProps } from '@/components/VoiceModeControl'
+import {
+  extractVoiceHistoryTurns,
+  VOICE_LIVE_UNKNOWN_ATTACHMENTS,
+  type VoiceLiveAppCapabilities,
+} from '@/lib/voiceLivePrompt'
 import { useWorkspaceDockBadges } from '@/hooks/useWorkspaceDockBadges'
 import type {
   FileAttachment,
@@ -86,6 +91,7 @@ import {
 import {
   getDefaultSelectedSessionToolIds,
   getScopedSessionToolDefinitions,
+  getSelectedSessionToolNames,
 } from '@shared/sessionTools'
 import { normalizeSidebarProjectPath } from '@shared/sidebar'
 import {
@@ -2065,12 +2071,47 @@ export function App() {
 
   // ── Voice mode (Gemini Live) ──
   // Bound to one conversation surface at a time: the Assistant Chat (initial
-  // chat mode) or the active project session (work mode). Any surface switch
-  // turns voice mode off via the hook's surfaceKey reset.
+  // chat mode) or the active project session (work mode). Manual surface
+  // switches turn voice mode off via the hook's surfaceKey reset; switches
+  // initiated by voice tools (new chat, research) are adopted instead.
   const voiceSurfaceIsGlobalChat = assistantHomeVisible || !state.activeSession
   const voiceSurfaceKey = voiceSurfaceIsGlobalChat
     ? `assistant:${globalChatSession.sessionId ?? 'pending'}`
     : `session:${state.activeSession?.id ?? 'none'}`
+  const voiceSurfaceLabel = voiceSurfaceIsGlobalChat
+    ? 'the Assistant Chat conversation'
+    : `the project conversation "${state.activeSession?.title ?? 'Untitled'}"`
+  const voiceBoundDetail = voiceSurfaceIsGlobalChat
+    ? globalChatDetail
+    : state.activeSession
+  const voiceConversationDirectory = (
+    state.activeSession?.workingDirectory
+    ?? state.settings.defaultProjectDirectory
+  ).trim()
+  const voiceSendToSession = async (
+    sessionId: string,
+    prompt: string,
+  ): Promise<string | null> => {
+    const before = await window.gemmaDesktopBridge.sessions.get(sessionId)
+    const previousAssistantIds = collectAssistantMessageIds(before.messages)
+    await window.gemmaDesktopBridge.sessions.sendMessage(sessionId, {
+      text: prompt,
+    })
+    const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
+    return findLatestNewAssistantText(detail.messages, previousAssistantIds)
+  }
+  const voiceCreationAvailability = () => {
+    if (creatingSession) {
+      return { ok: false, reason: 'another conversation is already being created' }
+    }
+    if (newConversationRunDisabledReason) {
+      return { ok: false, reason: newConversationRunDisabledReason }
+    }
+    if (!voiceConversationDirectory) {
+      return { ok: false, reason: 'no project directory is configured' }
+    }
+    return { ok: true }
+  }
   const voiceModeDelegate: VoiceModeDelegate = {
     isChatBusy: () => (voiceSurfaceIsGlobalChat ? globalChatBusy : isBusy),
     sendToChat: async (prompt: string) => {
@@ -2096,16 +2137,123 @@ export function App() {
       const detail = await window.gemmaDesktopBridge.sessions.get(sessionId)
       return findLatestNewAssistantText(detail.messages, previousAssistantIds)
     },
+    sendToSession: voiceSendToSession,
+    getCapabilities: (): VoiceLiveAppCapabilities => {
+      const detail = voiceBoundDetail
+      const model = detail
+        ? state.models.find(
+            (entry) =>
+              entry.id === detail.modelId && entry.runtimeId === detail.runtimeId,
+          ) ?? state.models.find((entry) => entry.id === detail.modelId)
+        : undefined
+      return {
+        surfaceLabel: voiceSurfaceLabel,
+        conversationKind: detail?.conversationKind ?? 'normal',
+        workMode: detail?.workMode ?? null,
+        planMode: detail?.planMode ?? false,
+        workingDirectory: detail?.workingDirectory.trim() || null,
+        model: detail
+          ? {
+              id: detail.modelId,
+              name: model?.name ?? detail.modelId,
+              runtimeName: model?.runtimeName ?? detail.runtimeId,
+              attachments: model?.attachmentSupport ?? VOICE_LIVE_UNKNOWN_ATTACHMENTS,
+              contextLength: model?.contextLength,
+            }
+          : null,
+        coBrowseActive,
+        chatBusy: voiceSurfaceIsGlobalChat ? globalChatBusy : isBusy,
+        addOnTools: getSelectedSessionToolNames(detail?.selectedToolIds ?? [], {
+          chromeMcpEnabled: state.settings.tools.chromeMcp.enabled,
+        }),
+        canStartNewChat: voiceCreationAvailability(),
+        canStartResearchChat: voiceCreationAvailability(),
+      }
+    },
+    getHistoryTurns: () =>
+      extractVoiceHistoryTurns(voiceBoundDetail?.messages ?? []),
+    startNewChat: async ({ title }) => {
+      const availability = voiceCreationAvailability()
+      if (!availability.ok) {
+        throw new Error(availability.reason)
+      }
+      const nextWorkMode =
+        state.activeSession?.conversationKind === 'normal'
+          ? state.activeSession.workMode
+          : state.settings.defaultMode
+      const target = resolveDefaultSessionModelTarget(
+        state.models,
+        nextWorkMode,
+        state.gemmaInstallStates,
+        state.settings.modelSelection,
+      )
+      setCreatingSession(true)
+      try {
+        const ready = await ensureTargetModelReady(target)
+        if (!ready) {
+          throw new Error('The default chat model is not installed and ready.')
+        }
+        dispatch({ type: 'SET_VIEW', view: 'chat' })
+        setAssistantHomeVisible(false)
+        const detail = await createSession({
+          conversationKind: 'normal',
+          workMode: nextWorkMode,
+          selectedToolIds: getDefaultSelectedSessionToolIds({
+            chromeMcpEnabled: state.settings.tools.chromeMcp.enabled,
+            chromeMcpDefaultSelected:
+              state.settings.tools.chromeMcp.defaultSelected,
+          }),
+          workingDirectory: voiceConversationDirectory,
+          title: title?.trim() || undefined,
+        })
+        return {
+          surfaceKey: `session:${detail.id}`,
+          sessionId: detail.id,
+          title: detail.title?.trim() || title?.trim() || 'New conversation',
+        }
+      } finally {
+        setCreatingSession(false)
+      }
+    },
+    startResearchChat: async ({ title }) => {
+      const availability = voiceCreationAvailability()
+      if (!availability.ok) {
+        throw new Error(availability.reason)
+      }
+      const target = resolveDefaultResearchModelTarget(
+        state.models,
+        state.gemmaInstallStates,
+        state.settings.modelSelection,
+      )
+      setCreatingSession(true)
+      try {
+        const ready = await ensureTargetModelReady(target)
+        if (!ready) {
+          throw new Error('The research model is not installed and ready.')
+        }
+        dispatch({ type: 'SET_VIEW', view: 'chat' })
+        setAssistantHomeVisible(false)
+        const resolvedTitle =
+          title?.trim() || buildNextResearchTitle(voiceConversationDirectory)
+        const detail = await createSession({
+          conversationKind: 'research',
+          workingDirectory: voiceConversationDirectory,
+          title: resolvedTitle,
+        })
+        return {
+          surfaceKey: `session:${detail.id}`,
+          sessionId: detail.id,
+          title: detail.title?.trim() || resolvedTitle,
+        }
+      } finally {
+        setCreatingSession(false)
+      }
+    },
   }
   const voiceMode = useVoiceMode({
     apiKey: state.settings.integrations.geminiApi.apiKey,
     surfaceKey: voiceSurfaceKey,
-    surfaceLabel: voiceSurfaceIsGlobalChat
-      ? 'the Assistant Chat conversation'
-      : `the project conversation "${state.activeSession?.title ?? 'Untitled'}"`,
-    modelLabel: (voiceSurfaceIsGlobalChat
-      ? globalChatDetail?.modelId
-      : state.activeSession?.modelId) ?? 'the configured chat model',
+    surfaceLabel: voiceSurfaceLabel,
     delegate: voiceModeDelegate,
   })
   const voiceModeControlProps: VoiceModeControlProps = {
