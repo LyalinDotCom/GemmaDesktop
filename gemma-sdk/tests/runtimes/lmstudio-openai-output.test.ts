@@ -2,6 +2,33 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createLmStudioOpenAICompatibleAdapter } from "@gemma-sdk/runtime-lmstudio";
 import { createMockServer } from "../helpers/mock-server.js";
 
+function toolNamesFromRequest(request: Record<string, unknown> | undefined): string[] {
+  const tools = request?.tools;
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+
+  return tools.flatMap((tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) {
+      return [];
+    }
+    const fn = (tool as Record<string, unknown>).function;
+    if (!fn || typeof fn !== "object" || Array.isArray(fn)) {
+      return [];
+    }
+    const name = (fn as Record<string, unknown>).name;
+    return typeof name === "string" ? [name] : [];
+  });
+}
+
+function rawWarningMessage(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+  const message = (value as Record<string, unknown>).message;
+  return typeof message === "string" ? message : "";
+}
+
 describe("LM Studio OpenAI-compatible output sanitization", () => {
   const cleanup: Array<() => Promise<void>> = [];
 
@@ -145,6 +172,63 @@ describe("LM Studio OpenAI-compatible output sanitization", () => {
         url: "https://news.ycombinator.com/",
       },
     }]);
+  });
+
+  it("retries generate without OpenAI-compatible tools when LM Studio rejects the model template", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        requests.push(request.bodyJson as Record<string, unknown>);
+        if (requests.length === 1) {
+          return {
+            status: 400,
+            json: {
+              error: "Error rendering prompt with jinja template: \"Cannot call something that is not a function: got UndefinedValue\".",
+            },
+          };
+        }
+
+        return {
+          json: {
+            id: "chatcmpl_mock",
+            choices: [{
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "Done.",
+              },
+              finish_reason: "stop",
+            }],
+          },
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioOpenAICompatibleAdapter({ baseUrl: server.url });
+    const response = await adapter.generate({
+      model: "gemma-4-12b-coder-fable5-composer2.5-v1@q4_k_m",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Say done." }], createdAt: new Date().toISOString() }],
+      tools: [{
+        name: "fetch_url",
+        description: "Fetch a URL.",
+        inputSchema: {
+          type: "object",
+          required: ["url"],
+          properties: { url: { type: "string" } },
+        },
+      }],
+    });
+
+    expect(response.text).toBe("Done.");
+    expect(response.warnings).toEqual([
+      "LM Studio rejected OpenAI-compatible tool definitions for this model template; retried without tool definitions.",
+    ]);
+    expect(requests).toHaveLength(2);
+    expect(toolNamesFromRequest(requests[0])).toEqual(["fetch_url"]);
+    expect(requests[1]).not.toHaveProperty("tools");
   });
 
   it("strips leaked XML-style thought tags from generate responses", async () => {
@@ -403,6 +487,74 @@ describe("LM Studio OpenAI-compatible output sanitization", () => {
         command: "pwd",
       },
     }]);
+  });
+
+  it("retries streams without OpenAI-compatible tools when LM Studio sends a template error event", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const server = await createMockServer((request) => {
+      if (request.path === "/v1/chat/completions") {
+        requests.push(request.bodyJson as Record<string, unknown>);
+        if (requests.length === 1) {
+          return {
+            sse: [
+              "event: error\n",
+              "data: {\"error\":{\"message\":\"Error rendering prompt with jinja template: \\\"Cannot call something that is not a function: got UndefinedValue\\\".\"}}\n\n",
+            ],
+          };
+        }
+
+        return {
+          sse: [
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mock\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+          ],
+        };
+      }
+
+      throw new Error(`Unhandled route: ${request.path}`);
+    });
+    cleanup.push(server.close);
+
+    const adapter = createLmStudioOpenAICompatibleAdapter({ baseUrl: server.url });
+    const events = [];
+    for await (const event of adapter.stream({
+      model: "gemma-4-12b-coder-fable5-composer2.5-v1@q4_k_m",
+      messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "Say done." }], createdAt: new Date().toISOString() }],
+      tools: [{
+        name: "fetch_url",
+        description: "Fetch a URL.",
+        inputSchema: {
+          type: "object",
+          required: ["url"],
+          properties: { url: { type: "string" } },
+        },
+      }],
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "warning",
+      warning: "LM Studio rejected OpenAI-compatible tool definitions for this model template; retried without tool definitions.",
+    });
+    const firstEvent = events[0];
+    expect(
+      firstEvent && firstEvent.type === "warning"
+        ? rawWarningMessage(firstEvent.raw)
+        : "",
+    ).toContain("Error rendering prompt with jinja template");
+    expect(events.filter((event) => event.type === "text.delta")).toEqual([{
+      type: "text.delta",
+      delta: "Done.",
+    }]);
+    const completed = events.find((event) => event.type === "response.complete");
+    expect(completed && completed.type === "response.complete" ? completed.response.warnings : []).toEqual([
+      "LM Studio rejected OpenAI-compatible tool definitions for this model template; retried without tool definitions.",
+    ]);
+    expect(requests).toHaveLength(2);
+    expect(toolNamesFromRequest(requests[0])).toEqual(["fetch_url"]);
+    expect(requests[1]).not.toHaveProperty("tools");
   });
 
   it("surfaces a mid-stream OpenAI-compatible error envelope instead of truncating", async () => {

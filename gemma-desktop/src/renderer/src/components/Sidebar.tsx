@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
   Flag,
@@ -60,9 +61,10 @@ import {
 import {
   buildModelTargetOptions,
   groupModelTargetOptions,
-  ModelTargetPicker,
   type ModelTargetOption,
+  type ModelTargetOptionGroup,
 } from '@/components/ModelTargetPicker'
+import { ModelOptimizationBadges } from '@/components/ModelOptimizationBadges'
 import { Toggle } from '@/components/settings/Primitives'
 
 type SidebarSearchStatus = 'idle' | 'searching' | 'ready' | 'error'
@@ -154,14 +156,18 @@ interface SidebarProps {
   helperRuntimeId?: string | null
   modelSelectionDisabledReason?: string | null
   reloadModelsDisabledReason?: string | null
-  onUpdateModelSelection?: (
-    modelSelection: AppSettings['modelSelection'],
-  ) => void | Promise<void>
   onLoadModelSelection?: (
     modelSelection: AppSettings['modelSelection'],
   ) => Promise<LoadDefaultModelsResult> | void
   onReloadModels?: () => Promise<LoadDefaultModelsResult> | void
   initialSearchState?: SidebarInitialSearchState
+}
+
+type ModelSelectionLoadFeedback = {
+  tone: 'info' | 'success' | 'error'
+  message: string
+  details: string[]
+  selectionKey: string
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -198,16 +204,22 @@ function automationStatusTone(status?: AutomationSummary['lastRunStatus']): stri
   }
 }
 
-function formatModelTarget(
+function modelTargetValue(target: { modelId: string; runtimeId: string }): string {
+  return `${normalizeProviderRuntimeId(target.runtimeId)}\u001f${target.modelId}`
+}
+
+function modelTargetsMatch(
+  left: { modelId: string; runtimeId: string },
+  right: { modelId: string; runtimeId: string },
+): boolean {
+  return modelTargetValue(left) === modelTargetValue(right)
+}
+
+function findModelTargetOption(
   target: { modelId: string; runtimeId: string },
   options: ModelTargetOption[],
-): string {
-  const option = options.find(
-    (candidate) =>
-      candidate.modelId === target.modelId
-      && candidate.runtimeId === target.runtimeId,
-  )
-  return option?.label ?? target.modelId
+): ModelTargetOption | undefined {
+  return options.find((candidate) => modelTargetsMatch(candidate, target))
 }
 
 function findModelAvailabilityIssue(
@@ -219,6 +231,552 @@ function findModelAvailabilityIssue(
     issue.modelId === target.modelId
     && normalizeProviderRuntimeId(issue.runtimeId) === runtimeId
   ) ?? null
+}
+
+function formatModelContextLength(contextLength: number | undefined): string | null {
+  if (!contextLength) {
+    return null
+  }
+  if (contextLength >= 1024) {
+    return `${Math.round(contextLength / 1024)}K ctx`
+  }
+  return `${contextLength} ctx`
+}
+
+function formatModelStatus(status: ModelTargetOption['status']): string | null {
+  switch (status) {
+    case 'loaded':
+      return 'Loaded'
+    case 'loading':
+      return 'Loading'
+    case 'available':
+      return 'Available'
+    case undefined:
+      return null
+  }
+}
+
+function modelStatusClassName(status: ModelTargetOption['status']): string {
+  switch (status) {
+    case 'loaded':
+      return 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25'
+    case 'loading':
+      return 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25'
+    case 'available':
+    case undefined:
+      return 'bg-zinc-100 text-zinc-500 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-700'
+  }
+}
+
+function modelOptionSearchText(option: ModelTargetOption): string {
+  return [
+    option.label,
+    option.modelId,
+    option.runtimeId,
+    option.providerLabel,
+    option.inferenceTypeLabel,
+    option.parameterCount,
+    option.quantization,
+    option.contextLength != null ? String(option.contextLength) : undefined,
+    ...(option.optimizationTags ?? []),
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function SelectedModelSummary({
+  roleLabel,
+  target,
+  options,
+  issue,
+  muted = false,
+}: {
+  roleLabel: string
+  target: { modelId: string; runtimeId: string }
+  options: ModelTargetOption[]
+  issue: PrimaryModelAvailabilityIssue | null
+  muted?: boolean
+}) {
+  const option = findModelTargetOption(target, options)
+  const details = option
+    ? [
+        option.providerLabel,
+        option.parameterCount,
+        option.quantization,
+        formatModelContextLength(option.contextLength) ?? undefined,
+      ].filter(Boolean).join(' - ')
+    : normalizeProviderRuntimeId(target.runtimeId)
+
+  return (
+    <div
+      className={`rounded-lg border px-2.5 py-2 ${
+        muted
+          ? 'border-zinc-200/70 bg-zinc-50/70 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-500'
+          : 'border-zinc-200 bg-zinc-50/80 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/45 dark:text-zinc-200'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            {roleLabel}
+          </div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+            <span className="truncate">{option?.label ?? target.modelId}</span>
+            {issue && (
+              <AlertTriangle
+                size={12}
+                className="shrink-0 text-red-500 dark:text-red-400"
+                aria-label={`${roleLabel} model failed to load`}
+              />
+            )}
+          </div>
+        </div>
+        <ModelOptimizationBadges tags={option?.optimizationTags} compact />
+      </div>
+      <div className="mt-1 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+        {muted ? 'Off' : details}
+      </div>
+    </div>
+  )
+}
+
+function ModelSelectionDialog({
+  modelSelection,
+  modelTargetGroups,
+  modelTargetOptions,
+  primaryModelIssue,
+  secondaryModelIssue,
+  modelSelectionDisabledReason,
+  reloadModelsDisabledReason,
+  modelSelectionLoadPending,
+  modelSelectionLoadFeedback,
+  onClose,
+  onLoadModelSelection,
+}: {
+  modelSelection: AppSettings['modelSelection']
+  modelTargetGroups: ModelTargetOptionGroup[]
+  modelTargetOptions: ModelTargetOption[]
+  primaryModelIssue: PrimaryModelAvailabilityIssue | null
+  secondaryModelIssue: PrimaryModelAvailabilityIssue | null
+  modelSelectionDisabledReason: string | null
+  reloadModelsDisabledReason: string | null
+  modelSelectionLoadPending: boolean
+  modelSelectionLoadFeedback: ModelSelectionLoadFeedback | null
+  onClose: () => void
+  onLoadModelSelection: (modelSelection: AppSettings['modelSelection']) => void
+}) {
+  const [activeRole, setActiveRole] = useState<'mainModel' | 'helperModel'>('mainModel')
+  const [activeProvider, setActiveProvider] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [draftSelection, setDraftSelection] =
+    useState<AppSettings['modelSelection']>(modelSelection)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const providerLabels = modelTargetGroups.map((group) => group.providerLabel)
+  const selectedTarget = draftSelection[activeRole]
+  const selectedOption = findModelTargetOption(selectedTarget, modelTargetOptions)
+  const selectedProvider = activeProvider && providerLabels.includes(activeProvider)
+    ? activeProvider
+    : selectedOption?.providerLabel ?? providerLabels[0] ?? null
+  const normalizedQuery = query.trim().toLowerCase()
+  const providerGroups = selectedProvider
+    ? modelTargetGroups.filter((group) => group.providerLabel === selectedProvider)
+    : modelTargetGroups
+  const visibleGroups = (normalizedQuery ? modelTargetGroups : providerGroups)
+    .map((group) => ({
+      ...group,
+      options: group.options.filter((option) =>
+        !normalizedQuery || modelOptionSearchText(option).includes(normalizedQuery),
+      ),
+    }))
+    .filter((group) => group.options.length > 0)
+  const modelListDisabled =
+    Boolean(modelSelectionDisabledReason)
+    || (activeRole === 'helperModel' && !draftSelection.helperModelEnabled)
+  const primaryDraftIssue = modelTargetsMatch(draftSelection.mainModel, modelSelection.mainModel)
+    ? primaryModelIssue
+    : null
+  const secondaryDraftIssue =
+    draftSelection.helperModelEnabled
+    && modelTargetsMatch(draftSelection.helperModel, modelSelection.helperModel)
+      ? secondaryModelIssue
+      : null
+  const activeIssue = activeRole === 'mainModel' ? primaryDraftIssue : secondaryDraftIssue
+  const draftSelectionKey = modelSelectionFeedbackKey(draftSelection)
+  const savedSelectionKey = modelSelectionFeedbackKey(modelSelection)
+  const hasDraftChanges = draftSelectionKey !== savedSelectionKey
+  const footerStatus = modelSelectionLoadFeedback
+    ? modelSelectionLoadFeedback
+    : activeIssue
+      ? {
+          tone: 'error' as const,
+          message: activeIssue.message,
+          details: [],
+          selectionKey: draftSelectionKey,
+        }
+      : reloadModelsDisabledReason
+        ? {
+            tone: 'info' as const,
+            message: reloadModelsDisabledReason,
+            details: [],
+            selectionKey: draftSelectionKey,
+          }
+        : {
+            tone: 'info' as const,
+            message: hasDraftChanges ? 'Ready to save and load.' : 'Ready',
+            details: [],
+            selectionKey: draftSelectionKey,
+          }
+
+  useEffect(() => {
+    requestAnimationFrame(() => searchInputRef.current?.focus())
+  }, [])
+
+  useEffect(() => {
+    setDraftSelection(modelSelection)
+  }, [modelSelection])
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  useEffect(() => {
+    setActiveProvider(null)
+  }, [activeRole])
+
+  const selectOption = (option: ModelTargetOption) => {
+    if (modelListDisabled) {
+      return
+    }
+    setDraftSelection((current) => ({
+      ...current,
+      [activeRole]: {
+        modelId: option.modelId,
+        runtimeId: option.runtimeId,
+      },
+    }))
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/35 p-4 backdrop-blur-sm dark:bg-black/55"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Global model settings"
+        className="flex h-[min(760px,calc(100vh-2rem))] w-[min(1040px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_28px_90px_-40px_rgba(24,24,27,0.75)] dark:border-zinc-700 dark:bg-zinc-950 dark:shadow-[0_34px_110px_-42px_rgba(0,0,0,0.95)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="shrink-0 flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+              Global Models
+            </div>
+            <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <span>{modelTargetOptions.length} selectable models</span>
+              <span>{providerLabels.length} providers</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-500 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 dark:focus-visible:ring-zinc-700"
+            aria-label="Close global model settings"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:grid-cols-[280px_minmax(0,1fr)] md:grid-rows-1">
+          <aside className="min-h-0 overflow-y-auto border-b border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/35 md:border-b-0 md:border-r">
+            <div className="space-y-2">
+              <SelectedModelSummary
+                roleLabel="Primary"
+                target={draftSelection.mainModel}
+                options={modelTargetOptions}
+                issue={primaryDraftIssue}
+              />
+              <SelectedModelSummary
+                roleLabel="Secondary"
+                target={draftSelection.helperModel}
+                options={modelTargetOptions}
+                issue={secondaryDraftIssue}
+                muted={!draftSelection.helperModelEnabled}
+              />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-1 rounded-lg bg-zinc-200/70 p-1 dark:bg-zinc-800/80">
+              {([
+                ['mainModel', 'Primary'],
+                ['helperModel', 'Secondary'],
+              ] as const).map(([role, label]) => {
+                const selected = activeRole === role
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setActiveRole(role)}
+                    className={`min-w-0 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
+                      selected
+                        ? 'bg-white text-zinc-950 shadow-sm dark:bg-zinc-950 dark:text-zinc-50'
+                        : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
+              <div>
+                <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                  Secondary Model
+                </div>
+                <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {draftSelection.helperModelEnabled ? 'On' : 'Off'}
+                </div>
+              </div>
+              <Toggle
+                size="sm"
+                ariaLabel="Toggle secondary model"
+                checked={draftSelection.helperModelEnabled}
+                disabled={Boolean(modelSelectionDisabledReason)}
+                onChange={() => {
+                  setDraftSelection((current) => ({
+                    ...current,
+                    helperModelEnabled: !current.helperModelEnabled,
+                  }))
+                }}
+              />
+            </div>
+            {modelSelectionDisabledReason && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
+                {modelSelectionDisabledReason}
+              </div>
+            )}
+          </aside>
+
+          <section className="flex min-h-0 flex-col overflow-hidden">
+            <div className="shrink-0 border-b border-zinc-200 p-4 dark:border-zinc-800">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    {activeRole === 'mainModel' ? 'Primary Model' : 'Secondary Model'}
+                  </div>
+                  <div className="mt-1 flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                    <span className="truncate">
+                      {selectedOption?.label ?? selectedTarget.modelId}
+                    </span>
+                    <ModelOptimizationBadges tags={selectedOption?.optimizationTags} compact />
+                    {activeIssue && (
+                      <AlertTriangle
+                        size={14}
+                        className="shrink-0 text-red-500 dark:text-red-400"
+                        aria-label={`${activeRole === 'mainModel' ? 'Primary' : 'Secondary'} model failed to load`}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+                  <Search size={14} className="shrink-0 text-zinc-400" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search models"
+                    className="min-w-[220px] flex-1 bg-transparent text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  />
+                </div>
+              </div>
+
+              {providerLabels.length > 0 && (
+                <div className="mt-3 flex gap-1.5 overflow-x-auto pb-0.5">
+                  {providerLabels.map((providerLabel) => {
+                    const selected = providerLabel === selectedProvider && !normalizedQuery
+                    const count = modelTargetGroups.find((group) => group.providerLabel === providerLabel)?.options.length ?? 0
+                    return (
+                      <button
+                        key={providerLabel}
+                        type="button"
+                        onClick={() => {
+                          setQuery('')
+                          setActiveProvider(providerLabel)
+                        }}
+                        className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          selected
+                            ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-950 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        {providerLabel}
+                        <span className={selected ? 'ml-1 text-zinc-300 dark:text-zinc-600' : 'ml-1 text-zinc-400'}>
+                          {count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div
+              role="listbox"
+              aria-label={activeRole === 'mainModel' ? 'Primary model' : 'Secondary model'}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4"
+            >
+              {activeRole === 'helperModel' && !draftSelection.helperModelEnabled ? (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                  Secondary model is off.
+                </div>
+              ) : visibleGroups.length === 0 ? (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                  No models match this search.
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {visibleGroups.map((group) => (
+                    <div key={group.providerLabel}>
+                      {normalizedQuery && (
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                          {group.providerLabel}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                        {group.options.map((option) => {
+                          const selected = modelTargetsMatch(option, selectedTarget)
+                          const statusLabel = formatModelStatus(option.status)
+                          const contextLabel = formatModelContextLength(option.contextLength)
+                          const detailChips = [
+                            option.parameterCount,
+                            option.quantization,
+                            contextLabel ?? undefined,
+                          ].filter(Boolean)
+                          return (
+                            <button
+                              key={modelTargetValue(option)}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              disabled={modelListDisabled}
+                              onClick={() => selectOption(option)}
+                              className={`flex h-[112px] w-full flex-col overflow-hidden rounded-lg border px-3 py-3 text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
+                                selected
+                                  ? 'border-indigo-300 bg-indigo-50 text-zinc-950 ring-1 ring-indigo-200 dark:border-indigo-500/50 dark:bg-indigo-500/10 dark:text-zinc-50 dark:ring-indigo-500/25'
+                                  : 'border-zinc-200 bg-white text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-700 dark:hover:bg-zinc-900 dark:focus-visible:ring-zinc-700'
+                              }`}
+                            >
+                              <span className="flex min-w-0 items-start justify-between gap-3">
+                                <span className="min-w-0">
+                                  <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                                    <span className="truncate">{option.label}</span>
+                                    <ModelOptimizationBadges
+                                      tags={option.optimizationTags}
+                                      selected={selected}
+                                      compact
+                                    />
+                                  </span>
+                                  <span className="mt-1 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                                    {option.runtimeId}
+                                  </span>
+                                </span>
+                                <span
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+                                    selected
+                                      ? 'bg-indigo-600 text-white dark:bg-indigo-400 dark:text-zinc-950'
+                                      : 'opacity-0'
+                                  }`}
+                                  aria-hidden="true"
+                                >
+                                  <Check size={14} />
+                                </span>
+                              </span>
+                              <span className="mt-auto flex h-6 flex-wrap gap-1.5 overflow-hidden">
+                                {statusLabel && (
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${modelStatusClassName(option.status)}`}>
+                                    {statusLabel}
+                                  </span>
+                                )}
+                                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800">
+                                  {option.inferenceTypeLabel}
+                                </span>
+                                {detailChips.map((detail) => (
+                                  <span
+                                    key={detail}
+                                    className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800"
+                                  >
+                                    {detail}
+                                  </span>
+                                ))}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="h-[148px] shrink-0 border-t border-zinc-200 p-4 dark:border-zinc-800">
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    disabled={
+                      modelSelectionLoadPending
+                      || Boolean(reloadModelsDisabledReason)
+                    }
+                    onClick={() => onLoadModelSelection(draftSelection)}
+                    className="inline-flex h-9 w-40 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-xs font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+                    title={
+                      reloadModelsDisabledReason
+                        ?? 'Save and load the global model selection'
+                    }
+                  >
+                    {modelSelectionLoadPending
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <Power size={13} />}
+                    {modelSelectionLoadPending ? 'Loading...' : 'Save and Load'}
+                  </button>
+                  {reloadModelsDisabledReason && (
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {reloadModelsDisabledReason}
+                    </div>
+                  )}
+                </div>
+                <div
+                  aria-live="polite"
+                  className={`mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg border px-3 py-2 text-xs leading-5 ${
+                    footerStatus.tone === 'success'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+                      : footerStatus.tone === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'
+                  }`}
+                >
+                  <div className="font-medium">{footerStatus.message}</div>
+                  {footerStatus.details.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {footerStatus.details.map((detail, index) => (
+                        <li key={`${detail}-${index}`}>{detail}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function formatDefaultModelLoadStep(
@@ -303,7 +861,6 @@ export function Sidebar({
   helperRuntimeId = null,
   modelSelectionDisabledReason = null,
   reloadModelsDisabledReason = null,
-  onUpdateModelSelection,
   onLoadModelSelection,
   onReloadModels,
   initialSearchState,
@@ -321,12 +878,8 @@ export function Sidebar({
   } | null>(null)
   const [quickCreateMenuPinned, setQuickCreateMenuPinned] = useState(false)
   const [modelSelectionPanelOpen, setModelSelectionPanelOpen] = useState(false)
-  const [modelSelectionLoadFeedback, setModelSelectionLoadFeedback] = useState<{
-    tone: 'info' | 'success' | 'error'
-    message: string
-    details: string[]
-    selectionKey: string
-  } | null>(null)
+  const [modelSelectionLoadFeedback, setModelSelectionLoadFeedback] =
+    useState<ModelSelectionLoadFeedback | null>(null)
   const [modelMemoryPanelOpen, setModelMemoryPanelOpen] = useState(false)
   const [modelReloadPending, setModelReloadPending] = useState(false)
   const [modelSelectionLoadPending, setModelSelectionLoadPending] = useState(false)
@@ -425,14 +978,6 @@ export function Sidebar({
     () => groupModelTargetOptions(modelTargetOptions),
     [modelTargetOptions],
   )
-  const primaryModelLabel = formatModelTarget(
-    modelSelection.mainModel,
-    modelTargetOptions,
-  )
-  const secondaryModelLabel = formatModelTarget(
-    modelSelection.helperModel,
-    modelTargetOptions,
-  )
   const primaryModelIssue = findModelAvailabilityIssue(
     modelSelection.mainModel,
     modelAvailabilityIssues,
@@ -486,51 +1031,9 @@ export function Sidebar({
     }
   }, [currentView, quickCreateMenuPinned])
 
-  const commitModelSelection = (
-    nextModelSelection: AppSettings['modelSelection'],
+  const handleLoadModelSelection = async (
+    selectionInput: AppSettings['modelSelection'] = modelSelection,
   ) => {
-    if (effectiveModelSelectionDisabledReason) {
-      setModelSelectionLoadFeedback({
-        tone: 'error',
-        message: effectiveModelSelectionDisabledReason,
-        details: [],
-        selectionKey: currentModelSelectionKey,
-      })
-      return
-    }
-
-    setModelSelectionLoadFeedback(null)
-    void Promise.resolve(onUpdateModelSelection?.(nextModelSelection)).catch((error) => {
-      console.error('Failed to update global model selection:', error)
-      setModelSelectionLoadFeedback({
-        tone: 'error',
-        message: error instanceof Error && error.message.trim().length > 0
-          ? error.message.trim()
-          : 'Could not update global model selection.',
-        details: [],
-        selectionKey: currentModelSelectionKey,
-      })
-    })
-  }
-
-  const updateModelSelectionTarget = (
-    key: 'mainModel' | 'helperModel',
-    target: { modelId: string; runtimeId: string },
-  ) => {
-    commitModelSelection({
-      ...modelSelection,
-      [key]: target,
-    })
-  }
-
-  const toggleSecondaryModel = () => {
-    commitModelSelection({
-      ...modelSelection,
-      helperModelEnabled: !modelSelection.helperModelEnabled,
-    })
-  }
-
-  const handleLoadModelSelection = async () => {
     if (!onLoadModelSelection) {
       return
     }
@@ -544,7 +1047,8 @@ export function Sidebar({
       return
     }
 
-    const requestSelectionKey = currentModelSelectionKey
+    const requestSelectionKey = modelSelectionFeedbackKey(selectionInput)
+    currentModelSelectionKeyRef.current = requestSelectionKey
     setModelSelectionLoadPending(true)
     setModelSelectionLoadFeedback({
       tone: 'info',
@@ -554,7 +1058,7 @@ export function Sidebar({
     })
 
     try {
-      const result = await onLoadModelSelection(modelSelection)
+      const result = await onLoadModelSelection(selectionInput)
       if (!result) {
         setModelSelectionLoadFeedback(null)
         return
@@ -1911,188 +2415,81 @@ export function Sidebar({
         </div>
       )}
 
-      <div className="no-drag relative px-3 pb-1 pt-2">
-        <button
-          type="button"
-          aria-label="Global model selection"
-          aria-haspopup="dialog"
-          aria-expanded={modelSelectionPanelOpen}
-          disabled={Boolean(effectiveModelSelectionDisabledReason)}
-          title={effectiveModelSelectionDisabledReason ?? undefined}
-          onClick={(event) => {
-            event.stopPropagation()
-            if (effectiveModelSelectionDisabledReason) {
-              return
-            }
-            setModelSelectionPanelOpen((open) => !open)
-            setQuickCreateMenuPinned(false)
-          }}
-          className={`flex w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white/95 px-2.5 py-2 text-left text-zinc-700 shadow-[0_14px_30px_-24px_rgba(24,24,27,0.42)] backdrop-blur transition-colors dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200 ${
-            effectiveModelSelectionDisabledReason
-              ? 'cursor-not-allowed opacity-60'
-              : 'hover:border-zinc-300 hover:bg-white hover:text-zinc-950 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:hover:text-white'
-          }`}
-        >
-          <span className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300">
-            <Sparkles size={14} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-1 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-              <span className="truncate">{primaryModelLabel}</span>
-              {primaryModelIssue && (
-                <AlertTriangle
-                  size={12}
-                  className="flex-shrink-0 text-red-500 dark:text-red-400"
-                  aria-label="Primary model failed to load"
-                />
-              )}
-            </span>
-            <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-              <span className="truncate">
-                {modelSelection.helperModelEnabled
-                  ? `Secondary: ${secondaryModelLabel}`
-                  : 'Secondary off'}
+      <div className="no-drag px-3 pb-1 pt-2">
+        <div className="rounded-xl border border-zinc-200 bg-white/95 p-2.5 text-zinc-700 shadow-[0_14px_30px_-24px_rgba(24,24,27,0.42)] backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-200">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300">
+                <Sparkles size={14} />
               </span>
-              {modelSelection.helperModelEnabled && secondaryModelIssue && (
-                <AlertTriangle
-                  size={11}
-                  className="flex-shrink-0 text-red-500 dark:text-red-400"
-                  aria-label="Secondary model failed to load"
-                />
-              )}
-            </span>
-          </span>
-          <ChevronDown
-            size={14}
-            className={`flex-shrink-0 text-zinc-400 transition-transform ${modelSelectionPanelOpen ? 'rotate-180' : ''}`}
-          />
-        </button>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                  Models
+                </div>
+                <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {modelTargetOptions.length} available
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="Global model selection"
+              aria-haspopup="dialog"
+              aria-expanded={modelSelectionPanelOpen}
+              disabled={Boolean(effectiveModelSelectionDisabledReason)}
+              title={effectiveModelSelectionDisabledReason ?? 'Change models'}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (effectiveModelSelectionDisabledReason) {
+                  return
+                }
+                setModelSelectionPanelOpen(true)
+                setQuickCreateMenuPinned(false)
+              }}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-700 outline-none transition-colors hover:border-zinc-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-zinc-300 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 dark:focus-visible:ring-zinc-700"
+            >
+              <Pencil size={13} />
+              Change
+            </button>
+          </div>
+
+          <div className="mt-2 space-y-1.5">
+            <SelectedModelSummary
+              roleLabel="Primary"
+              target={modelSelection.mainModel}
+              options={modelTargetOptions}
+              issue={primaryModelIssue}
+            />
+            <SelectedModelSummary
+              roleLabel="Secondary"
+              target={modelSelection.helperModel}
+              options={modelTargetOptions}
+              issue={modelSelection.helperModelEnabled ? secondaryModelIssue : null}
+              muted={!modelSelection.helperModelEnabled}
+            />
+          </div>
+        </div>
 
         {modelSelectionPanelOpen && (
-          <div
-            role="dialog"
-            aria-label="Global model settings"
-            className="absolute bottom-full left-3 right-3 z-40 mb-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_22px_50px_-30px_rgba(24,24,27,0.65)] dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-[0_24px_54px_-32px_rgba(0,0,0,0.92)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-                  Global Models
-                </div>
-                <div className="mt-1 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                  Primary powers chats, research, and automations.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModelSelectionPanelOpen(false)}
-                className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                aria-label="Close global model settings"
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="mb-1.5 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                  Primary Model
-                </div>
-                <ModelTargetPicker
-                  ariaLabel="Primary model"
-                  value={modelSelection.mainModel}
-                  groups={modelTargetGroups}
-                  disabled={Boolean(effectiveModelSelectionDisabledReason)}
-                  onSelect={(target) => updateModelSelectionTarget('mainModel', target)}
-                />
-                {effectiveModelSelectionDisabledReason && (
-                  <div className="mt-1.5 text-[11px] leading-4 text-zinc-500 dark:text-zinc-400">
-                    {effectiveModelSelectionDisabledReason}
-                  </div>
-                )}
-                {primaryModelIssue && (
-                  <div className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
-                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
-                    <span>{primaryModelIssue.message}</span>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <div className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    Secondary Model
-                  </div>
-                  <Toggle
-                    size="sm"
-                    ariaLabel="Toggle secondary model"
-                    checked={modelSelection.helperModelEnabled}
-                    disabled={Boolean(effectiveModelSelectionDisabledReason)}
-                    onChange={toggleSecondaryModel}
-                  />
-                </div>
-                <ModelTargetPicker
-                  ariaLabel="Secondary model"
-                  value={modelSelection.helperModel}
-                  groups={modelTargetGroups}
-                  disabled={
-                    !modelSelection.helperModelEnabled
-                    || Boolean(effectiveModelSelectionDisabledReason)
-                  }
-                  onSelect={(target) => updateModelSelectionTarget('helperModel', target)}
-                />
-                {modelSelection.helperModelEnabled && secondaryModelIssue && (
-                  <div className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200">
-                    <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
-                    <span>{secondaryModelIssue.message}</span>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                disabled={
-                  modelSelectionLoadPending
-                  || !onLoadModelSelection
-                  || Boolean(effectiveReloadModelsDisabledReason)
-                }
-                onClick={() => { void handleLoadModelSelection() }}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-                title={
-                  effectiveReloadModelsDisabledReason
-                    ?? 'Unload other supported runtime models and load the global selection'
-                }
-              >
-                {modelSelectionLoadPending
-                  ? <Loader2 size={13} className="animate-spin" />
-                  : <Power size={13} />}
-                {modelSelectionLoadPending ? 'Loading...' : 'Load Selected Models'}
-              </button>
-
-              {modelSelectionLoadFeedback && (
-                <div
-                  aria-live="polite"
-                  className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
-                    modelSelectionLoadFeedback.tone === 'success'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
-                      : modelSelectionLoadFeedback.tone === 'error'
-                        ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
-                        : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300'
-                  }`}
-                >
-                  <div className="font-medium">{modelSelectionLoadFeedback.message}</div>
-                  {modelSelectionLoadFeedback.details.length > 0 && (
-                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                      {modelSelectionLoadFeedback.details.map((detail, index) => (
-                        <li key={`${detail}-${index}`}>{detail}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <ModelSelectionDialog
+            modelSelection={modelSelection}
+            modelTargetGroups={modelTargetGroups}
+            modelTargetOptions={modelTargetOptions}
+            primaryModelIssue={primaryModelIssue}
+            secondaryModelIssue={secondaryModelIssue}
+            modelSelectionDisabledReason={effectiveModelSelectionDisabledReason}
+            reloadModelsDisabledReason={
+              !onLoadModelSelection
+                ? 'Model loading is not available.'
+                : effectiveReloadModelsDisabledReason
+            }
+            modelSelectionLoadPending={modelSelectionLoadPending}
+            modelSelectionLoadFeedback={modelSelectionLoadFeedback}
+            onClose={() => setModelSelectionPanelOpen(false)}
+            onLoadModelSelection={(nextModelSelection) => {
+              void handleLoadModelSelection(nextModelSelection)
+            }}
+          />
         )}
       </div>
 

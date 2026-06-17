@@ -10,6 +10,10 @@ export interface ModelTargetOption {
   label: string
   providerLabel: string
   inferenceTypeLabel: string
+  status?: ModelSummary['status']
+  parameterCount?: string
+  quantization?: string
+  contextLength?: number
   optimizationTags?: string[]
 }
 
@@ -67,8 +71,11 @@ function optionSearchText(option: ModelTargetOption): string {
     option.inferenceTypeLabel,
     option.runtimeId,
     option.modelId,
+    option.parameterCount,
+    option.quantization,
+    option.contextLength != null ? String(option.contextLength) : undefined,
     ...(option.optimizationTags ?? []),
-  ].join(' ').toLowerCase()
+  ].filter(Boolean).join(' ').toLowerCase()
 }
 
 export function formatModelTargetOptionLabel(option: ModelTargetOption): string {
@@ -189,6 +196,10 @@ export function buildModelTargetOptions(input: {
         targetModel?.runtimeName,
       ),
       inferenceTypeLabel: inferenceTypeLabelForRuntime(normalizedTarget.runtimeId),
+      status: targetModel?.status,
+      parameterCount: targetModel?.parameterCount,
+      quantization: targetModel?.quantization,
+      contextLength: targetModel?.contextLength,
       optimizationTags: targetModel?.optimizationTags,
     })
   }

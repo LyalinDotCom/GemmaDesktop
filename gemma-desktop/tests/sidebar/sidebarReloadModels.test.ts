@@ -78,7 +78,6 @@ function sidebarProps(input?: {
   modelAvailabilityIssues?: PrimaryModelAvailabilityIssue[]
   modelSelectionDisabledReason?: string | null
   reloadModelsDisabledReason?: string | null
-  onUpdateModelSelection?: (modelSelection: AppSettings['modelSelection']) => void | Promise<void>
   onLoadModelSelection?: (modelSelection: AppSettings['modelSelection']) => Promise<LoadDefaultModelsResult> | void
 }) {
   return {
@@ -120,7 +119,6 @@ function sidebarProps(input?: {
     modelAvailabilityIssues: input?.modelAvailabilityIssues,
     modelSelectionDisabledReason: input?.modelSelectionDisabledReason,
     reloadModelsDisabledReason: input?.reloadModelsDisabledReason,
-    onUpdateModelSelection: input?.onUpdateModelSelection,
     onLoadModelSelection: input?.onLoadModelSelection,
     onReloadModels: input?.onReloadModels ?? (() => {}),
   }
@@ -149,6 +147,15 @@ function getButtonByText(container: HTMLElement, text: string): HTMLButtonElemen
     .find((entry) => entry.textContent?.includes(text))
   if (!button) {
     throw new Error(`Could not find button containing text: ${text}`)
+  }
+  return button
+}
+
+function getOptionByText(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="option"]'))
+    .find((entry) => entry.textContent?.includes(text))
+  if (!button) {
+    throw new Error(`Could not find option containing text: ${text}`)
   }
   return button
 }
@@ -236,36 +243,64 @@ describe('Sidebar reload models control', () => {
     expect(onReloadModels).toHaveBeenCalledTimes(1)
   })
 
-  it('surfaces global primary and secondary model selection in the sidebar', async () => {
-    const onUpdateModelSelection = vi.fn()
-    renderSidebar(sidebarProps({ onUpdateModelSelection }))
-
-    await click(getButtonByLabel(container, 'Global model selection'))
-
-    expect(container.textContent).toContain('Global Models')
-    expect(container.textContent).toContain('Primary powers chats, research, and automations.')
-    expect(getButtonByLabel(container, 'Primary model').textContent).toContain('Gemma 4 26B')
-    expect(getButtonByLabel(container, 'Secondary model').textContent).toContain('gemma4:e2b')
-
-    await click(getButtonByLabel(container, 'Primary model'))
-    await click(getButtonByText(container, 'LM Studio'))
-    await click(getButtonByText(container, 'Qwen3 8B'))
-
-    expect(onUpdateModelSelection).toHaveBeenCalledWith({
+  it('surfaces global primary and secondary model selection in the sidebar dialog', async () => {
+    const selectedSelection: AppSettings['modelSelection'] = {
       ...DEFAULT_MODEL_SELECTION_SETTINGS,
       mainModel: {
         modelId: 'qwen3:8b',
         runtimeId: 'lmstudio-openai',
       },
+    }
+    const onLoadModelSelection = vi.fn().mockResolvedValue({
+      ...LOAD_RESULT,
+      selection: selectedSelection,
     })
+    renderSidebar(sidebarProps({ onLoadModelSelection }))
+
+    expect(container.textContent).toContain('Models')
+    expect(container.textContent).toContain('Gemma 4 26B')
+    expect(container.textContent).toContain('Secondary')
+    expect(getButtonByLabel(container, 'Global model selection').textContent).toContain('Change')
+
+    await click(getButtonByLabel(container, 'Global model selection'))
+
+    expect(container.textContent).toContain('Global Models')
+    expect(container.textContent).toContain('2 selectable models')
+    expect(container.textContent).toContain('Primary Model')
+    expect(container.textContent).toContain('Secondary Model')
+    expect(container.textContent).toContain('Gemma 4 26B')
+    expect(container.textContent).toContain('gemma4:e2b')
+    const dialog = container.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Global model settings"]',
+    )
+    expect(dialog?.className).toContain('h-[min(760px,calc(100vh-2rem))]')
+    expect(dialog?.className).toContain('w-[min(1040px,calc(100vw-2rem))]')
+    const listbox = container.querySelector<HTMLElement>(
+      '[role="listbox"][aria-label="Primary model"]',
+    )
+    expect(listbox?.className).toContain('flex-1')
+    expect(listbox?.className).toContain('overflow-y-auto')
+    const loadButton = getButtonByText(container, 'Save and Load')
+    expect(loadButton.className).toContain('w-40')
+    expect(loadButton.parentElement?.parentElement?.parentElement?.className)
+      .toContain('h-[148px]')
+    expect(getOptionByText(container, 'Gemma 4 26B').className).toContain('h-[112px]')
+
+    await click(getButtonByText(container, 'LM Studio'))
+    await click(getOptionByText(container, 'Qwen3 8B'))
+
+    expect(onLoadModelSelection).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Ready to save and load.')
+
+    await click(loadButton)
+
+    expect(onLoadModelSelection).toHaveBeenCalledWith(selectedSelection)
   })
 
   it('disables global model selection when the app-wide model activity watch is busy', async () => {
-    const onUpdateModelSelection = vi.fn()
     renderSidebar(sidebarProps({
       sessions: [makeSession({ isGenerating: false, isCompacting: false })],
       modelSelectionDisabledReason: 'Finish or stop the running request before changing models.',
-      onUpdateModelSelection,
     }))
 
     const selectorButton = getButtonByLabel(container, 'Global model selection')
@@ -275,16 +310,14 @@ describe('Sidebar reload models control', () => {
     await click(selectorButton)
 
     expect(container.textContent).not.toContain('Global Models')
-    expect(onUpdateModelSelection).not.toHaveBeenCalled()
   })
 
-  it('keeps model picker controls locked if global model activity starts while the popover is open', async () => {
-    const onUpdateModelSelection = vi.fn()
+  it('keeps model picker controls locked if global model activity starts while the dialog is open', async () => {
     const nextRoot = createRoot(container)
     root = nextRoot
 
     act(() => {
-      nextRoot.render(createElement(Sidebar, sidebarProps({ onUpdateModelSelection })))
+      nextRoot.render(createElement(Sidebar, sidebarProps()))
     })
 
     await click(getButtonByLabel(container, 'Global model selection'))
@@ -293,36 +326,43 @@ describe('Sidebar reload models control', () => {
       nextRoot.render(createElement(Sidebar, sidebarProps({
         modelSelectionDisabledReason: 'Finish or stop the running request before changing models.',
         reloadModelsDisabledReason: 'Finish or stop the running request before reloading models.',
-        onUpdateModelSelection,
       })))
     })
 
-    expect(getButtonByLabel(container, 'Primary model').disabled).toBe(true)
-    expect(getButtonByLabel(container, 'Secondary model').disabled).toBe(true)
+    expect(getOptionByText(container, 'Gemma 4 26B').disabled).toBe(true)
     expect(getButtonByLabel(container, 'Toggle secondary model').disabled).toBe(true)
-    expect(getButtonByText(container, 'Load Selected Models').disabled).toBe(true)
+    expect(getButtonByText(container, 'Save and Load').disabled).toBe(true)
     expect(container.textContent).toContain('Finish or stop the running request before changing models.')
   })
 
-  it('toggles secondary model use from the global model popover', async () => {
-    const onUpdateModelSelection = vi.fn()
-    renderSidebar(sidebarProps({ onUpdateModelSelection }))
+  it('toggles secondary model use from the global model dialog', async () => {
+    const selectedSelection: AppSettings['modelSelection'] = {
+      ...DEFAULT_MODEL_SELECTION_SETTINGS,
+      helperModelEnabled: false,
+    }
+    const onLoadModelSelection = vi.fn().mockResolvedValue({
+      ...LOAD_RESULT,
+      selection: selectedSelection,
+    })
+    renderSidebar(sidebarProps({ onLoadModelSelection }))
 
     await click(getButtonByLabel(container, 'Global model selection'))
     await click(getButtonByLabel(container, 'Toggle secondary model'))
 
-    expect(onUpdateModelSelection).toHaveBeenCalledWith({
-      ...DEFAULT_MODEL_SELECTION_SETTINGS,
-      helperModelEnabled: false,
-    })
+    expect(onLoadModelSelection).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Off')
+
+    await click(getButtonByText(container, 'Save and Load'))
+
+    expect(onLoadModelSelection).toHaveBeenCalledWith(selectedSelection)
   })
 
-  it('loads the globally selected models from the sidebar popover', async () => {
+  it('loads the globally selected models from the sidebar dialog', async () => {
     const onLoadModelSelection = vi.fn().mockResolvedValue(LOAD_RESULT)
     renderSidebar(sidebarProps({ onLoadModelSelection }))
 
     await click(getButtonByLabel(container, 'Global model selection'))
-    await click(getButtonByText(container, 'Load Selected Models'))
+    await click(getButtonByText(container, 'Save and Load'))
 
     expect(onLoadModelSelection).toHaveBeenCalledWith(DEFAULT_MODEL_SELECTION_SETTINGS)
     expect(container.textContent).toContain('Reloaded expected models.')
@@ -360,7 +400,7 @@ describe('Sidebar reload models control', () => {
     })
 
     await click(getButtonByLabel(container, 'Global model selection'))
-    await click(getButtonByText(container, 'Load Selected Models'))
+    await click(getButtonByText(container, 'Save and Load'))
 
     expect(onLoadModelSelection).toHaveBeenCalledWith(oldSelection)
     expect(container.textContent).toContain('Loading selected models...')
@@ -412,7 +452,7 @@ describe('Sidebar reload models control', () => {
 
     await click(getButtonByLabel(container, 'Global model selection'))
 
-    expect(getButtonByLabel(container, 'Primary model').textContent).toContain('Gemma 4 26B')
+    expect(container.textContent).toContain('Gemma 4 26B')
     expect(container.textContent).toContain('Ollama could not load gemma4:26b.')
     expect(container.querySelector('[aria-label="Primary model failed to load"]')).not.toBeNull()
   })

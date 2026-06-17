@@ -89,7 +89,8 @@ export async function listLmStudioModelInfos(baseUrl = defaultBaseUrl, fetchImpl
   const models = await listOpenAICompatibleModels(baseUrl, fetchImpl, 'LM Studio');
   const nativeModels = await listLmStudioNativeModelInfos(baseUrl, fetchImpl);
   const nativeById = new Map(nativeModels.map((model) => [model.name, model]));
-  return models.map((model) => {
+  const openAIModelIds = new Set(models.map((model) => model.id));
+  const mergedModels = models.map((model) => {
     const native = nativeById.get(model.id);
     return {
       name: model.id,
@@ -102,6 +103,9 @@ export async function listLmStudioModelInfos(baseUrl = defaultBaseUrl, fetchImpl
       ...(native?.supportsReasoning !== undefined ? { supportsReasoning: native.supportsReasoning } : {})
     };
   });
+  const nativeOnlyModels = nativeModels.filter((model) => !openAIModelIds.has(model.name));
+  return [...mergedModels, ...nativeOnlyModels]
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function listLmStudioNativeModelInfos(baseUrl: string, fetchImpl: typeof fetch): Promise<LmStudioModelInfo[]> {

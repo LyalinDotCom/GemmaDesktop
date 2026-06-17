@@ -297,6 +297,85 @@ describe('listLmStudioModels', () => {
       displayName: 'gemma'
     }]);
   });
+
+  it('includes native LM Studio inventory when OpenAI-compatible listing is empty', async () => {
+    const calls: string[] = [];
+    const models = await listLmStudioModelInfos(
+      'http://lmstudio.local',
+      (async (url) => {
+        calls.push(String(url));
+        if (String(url).endsWith('/v1/models')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        if (String(url).endsWith('/api/v0/models')) {
+          return new Response(JSON.stringify({
+            data: [{
+              id: 'google/gemma-4-26b-it',
+              display_name: 'Gemma 4 26B',
+              selected_variant: 'mlx',
+              loaded_instance_id: 'lmstudio-instance-1',
+              capabilities: ['vision', 'reasoning']
+            }]
+          }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch
+    );
+
+    expect(calls).toEqual([
+      'http://lmstudio.local/v1/models',
+      'http://lmstudio.local/api/v0/models'
+    ]);
+    expect(models).toEqual([{
+      name: 'google/gemma-4-26b-it',
+      provider: 'lmstudio',
+      displayName: 'Gemma 4 26B',
+      selectedVariant: 'mlx',
+      loadedInstanceId: 'lmstudio-instance-1',
+      supportsImage: true,
+      supportsReasoning: true
+    }]);
+  });
+
+  it('deduplicates native LM Studio rows while preserving OpenAI-only models', async () => {
+    const models = await listLmStudioModelInfos(
+      'http://lmstudio.local',
+      (async (url) => {
+        if (String(url).endsWith('/v1/models')) {
+          return new Response(JSON.stringify({
+            data: [
+              { id: 'google/gemma-4-e2b-it' },
+              { id: 'openai-only-model' }
+            ]
+          }), { status: 200 });
+        }
+        if (String(url).endsWith('/api/v0/models')) {
+          return new Response(JSON.stringify({
+            data: [{
+              id: 'google/gemma-4-e2b-it',
+              display_name: 'Gemma 4 E2B',
+              capabilities: ['audio']
+            }]
+          }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch
+    );
+
+    expect(models).toEqual([
+      {
+        name: 'google/gemma-4-e2b-it',
+        provider: 'lmstudio',
+        displayName: 'Gemma 4 E2B',
+        supportsAudio: true
+      },
+      {
+        name: 'openai-only-model',
+        provider: 'lmstudio',
+        displayName: 'openai-only-model'
+      }
+    ]);
+  });
 });
 
 function openAiChatFetch(

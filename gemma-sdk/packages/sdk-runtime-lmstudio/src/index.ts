@@ -1,4 +1,5 @@
 import type {
+  AdapterStreamEvent,
   CapabilityRecord,
   ChatRequest,
   ChatResponse,
@@ -56,6 +57,8 @@ const LMSTUDIO_CHANNEL_LABEL_ONLY_PATTERN =
   /^\s*(?:thought|assistant|analysis|commentary|final)\s*$/i;
 const LMSTUDIO_LEADING_CHANNEL_LABEL_PATTERN =
   /^\s*(?:thought|assistant|analysis|commentary|final)\s*(?:\r?\n)+/i;
+const LMSTUDIO_OPENAI_TOOL_TEMPLATE_FALLBACK_WARNING =
+  "LM Studio rejected OpenAI-compatible tool definitions for this model template; retried without tool definitions.";
 
 function headersToObject(headers: Headers): Record<string, string> {
   const entries: Record<string, string> = {};
@@ -292,6 +295,67 @@ function withLmStudioOpenAICompatibleSettings(request: ChatRequest): ChatRequest
   };
 }
 
+function withoutRequestTools(request: ChatRequest): ChatRequest {
+  return {
+    ...request,
+    tools: undefined,
+  };
+}
+
+function requestHasTools(request: ChatRequest): boolean {
+  return Array.isArray(request.tools) && request.tools.length > 0;
+}
+
+function collectErrorText(value: unknown): string {
+  const chunks: string[] = [];
+
+  if (typeof value === "string") {
+    chunks.push(value);
+  } else if (value instanceof Error) {
+    chunks.push(value.message);
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["details", "raw", "cause"]) {
+      const entry = record[key];
+      if (typeof entry === "string") {
+        chunks.push(entry);
+      } else if (entry instanceof Error) {
+        chunks.push(entry.message);
+      } else if (entry && typeof entry === "object") {
+        try {
+          chunks.push(JSON.stringify(entry));
+        } catch {
+          // Ignore unstringifiable diagnostic payloads.
+        }
+      }
+    }
+  }
+
+  return chunks.join("\n");
+}
+
+function isLmStudioOpenAIToolTemplateRenderError(error: unknown): boolean {
+  const text = collectErrorText(error).toLowerCase();
+  return text.includes("error rendering prompt with jinja template")
+    && text.includes("cannot call something that is not a function");
+}
+
+function shouldRetryLmStudioOpenAIWithoutTools(request: ChatRequest, error: unknown): boolean {
+  return requestHasTools(request) && isLmStudioOpenAIToolTemplateRenderError(error);
+}
+
+function withLmStudioOpenAIToolTemplateFallbackWarning(response: ChatResponse): ChatResponse {
+  return {
+    ...response,
+    warnings: [
+      ...(response.warnings ?? []),
+      LMSTUDIO_OPENAI_TOOL_TEMPLATE_FALLBACK_WARNING,
+    ],
+  };
+}
+
 function pickNumber(...values: unknown[]): number | undefined {
   for (const value of values) {
     if (typeof value === "number") {
@@ -443,7 +507,19 @@ function parseNativeUsage(raw: Record<string, unknown> | undefined): TokenUsage 
   };
 }
 
-function normalizeNativeModel(raw: Record<string, unknown>): ModelRecord {
+function normalizeNativeModel(
+  raw: Record<string, unknown>,
+  options: {
+    runtimeId?: string;
+    discoveryRuntimeId?: string;
+    availability?: ModelRecord["availability"];
+    ownedBy?: unknown;
+    allowAudio?: boolean;
+    openAIModel?: Record<string, unknown>;
+  } = {},
+): ModelRecord {
+  const runtimeId = options.runtimeId ?? "lmstudio-native";
+  const discoveryRuntimeId = options.discoveryRuntimeId;
   const capabilities = typeof raw.capabilities === "object" ? (raw.capabilities as Record<string, unknown>) : {};
   const loadedInstances = Array.isArray(raw.loaded_instances) ? (raw.loaded_instances as Array<Record<string, unknown>>) : [];
   const loadedConfig =
@@ -491,10 +567,12 @@ function normalizeNativeModel(raw: Record<string, unknown>): ModelRecord {
 
   return {
     id: modelId,
-    runtimeId: "lmstudio-native",
+    runtimeId,
+    ...(discoveryRuntimeId ? { discoveryRuntimeId } : {}),
     kind: raw.type === "embedding" ? "embedding" : "llm",
-    availability: "available",
+    availability: options.availability ?? "available",
     metadata: {
+      ...(options.ownedBy !== undefined ? { ownedBy: options.ownedBy } : {}),
       publisher: raw.publisher,
       displayName,
       architecture: raw.architecture,
@@ -506,12 +584,18 @@ function normalizeNativeModel(raw: Record<string, unknown>): ModelRecord {
       maxContextLength: raw.max_context_length,
       format: raw.format,
       description: raw.description,
+      ...(discoveryRuntimeId ? { discoveryRuntimeId } : {}),
     },
     capabilities: withInferredModelFamilyCapabilities(modelId, modelCapabilities, {
       displayName,
-      allowAudio: false,
+      allowAudio: options.allowAudio ?? false,
     }),
-    raw,
+    raw: options.openAIModel
+      ? {
+          openai: options.openAIModel,
+          native: raw,
+        }
+      : raw,
   };
 }
 
@@ -693,7 +777,7 @@ export function createLmStudioNativeAdapter(options: LmStudioAdapterOptions = {}
         headers: options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {},
       }).catch(() => undefined);
       const models = Array.isArray(modelList?.models) ? (modelList.models as Array<Record<string, unknown>>) : [];
-      const normalizedModels = models.map(normalizeNativeModel);
+      const normalizedModels = models.map((model) => normalizeNativeModel(model));
       const loadedInstances = normalizeLoadedInstances(models);
 
       const warnings: string[] = [];
@@ -959,43 +1043,46 @@ export function createLmStudioOpenAICompatibleAdapter(options: LmStudioAdapterOp
       const rawNativeModels = Array.isArray(nativeModelList?.models)
         ? nativeModelList.models as Array<Record<string, unknown>>
         : [];
-      const nativeModelsById = new Map(
-        rawNativeModels
-          .map((model) => normalizeNativeModel(model))
-          .map((model) => [model.id, model]),
+      const openAIModels = Array.isArray(modelList?.data)
+        ? modelList.data as Array<Record<string, unknown>>
+        : [];
+      const openAIModelsById = new Map(
+        openAIModels.map((model) => [String(model.id ?? "unknown"), model]),
       );
-      const models = Array.isArray(modelList?.data)
-        ? (modelList.data as Array<Record<string, unknown>>).map((model) => {
-            const modelId = String(model.id ?? "unknown");
-            const nativeModel = nativeModelsById.get(modelId);
-            const inferredCapabilities = withInferredModelFamilyCapabilities(
-              modelId,
-              nativeModel?.capabilities ?? [],
-              {
-                displayName:
-                  typeof nativeModel?.metadata.displayName === "string"
-                    ? nativeModel.metadata.displayName
-                    : undefined,
-              },
-            );
-
-            return {
-              id: modelId,
+      const nativeInventoryModels = rawNativeModels.map((model) => {
+        const modelId = String(model.key ?? model.id ?? "unknown");
+        const openAIModel = openAIModelsById.get(modelId);
+        return normalizeNativeModel(model, {
+          runtimeId: "lmstudio-openai",
+          discoveryRuntimeId: "lmstudio-native",
+          availability: openAIModel ? "visible" : "available",
+          ownedBy: openAIModel?.owned_by,
+          allowAudio: true,
+          openAIModel,
+        });
+      });
+      const nativeModelIds = new Set(nativeInventoryModels.map((model) => model.id));
+      const openAIOnlyModels = openAIModels
+        .filter((model) => !nativeModelIds.has(String(model.id ?? "unknown")))
+        .map((model) => {
+          const modelId = String(model.id ?? "unknown");
+          return {
+            id: modelId,
             runtimeId: "lmstudio-openai",
             kind: "llm" as const,
             availability: "visible" as const,
             metadata: {
               ownedBy: model.owned_by,
-              ...(nativeModel?.metadata ?? {}),
             },
-            capabilities: inferredCapabilities,
+            capabilities: withInferredModelFamilyCapabilities(modelId, [], {
+              displayName: modelId,
+            }),
             raw: {
               openai: model,
-              native: nativeModel?.raw,
             },
           };
-        })
-        : [];
+        });
+      const models = [...nativeInventoryModels, ...openAIOnlyModels];
       return {
         runtime: identity,
         installed: Boolean(modelList) || Boolean(nativeModelList),
@@ -1010,7 +1097,15 @@ export function createLmStudioOpenAICompatibleAdapter(options: LmStudioAdapterOp
           { id: "runtime.load", scope: "runtime", status: "supported", source: "runtime-docs" },
           { id: "runtime.unload", scope: "runtime", status: "supported", source: "runtime-docs" },
           { id: "runtime.download", scope: "runtime", status: "supported", source: "runtime-docs" },
-          { id: "request.tool-calling", scope: "request", status: "supported", source: "runtime-docs" },
+          {
+            id: "request.tool-calling",
+            scope: "request",
+            status: "conditional",
+            source: "runtime-docs",
+            notes: [
+              "LM Studio's OpenAI-compatible tool rendering depends on the selected model prompt template.",
+            ],
+          },
           { id: "request.structured-output", scope: "request", status: "supported", source: "runtime-docs" },
         ],
         models,
@@ -1021,58 +1116,114 @@ export function createLmStudioOpenAICompatibleAdapter(options: LmStudioAdapterOp
       };
     },
     async generate(request) {
-      const response = await generateOpenAICompatibleResponse(
-        baseUrl,
-        withLmStudioOpenAICompatibleSettings(request),
-        options.apiKey ?? "lm-studio",
-      );
-      return sanitizeLmStudioOpenAIResponse(response, request.tools);
+      try {
+        const response = await generateOpenAICompatibleResponse(
+          baseUrl,
+          withLmStudioOpenAICompatibleSettings(request),
+          options.apiKey ?? "lm-studio",
+        );
+        return sanitizeLmStudioOpenAIResponse(response, request.tools);
+      } catch (error) {
+        if (!shouldRetryLmStudioOpenAIWithoutTools(request, error)) {
+          throw error;
+        }
+
+        const response = await generateOpenAICompatibleResponse(
+          baseUrl,
+          withLmStudioOpenAICompatibleSettings(withoutRequestTools(request)),
+          options.apiKey ?? "lm-studio",
+        );
+        return withLmStudioOpenAIToolTemplateFallbackWarning(
+          sanitizeLmStudioOpenAIResponse(response),
+        );
+      }
     },
     async *stream(request) {
-      let rawText = "";
-      let emittedText = "";
+      let emittedModelOutput = false;
 
-      for await (const event of streamOpenAICompatibleResponse(
-        baseUrl,
-        withLmStudioOpenAICompatibleSettings(request),
-        options.apiKey ?? "lm-studio",
-      )) {
-        if (event.type === "text.delta") {
-          rawText += event.delta;
-          const sanitizedText = sanitizeLmStudioOpenAIText(rawText);
-          if (sanitizedText.startsWith(emittedText)) {
-            const delta = sanitizedText.slice(emittedText.length);
-            emittedText = sanitizedText;
-            if (delta.length > 0) {
-              yield {
-                type: "text.delta",
-                delta,
-              };
+      const streamWithRequest = async function* (
+        requestForTransport: ChatRequest,
+        responseTools: ChatRequest["tools"],
+        includeFallbackWarning: boolean,
+      ): AsyncGenerator<AdapterStreamEvent> {
+        let rawText = "";
+        let emittedText = "";
+
+        for await (const event of streamOpenAICompatibleResponse(
+          baseUrl,
+          requestForTransport,
+          options.apiKey ?? "lm-studio",
+        )) {
+          if (event.type === "text.delta") {
+            rawText += event.delta;
+            const sanitizedText = sanitizeLmStudioOpenAIText(rawText);
+            if (sanitizedText.startsWith(emittedText)) {
+              const delta = sanitizedText.slice(emittedText.length);
+              emittedText = sanitizedText;
+              if (delta.length > 0) {
+                emittedModelOutput = true;
+                yield {
+                  type: "text.delta",
+                  delta,
+                };
+              }
             }
+            continue;
           }
-          continue;
+
+          if (event.type === "response.complete") {
+            const sanitizedResponse = sanitizeLmStudioOpenAIResponse(event.response, responseTools);
+            const response = includeFallbackWarning
+              ? withLmStudioOpenAIToolTemplateFallbackWarning(sanitizedResponse)
+              : sanitizedResponse;
+            if (response.text.startsWith(emittedText)) {
+              const delta = response.text.slice(emittedText.length);
+              emittedText = response.text;
+              if (delta.length > 0) {
+                emittedModelOutput = true;
+                yield {
+                  type: "text.delta",
+                  delta,
+                };
+              }
+            }
+            emittedModelOutput = true;
+            yield {
+              ...event,
+              response,
+            };
+            continue;
+          }
+
+          if (event.type === "reasoning.delta") {
+            emittedModelOutput = true;
+          }
+
+          yield event;
+        }
+      };
+
+      try {
+        yield* streamWithRequest(
+          withLmStudioOpenAICompatibleSettings(request),
+          request.tools,
+          false,
+        );
+      } catch (error) {
+        if (emittedModelOutput || !shouldRetryLmStudioOpenAIWithoutTools(request, error)) {
+          throw error;
         }
 
-        if (event.type === "response.complete") {
-          const response = sanitizeLmStudioOpenAIResponse(event.response, request.tools);
-          if (response.text.startsWith(emittedText)) {
-            const delta = response.text.slice(emittedText.length);
-            emittedText = response.text;
-            if (delta.length > 0) {
-              yield {
-                type: "text.delta",
-                delta,
-              };
-            }
-          }
-          yield {
-            ...event,
-            response,
-          };
-          continue;
-        }
-
-        yield event;
+        yield {
+          type: "warning",
+          warning: LMSTUDIO_OPENAI_TOOL_TEMPLATE_FALLBACK_WARNING,
+          raw: error instanceof Error ? { message: error.message } : error,
+        };
+        yield* streamWithRequest(
+          withLmStudioOpenAICompatibleSettings(withoutRequestTools(request)),
+          undefined,
+          true,
+        );
       }
     },
     async embed(request: EmbeddingRequest): Promise<EmbeddingResult> {

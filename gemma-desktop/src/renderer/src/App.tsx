@@ -2768,20 +2768,7 @@ export function App() {
               helperRuntimeId={state.bootstrapState.helperModelEnabled ? state.bootstrapState.helperRuntimeId : null}
               modelSelectionDisabledReason={modelSelectionDisabledReason}
               reloadModelsDisabledReason={modelReloadDisabledReason}
-              onUpdateModelSelection={async (modelSelection) => {
-                if (modelSelectionDisabledReason) {
-                  throw new Error(modelSelectionDisabledReason)
-                }
-                const updated = await window.gemmaDesktopBridge.settings.update({
-                  modelSelection,
-                })
-                dispatch({ type: 'SET_SETTINGS', settings: updated })
-              }}
               onLoadModelSelection={async (modelSelection) => {
-                if (window.gemmaDesktopBridge.environment.loadDefaultModels) {
-                  return await window.gemmaDesktopBridge.environment.loadDefaultModels(modelSelection)
-                }
-
                 const result = await window.gemmaDesktopBridge.settings.update({
                   modelSelection,
                   [LOAD_DEFAULT_MODELS_SETTINGS_UPDATE_KEY]: true,
@@ -2810,7 +2797,7 @@ export function App() {
                   errors: [{
                     action: 'prepare',
                     ok: false,
-                    error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Load Selected Models again.',
+                    error: 'The running main process did not recognize the model-loader request. Restart Gemma Desktop and try Save and Load again.',
                   }],
                 }
               }}
